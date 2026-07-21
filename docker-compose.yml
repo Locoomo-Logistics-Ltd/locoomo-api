@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: locoomo
+      POSTGRES_PASSWORD: locoomo
+      POSTGRES_DB: locoomo
+    ports:
+      # 5434, not 5432/5433 — this machine already has a native Postgres service
+      # on 5432 and another project's container on 5433. Adjust freely if your
+      # setup differs, just keep .env's DATABASE_URL in sync.
+      - '5434:5432'
+    volumes:
+      - locoomo_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U locoomo -d locoomo']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  locoomo_postgres_data:
