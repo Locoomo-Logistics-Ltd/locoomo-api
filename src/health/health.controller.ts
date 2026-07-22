@@ -17,6 +17,8 @@ export class HealthController {
   @HealthCheck()
   @SkipResponseEnvelope()
   check() {
-    return this.health.check([() => this.db.pingCheck('database')]);
+    return this.health.check([
+      () => this.db.pingCheck('database', { timeout: 5000 }),
+    ]);
   }
 }
