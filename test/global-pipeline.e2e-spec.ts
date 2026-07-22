@@ -12,7 +12,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { CommonModule } from '../src/common/common.module';
 import { EntityNotFoundException } from '../src/common/exceptions';
-import { createAppValidationPipe } from '../src/common/pipes';
+import { configureApp } from '../src/bootstrap';
 
 class CreateTestDto {
   @IsEmail()
@@ -75,7 +75,7 @@ describe('Global request pipeline (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(createAppValidationPipe());
+    configureApp(app);
     await app.init();
   });
 
@@ -85,7 +85,7 @@ describe('Global request pipeline (e2e)', () => {
 
   it('wraps a successful response in the success envelope with a correlation id', async () => {
     const response = await request(app.getHttpServer())
-      .post('/test')
+      .post('/api/v1/test')
       .send({ email: 'sender@locoomo.test', name: 'Ada' })
       .expect(201);
 
@@ -103,7 +103,7 @@ describe('Global request pipeline (e2e)', () => {
 
   it('reuses an incoming X-Correlation-Id header', async () => {
     const response = await request(app.getHttpServer())
-      .post('/test')
+      .post('/api/v1/test')
       .set('X-Correlation-Id', 'client-abc-123')
       .send({ email: 'a@b.com', name: 'Bo' })
       .expect(201);
@@ -115,7 +115,7 @@ describe('Global request pipeline (e2e)', () => {
 
   it('returns structured field errors for an invalid payload', async () => {
     const response = await request(app.getHttpServer())
-      .post('/test')
+      .post('/api/v1/test')
       .send({ email: 'not-an-email', name: 'A' })
       .expect(400);
 
@@ -128,14 +128,14 @@ describe('Global request pipeline (e2e)', () => {
 
   it('rejects unexpected fields (forbidNonWhitelisted)', async () => {
     await request(app.getHttpServer())
-      .post('/test')
+      .post('/api/v1/test')
       .send({ email: 'a@b.com', name: 'Bo', extraField: 'nope' })
       .expect(400);
   });
 
   it('maps a thrown BusinessException to its declared status and code', async () => {
     const response = await request(app.getHttpServer())
-      .get('/test/not-found')
+      .get('/api/v1/test/not-found')
       .expect(404);
 
     expect(response.body).toEqual({
@@ -150,7 +150,7 @@ describe('Global request pipeline (e2e)', () => {
 
   it('maps a completely unexpected error to a generic 500', async () => {
     const response = await request(app.getHttpServer())
-      .get('/test/boom')
+      .get('/api/v1/test/boom')
       .expect(500);
 
     expect(response.body).toEqual({
@@ -165,7 +165,7 @@ describe('Global request pipeline (e2e)', () => {
 
   it('returns a real error envelope for an unmatched route', async () => {
     const response = await request(app.getHttpServer())
-      .get('/does-not-exist')
+      .get('/api/v1/does-not-exist')
       .expect(404);
 
     const body = response.body as ErrorBody;

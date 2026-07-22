@@ -1,14 +1,14 @@
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
-import { createAppValidationPipe } from './common/pipes';
+import { configureApp } from './bootstrap';
 import { Env } from './config/env.validation';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService<Env, true>);
 
-  app.useGlobalPipes(createAppValidationPipe());
+  configureApp(app);
 
   await app.listen(config.get('PORT', { infer: true }));
 }
