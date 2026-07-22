@@ -3,6 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import { configureApp } from './../src/bootstrap';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
@@ -13,11 +14,14 @@ describe('AppController (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    configureApp(app);
     await app.init();
   });
 
-  it('/ (GET)', async () => {
-    const response = await request(app.getHttpServer()).get('/').expect(200);
+  it('/api/v1/ (GET)', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/')
+      .expect(200);
 
     expect(response.body).toEqual({
       success: true,
