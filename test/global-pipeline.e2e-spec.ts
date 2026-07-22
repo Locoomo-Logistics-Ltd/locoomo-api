@@ -11,6 +11,7 @@ import { IsEmail, IsString, MinLength } from 'class-validator';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { CommonModule } from '../src/common/common.module';
+import { ConfigModule } from '../src/config/config.module';
 import { EntityNotFoundException } from '../src/common/exceptions';
 import { configureApp } from '../src/bootstrap';
 
@@ -45,7 +46,7 @@ class TestController {
 // app. Exercises the full pipeline (CommonModule + ValidationPipe) the same
 // way main.ts wires it, without needing a real business route to exist yet.
 @Module({
-  imports: [CommonModule],
+  imports: [ConfigModule, CommonModule],
   controllers: [TestController],
 })
 class TestAppModule {}
