@@ -2,11 +2,6 @@ import { UserRole } from '../../domain/user-role.enum';
 import { UserStatus } from '../../domain/user-status.enum';
 import { UserEntity } from '../../infrastructure/entities/user.entity';
 
-// Explicit field-by-field mapping, not @Exclude on the entity + serializer
-// magic — passwordHash never touches this object even transiently. This is
-// what "never serialize a TypeORM entity directly" (CLAUDE.md) actually
-// means in practice for identity specifically, given how sensitive the
-// field being excluded is.
 export class UserResponseDto {
   id!: string;
   email!: string;

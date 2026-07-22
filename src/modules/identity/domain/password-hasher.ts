@@ -10,8 +10,7 @@ const KEY_LENGTH = 64;
 // hash) already match OWASP's minimum-acceptable scrypt configuration.
 // Deliberately not using OWASP's stronger recommended default (N=131072,
 // ~128MB) — that's too much working memory per concurrent login on a
-// free-tier deployment target with limited total RAM. Zero new dependency
-// either way: this is Node's built-in crypto, not bcrypt/argon2.
+// free-tier deployment target with limited total RAM.
 export async function hashPassword(plainPassword: string): Promise<string> {
   const salt = randomBytes(SALT_BYTES);
   const derivedKey = (await scryptAsync(
