@@ -12,6 +12,7 @@ import type { Request, Response } from 'express';
 import { Env } from '../../../config/env.validation';
 import { InvalidRefreshTokenException } from '../domain/exceptions/invalid-refresh-token.exception';
 import { LoginUserService } from '../application/login-user.service';
+import { LogoutUserService } from '../application/logout-user.service';
 import { RefreshSessionService } from '../application/refresh-session.service';
 import { RegisterUserService } from '../application/register-user.service';
 import { LoginDto } from './dto/login.dto';
@@ -29,6 +30,7 @@ export class AuthController {
     private readonly registerUserService: RegisterUserService,
     private readonly loginUserService: LoginUserService,
     private readonly refreshSessionService: RefreshSessionService,
+    private readonly logoutUserService: LogoutUserService,
     private readonly configService: ConfigService<Env, true>,
   ) {}
 
@@ -77,6 +79,22 @@ export class AuthController {
       clearSessionCookies(res);
       throw error;
     }
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<null> {
+    const rawToken = (req.cookies as Record<string, string> | undefined)?.[
+      REFRESH_TOKEN_COOKIE
+    ];
+
+    await this.logoutUserService.logout(rawToken);
+    clearSessionCookies(res);
+
+    return null;
   }
 
   private useSecureCookies(): boolean {

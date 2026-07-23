@@ -83,11 +83,11 @@ describe('POST /api/v1/auth/login (e2e)', () => {
     expect(accessCookie).toContain('HttpOnly');
     expect(accessCookie).toContain('SameSite=Strict');
     expect(accessCookie).toContain('Path=/');
-    expect(accessCookie).not.toContain('Path=/api/v1/auth/refresh');
+    expect(accessCookie).not.toContain('Path=/api/v1/auth');
 
     expect(refreshCookie).toContain('HttpOnly');
     expect(refreshCookie).toContain('SameSite=Strict');
-    expect(refreshCookie).toContain('Path=/api/v1/auth/refresh');
+    expect(refreshCookie).toContain('Path=/api/v1/auth');
 
     const user = await users.findOneByOrFail({ email });
     const storedTokens = await refreshTokens.find({

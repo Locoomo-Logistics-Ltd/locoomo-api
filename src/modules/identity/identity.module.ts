@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Env } from '../../config/env.validation';
 import { LoginUserService } from './application/login-user.service';
+import { LogoutUserService } from './application/logout-user.service';
 import { RefreshSessionService } from './application/refresh-session.service';
 import { RegisterUserService } from './application/register-user.service';
 import { TokenIssuanceService } from './application/token-issuance.service';
@@ -25,6 +26,7 @@ import { AuthController } from './interface/auth.controller';
   providers: [
     RegisterUserService,
     LoginUserService,
+    LogoutUserService,
     RefreshSessionService,
     TokenIssuanceService,
   ],
