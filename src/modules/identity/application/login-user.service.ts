@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import {
+  LOCKOUT_DURATION_MINUTES,
+  MAX_FAILED_LOGIN_ATTEMPTS,
+} from '../domain/account-lockout.constants';
 import { AccountSuspendedException } from '../domain/exceptions/account-suspended.exception';
 import { InvalidCredentialsException } from '../domain/exceptions/invalid-credentials.exception';
 import { verifyPassword } from '../domain/password-hasher';
@@ -27,15 +31,24 @@ export class LoginUserService {
       email: dto.email.toLowerCase(),
     });
 
-    // No password hash yet means an Admin-provisioned account that hasn't completed its "set your password" invite step — same generic error, not a distinct one, to avoid leaking account state pre-authentication.
-
     if (!user || !user.passwordHash) {
+      throw new InvalidCredentialsException();
+    }
+
+    if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
       throw new InvalidCredentialsException();
     }
 
     const passwordValid = await verifyPassword(dto.password, user.passwordHash);
     if (!passwordValid) {
+      await this.registerFailedAttempt(user);
       throw new InvalidCredentialsException();
+    }
+
+    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+      user.failedLoginAttempts = 0;
+      user.lockedUntil = null;
+      await this.users.save(user);
     }
 
     if (user.status === UserStatus.SUSPENDED) {
@@ -44,5 +57,15 @@ export class LoginUserService {
 
     const session = await this.tokenIssuanceService.issueSession(user);
     return { user, session };
+  }
+
+  private async registerFailedAttempt(user: UserEntity): Promise<void> {
+    user.failedLoginAttempts += 1;
+    if (user.failedLoginAttempts >= MAX_FAILED_LOGIN_ATTEMPTS) {
+      user.lockedUntil = new Date(
+        Date.now() + LOCKOUT_DURATION_MINUTES * 60 * 1000,
+      );
+    }
+    await this.users.save(user);
   }
 }

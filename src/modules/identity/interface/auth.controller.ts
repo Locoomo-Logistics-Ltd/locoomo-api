@@ -8,6 +8,7 @@ import {
   Res,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Throttle, seconds } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { Env } from '../../../config/env.validation';
 import { InvalidRefreshTokenException } from '../domain/exceptions/invalid-refresh-token.exception';
@@ -37,12 +38,17 @@ export class AuthController {
     private readonly configService: ConfigService<Env, true>,
   ) {}
 
+  // Stricter than the app-wide default (100/min) — these two are the
+  // classic brute-force/enumeration targets. Per-IP, so it's a first line
+  // of defense that catches a distributed attack too.
+  @Throttle({ default: { limit: 5, ttl: seconds(60) } })
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   register(@Body() dto: RegisterDto): Promise<UserResponseDto> {
     return this.registerUserService.register(dto);
   }
 
+  @Throttle({ default: { limit: 5, ttl: seconds(60) } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(

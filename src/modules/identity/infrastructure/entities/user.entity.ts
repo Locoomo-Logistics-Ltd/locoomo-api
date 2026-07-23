@@ -51,6 +51,14 @@ export class UserEntity {
   @Column({ type: 'timestamptz', nullable: true })
   emailVerifiedAt!: Date | null;
 
+  // Reset to 0 on any successful login. Incremented on a wrong password;
+  // crossing the threshold sets lockedUntil
+  @Column({ type: 'int', default: 0 })
+  failedLoginAttempts!: number;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  lockedUntil!: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

@@ -18,6 +18,7 @@ const HTTP_STATUS_ERROR_CODES: Partial<Record<number, string>> = {
   [HttpStatus.UNAUTHORIZED]: 'UNAUTHORIZED',
   [HttpStatus.FORBIDDEN]: 'FORBIDDEN',
   [HttpStatus.NOT_FOUND]: 'NOT_FOUND',
+  [HttpStatus.TOO_MANY_REQUESTS]: 'RATE_LIMITED',
 };
 
 // Single catch-all filter — every error the app produces, expected or not,

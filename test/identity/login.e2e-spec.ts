@@ -6,6 +6,7 @@ import { App } from 'supertest/types';
 import { Repository } from 'typeorm';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
+import { MAX_FAILED_LOGIN_ATTEMPTS } from '../../src/modules/identity/domain/account-lockout.constants';
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { RefreshTokenEntity } from '../../src/modules/identity/infrastructure/entities/refresh-token.entity';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
@@ -147,5 +148,67 @@ describe('POST /api/v1/auth/login (e2e)', () => {
       .post('/api/v1/auth/login')
       .send({ email: 'not-an-email', password: '' })
       .expect(400);
+  });
+
+  it('locks the account after enough wrong passwords, then rejects even the correct one', async () => {
+    const lockEmail = 'lockout@login.e2e.test';
+    await request(app.getHttpServer()).post('/api/v1/auth/register').send({
+      firstName: 'Lockout',
+      lastName: 'Tester',
+      email: lockEmail,
+      phone: '+2348012345678',
+      password,
+      passwordConfirmation: password,
+      consentAccepted: true,
+    });
+
+    for (let attempt = 0; attempt < MAX_FAILED_LOGIN_ATTEMPTS; attempt++) {
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: lockEmail, password: 'wrong-password' })
+        .expect(401);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'INVALID_CREDENTIALS',
+      );
+    }
+
+    const lockedUser = await users.findOneByOrFail({ email: lockEmail });
+    expect(lockedUser.lockedUntil).not.toBeNull();
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: lockEmail, password })
+      .expect(401);
+    expect((response.body as ErrorBody).error.code).toBe('INVALID_CREDENTIALS');
+  });
+
+  it('logs in successfully and resets the failed-attempt counter once the lockout window has passed', async () => {
+    const unlockEmail = 'unlock@login.e2e.test';
+    await request(app.getHttpServer()).post('/api/v1/auth/register').send({
+      firstName: 'Unlock',
+      lastName: 'Tester',
+      email: unlockEmail,
+      phone: '+2348012345678',
+      password,
+      passwordConfirmation: password,
+      consentAccepted: true,
+    });
+
+    await users.update(
+      { email: unlockEmail },
+      {
+        failedLoginAttempts: MAX_FAILED_LOGIN_ATTEMPTS,
+        lockedUntil: new Date(Date.now() - 1000),
+      },
+    );
+
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: unlockEmail, password })
+      .expect(200);
+
+    const unlockedUser = await users.findOneByOrFail({ email: unlockEmail });
+    expect(unlockedUser.failedLoginAttempts).toBe(0);
+    expect(unlockedUser.lockedUntil).toBeNull();
   });
 });
