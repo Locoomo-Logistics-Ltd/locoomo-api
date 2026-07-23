@@ -31,6 +31,7 @@ jobs:
       # anywhere else. A real deploy generates its own per doc/DEVELOPMENT.md.
       JWT_ACCESS_SECRET: e0609cac03248e49f765fa258b1336915cad335f3e2cb616a28f1b077d706886
       CORS_ORIGIN: http://localhost:5173
+      FRONTEND_URL: http://localhost:5173
       # Never actually connected to — no test enqueues a real outbox event
       # against the real SmtpEmailSender, so these just need to satisfy env
       # validation at boot.

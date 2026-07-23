@@ -6,13 +6,16 @@ export const envSchema = z.object({
     .enum(['development', 'test', 'production'])
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z.string().url(),
+  DATABASE_URL: z.url(),
   // generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
   JWT_ACCESS_SECRET: z.string().min(32),
   // Path to the DB provider's CA cert, repo-relative. Unset locally (docker-compose Postgres has no TLS) - required against Supabase/Neon so the connection verifies
   DATABASE_SSL_CA_PATH: z.string().optional(),
   // domain, e.g. app.locoomo.com + api.locoomo.com) for SameSite=Strict cookies to be sent at all; a genuinely cross-site frontend breaks login.
   CORS_ORIGIN: z.string().min(1),
+  // rontend origin used to build links embedded in emails
+  // (password reset, email verification, invite)
+  FRONTEND_URL: z.url(),
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive(),
   SMTP_SECURE: z

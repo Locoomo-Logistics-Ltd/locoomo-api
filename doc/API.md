@@ -35,7 +35,7 @@ to read or store. This has real implications for how you call the API:
 
 ## Authenticated requests
 
-Every route except `/health` and the four `/api/v1/auth/*` endpoints above requires a
+Every route except `/health` and the `/api/v1/auth/*` endpoints below requires a
 valid `access_token` cookie — this is enforced globally, not per-route, so a new
 endpoint is protected by default the moment it ships. No endpoints beyond `identity`
 exist yet, so this doesn't affect you until they do, but the contract is:
@@ -96,6 +96,7 @@ backend greps logs for.
 | 400 | `VALIDATION_FAILED` | Request body failed DTO validation — see `error.details` for per-field reasons |
 | 401 | `INVALID_CREDENTIALS` | Login failed — wrong password, unknown email, or account not yet activated. Deliberately identical for all three so a login attempt can't be used to enumerate registered emails; don't try to distinguish these cases in the UI |
 | 401 | `INVALID_REFRESH_TOKEN` | Refresh failed — missing, unrecognized, expired, or already-used cookie. Treat as a hard sign-out, don't retry |
+| 401 | `INVALID_RESET_TOKEN` | Password reset confirm failed — missing, unrecognized, expired, or already-used token. Deliberately identical for all cases; send the user back to "forgot password" |
 | 401 | `UNAUTHENTICATED` | No valid `access_token` cookie on a protected route — missing, invalid, or expired. Refresh and retry |
 | 403 | `ACCOUNT_SUSPENDED` | Password was correct but the account is suspended |
 | 403 | `FORBIDDEN` | Valid session, but your role can't access this route |
@@ -222,5 +223,54 @@ handling around this call.
 Only revokes the session tied to the cookie you're holding — if the user is logged in
 on another device/tab, that session is untouched. There's no "sign out everywhere"
 endpoint yet.
+
+### `POST /api/v1/auth/password-reset/request`
+
+Request:
+
+```json
+{ "email": "ada@example.com" }
+```
+
+Response `200`, `data: null` — **always**, regardless of whether the email is registered,
+unregistered, or belongs to an account that hasn't set a password yet (Admin-provisioned,
+still `invited`). Never branch UI logic on this response to reveal whether an email
+exists — that's deliberate, same enumeration-avoidance reasoning as login. Show a generic
+"if that email is registered, we've sent a reset link" message regardless.
+
+If the email matches an active account, an email is sent (asynchronously — the outbox
+poller runs on a ~10s interval, so don't expect instant delivery) with a link of the form
+`{FRONTEND_URL}/reset-password?token=...`. The frontend route at that path reads `token`
+from the query string and submits it to the confirm endpoint below — the token itself is
+never meant to be typed or shown in the UI.
+
+The link expires in 30 minutes. Requesting a new one immediately invalidates any
+previous unused link for that account — only the most recently requested one ever works.
+
+Errors: `400 VALIDATION_FAILED`, `429 RATE_LIMITED` (5 requests/min per IP, same as
+register/login).
+
+### `POST /api/v1/auth/password-reset/confirm`
+
+Request:
+
+```json
+{
+  "token": "the-token-from-the-emailed-link",
+  "password": "New-Correct-Horse-2",
+  "passwordConfirmation": "New-Correct-Horse-2"
+}
+```
+
+Same password rules as registration (12–128 chars, no composition requirements).
+
+Response `200`, `data: null`. Every existing session for the account is revoked as part
+of this — if the user is logged in elsewhere (or in the same browser), those sessions
+stop working immediately and need to log in again with the new password. A "your password
+was changed" notice is also emailed to the account, independent of who initiated the
+reset.
+
+Errors: `400 VALIDATION_FAILED`, `401 INVALID_RESET_TOKEN` (bad, expired, already-used, or
+superseded token — send the user back to request a new link), `429 RATE_LIMITED`.
 
 
