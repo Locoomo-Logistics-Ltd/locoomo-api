@@ -153,16 +153,16 @@ Errors: `400 VALIDATION_FAILED`, `401 INVALID_CREDENTIALS`, `403 ACCOUNT_SUSPEND
 | Cookie | Lifetime | Path | Notes |
 |---|---|---|---|
 | `access_token` | 15 min | `/` | Sent automatically on every request to the API's origin |
-| `refresh_token` | 30 days | `/api/v1/auth/refresh` | Only ever sent to the refresh endpoint — don't expect to see it echoed elsewhere |
+| `refresh_token` | 30 days | `/api/v1/auth` | Sent only to endpoints under `/api/v1/auth` (refresh, logout) — never to ordinary application routes |
 
 Both `httpOnly`, `Secure` in production, `SameSite=Strict`.
 
 ### `POST /api/v1/auth/refresh`
 
 No request body — the refresh token is read from the `refresh_token` cookie, which the
-browser sends automatically (that's why it's scoped to this exact path). Call this when
-an authenticated request comes back `401` because the access token expired, then retry
-the original request.
+browser sends automatically (that's why it's scoped to the `/api/v1/auth` subtree). Call
+this when an authenticated request comes back `401` because the access token expired,
+then retry the original request.
 
 Response `200`, `data`: same `UserResponseDto` shape as login's. Both cookies are
 reissued — the old `refresh_token` is invalidated the instant a new one is issued
@@ -180,5 +180,20 @@ though nothing malicious happened — refresh tokens are single-use. Don't fire 
 speculatively from multiple places; centralize it (e.g. one in-flight refresh promise
 shared by all callers) once you're building the interceptor that triggers this on 401.
 
+### `POST /api/v1/auth/logout`
+
+No request body. Revokes the current session's refresh token (the one in the cookie)
+and clears both cookies — call this on every "sign out" action.
+
+Response `200`, `data: null`.
+
+No error responses — this endpoint never fails. Calling it with no session, an already
+expired session, or a garbage cookie all just return `200` (the desired end state —
+"no active session" — is already true, so there's nothing to reject). Don't build error
+handling around this call.
+
+Only revokes the session tied to the cookie you're holding — if the user is logged in
+on another device/tab, that session is untouched. There's no "sign out everywhere"
+endpoint yet.
 
 
