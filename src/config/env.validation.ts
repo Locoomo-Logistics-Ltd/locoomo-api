@@ -13,6 +13,16 @@ export const envSchema = z.object({
   DATABASE_SSL_CA_PATH: z.string().optional(),
   // domain, e.g. app.locoomo.com + api.locoomo.com) for SameSite=Strict cookies to be sent at all; a genuinely cross-site frontend breaks login.
   CORS_ORIGIN: z.string().min(1),
+  SMTP_HOST: z.string().min(1),
+  SMTP_PORT: z.coerce.number().int().positive(),
+  SMTP_SECURE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  SMTP_USER: z.string().min(1),
+  SMTP_PASSWORD: z.string().min(1),
+  // "From" header — either a bare address or "Name <address>".
+  SMTP_FROM: z.string().min(1),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4-alpine
+        env:
+          POSTGRES_USER: locoomo
+          POSTGRES_PASSWORD: locoomo
+          POSTGRES_DB: locoomo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U locoomo -d locoomo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://locoomo:locoomo@localhost:5432/locoomo
+      # Throwaway — this environment never talks to anything real, never reused
+      # anywhere else. A real deploy generates its own per doc/DEVELOPMENT.md.
+      JWT_ACCESS_SECRET: e0609cac03248e49f765fa258b1336915cad335f3e2cb616a28f1b077d706886
+      CORS_ORIGIN: http://localhost:5173
+      # Never actually connected to — no test enqueues a real outbox event
+      # against the real SmtpEmailSender, so these just need to satisfy env
+      # validation at boot.
+      SMTP_HOST: smtp.example.test
+      SMTP_PORT: 587
+      SMTP_SECURE: 'false'
+      SMTP_USER: ci
+      SMTP_PASSWORD: ci
+      SMTP_FROM: 'Locoomo <no-reply@locoomo.dev>'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint:ci
+      - run: npm run lint:boundaries
+      - run: npm run build
+      - run: npm test
+      - run: npm run migration:run
+      - run: npm run test:e2e

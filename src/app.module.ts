@@ -6,6 +6,7 @@ import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './modules/identity/identity.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { IdentityModule } from './modules/identity/identity.module';
     CommonModule,
     DatabaseModule,
     HealthModule,
+    NotificationsModule,
     IdentityModule,
   ],
   controllers: [AppController],
