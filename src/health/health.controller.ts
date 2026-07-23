@@ -5,7 +5,10 @@ import {
   TypeOrmHealthIndicator,
 } from '@nestjs/terminus';
 import { SkipResponseEnvelope } from '../common/decorators/skip-response-envelope.decorator';
+import { Public } from '../modules/identity/interface/decorators/public.decorator';
 
+// Infra probe target (Railway/Render) — no cookies, must stay reachable
+// without a session.
 @Controller({ path: 'health', version: VERSION_NEUTRAL })
 export class HealthController {
   constructor(
@@ -16,6 +19,7 @@ export class HealthController {
   @Get()
   @HealthCheck()
   @SkipResponseEnvelope()
+  @Public()
   check() {
     return this.health.check([
       () => this.db.pingCheck('database', { timeout: 5000 }),

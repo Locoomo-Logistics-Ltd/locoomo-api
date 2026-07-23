@@ -15,6 +15,7 @@ import { LoginUserService } from '../application/login-user.service';
 import { LogoutUserService } from '../application/logout-user.service';
 import { RefreshSessionService } from '../application/refresh-session.service';
 import { RegisterUserService } from '../application/register-user.service';
+import { Public } from './decorators/public.decorator';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { UserResponseDto } from './dto/user-response.dto';
@@ -24,6 +25,8 @@ import {
   setSessionCookies,
 } from './session-cookies';
 
+// Every route here must work without an existing valid session
+@Public()
 @Controller('auth')
 export class AuthController {
   constructor(
