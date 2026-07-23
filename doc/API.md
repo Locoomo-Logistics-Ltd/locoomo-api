@@ -33,6 +33,20 @@ to read or store. This has real implications for how you call the API:
   — they're httpOnly by design (XSS protection). Don't build UI that assumes you can
   inspect or manually attach them.
 
+## Authenticated requests
+
+Every route except `/health` and the four `/api/v1/auth/*` endpoints above requires a
+valid `access_token` cookie — this is enforced globally, not per-route, so a new
+endpoint is protected by default the moment it ships. No endpoints beyond `identity`
+exist yet, so this doesn't affect you until they do, but the contract is:
+
+- Missing or invalid (bad signature, malformed, wrong secret) → `401 UNAUTHENTICATED`.
+- Expired access token → also `401 UNAUTHENTICATED` (identical to missing/invalid —
+  same enumeration-avoidance reasoning as the login/refresh errors). This is your signal
+  to call `/api/v1/auth/refresh` and retry the original request.
+- Valid session, but the route requires a role you don't have → `403 FORBIDDEN`. The
+  response doesn't say which role was required.
+
 ## Response envelope
 
 Every response (except `/health`) is wrapped the same way. Always unwrap `data`, never
@@ -82,7 +96,9 @@ backend greps logs for.
 | 400 | `VALIDATION_FAILED` | Request body failed DTO validation — see `error.details` for per-field reasons |
 | 401 | `INVALID_CREDENTIALS` | Login failed — wrong password, unknown email, or account not yet activated. Deliberately identical for all three so a login attempt can't be used to enumerate registered emails; don't try to distinguish these cases in the UI |
 | 401 | `INVALID_REFRESH_TOKEN` | Refresh failed — missing, unrecognized, expired, or already-used cookie. Treat as a hard sign-out, don't retry |
+| 401 | `UNAUTHENTICATED` | No valid `access_token` cookie on a protected route — missing, invalid, or expired. Refresh and retry |
 | 403 | `ACCOUNT_SUSPENDED` | Password was correct but the account is suspended |
+| 403 | `FORBIDDEN` | Valid session, but your role can't access this route |
 | 404 | `NOT_FOUND` | Route or resource doesn't exist |
 | 409 | `EMAIL_ALREADY_REGISTERED` | Registration attempted with an email already on file |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |

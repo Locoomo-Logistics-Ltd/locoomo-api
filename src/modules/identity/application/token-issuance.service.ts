@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { AccessTokenPayload } from '../domain/access-token-payload';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   REFRESH_TOKEN_TTL_DAYS,
@@ -42,10 +43,10 @@ export class TokenIssuanceService {
     user: UserEntity,
     familyId: string,
   ): Promise<IssuedSession> {
-    const accessToken = await this.jwtService.signAsync(
-      { sub: user.id, role: user.role },
-      { expiresIn: ACCESS_TOKEN_TTL_SECONDS },
-    );
+    const payload: AccessTokenPayload = { sub: user.id, role: user.role };
+    const accessToken = await this.jwtService.signAsync(payload, {
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    });
 
     const refreshToken = randomBytes(32).toString('hex');
     const refreshTokenExpiresAt = new Date(

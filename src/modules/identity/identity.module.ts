@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Env } from '../../config/env.validation';
@@ -11,6 +12,8 @@ import { TokenIssuanceService } from './application/token-issuance.service';
 import { RefreshTokenEntity } from './infrastructure/entities/refresh-token.entity';
 import { UserEntity } from './infrastructure/entities/user.entity';
 import { AuthController } from './interface/auth.controller';
+import { AuthGuard } from './interface/auth.guard';
+import { RolesGuard } from './interface/roles.guard';
 
 @Module({
   imports: [
@@ -29,6 +32,8 @@ import { AuthController } from './interface/auth.controller';
     LogoutUserService,
     RefreshSessionService,
     TokenIssuanceService,
+    { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
   ],
   // Exported so the `admin` module can provision NodeOperator/Rider/Admin
   // accounts through this module's application services later — never by
