@@ -12,13 +12,17 @@ import { Throttle, seconds } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { Env } from '../../../config/env.validation';
 import { InvalidRefreshTokenException } from '../domain/exceptions/invalid-refresh-token.exception';
+import { ConfirmPasswordResetService } from '../application/confirm-password-reset.service';
 import { LoginUserService } from '../application/login-user.service';
 import { LogoutUserService } from '../application/logout-user.service';
 import { RefreshSessionService } from '../application/refresh-session.service';
 import { RegisterUserService } from '../application/register-user.service';
+import { RequestPasswordResetService } from '../application/request-password-reset.service';
 import { Public } from './decorators/public.decorator';
+import { ConfirmPasswordResetDto } from './dto/confirm-password-reset.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { RequestPasswordResetDto } from './dto/request-password-reset.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import {
   clearSessionCookies,
@@ -35,6 +39,8 @@ export class AuthController {
     private readonly loginUserService: LoginUserService,
     private readonly refreshSessionService: RefreshSessionService,
     private readonly logoutUserService: LogoutUserService,
+    private readonly requestPasswordResetService: RequestPasswordResetService,
+    private readonly confirmPasswordResetService: ConfirmPasswordResetService,
     private readonly configService: ConfigService<Env, true>,
   ) {}
 
@@ -103,6 +109,29 @@ export class AuthController {
     await this.logoutUserService.logout(rawToken);
     clearSessionCookies(res);
 
+    return null;
+  }
+
+  // Same 5/min throttle rationale as register/login — this is also an
+  // enumeration/abuse target, and the response is identical regardless of
+  // whether the email is registered (see RequestPasswordResetService).
+  @Throttle({ default: { limit: 5, ttl: seconds(60) } })
+  @Post('password-reset/request')
+  @HttpCode(HttpStatus.OK)
+  async requestPasswordReset(
+    @Body() dto: RequestPasswordResetDto,
+  ): Promise<null> {
+    await this.requestPasswordResetService.requestReset(dto);
+    return null;
+  }
+
+  @Throttle({ default: { limit: 5, ttl: seconds(60) } })
+  @Post('password-reset/confirm')
+  @HttpCode(HttpStatus.OK)
+  async confirmPasswordReset(
+    @Body() dto: ConfirmPasswordResetDto,
+  ): Promise<null> {
+    await this.confirmPasswordResetService.confirmReset(dto);
     return null;
   }
 
