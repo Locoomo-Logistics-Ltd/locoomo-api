@@ -101,6 +101,7 @@ backend greps logs for.
 | 403 | `FORBIDDEN` | Valid session, but your role can't access this route |
 | 404 | `NOT_FOUND` | Route or resource doesn't exist |
 | 409 | `EMAIL_ALREADY_REGISTERED` | Registration attempted with an email already on file |
+| 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
 
 ## Endpoints
@@ -151,7 +152,8 @@ Response `201`, `data`:
 Registration does **not** log the user in — no session cookies are set. Send the user to
 login next.
 
-Errors: `400 VALIDATION_FAILED`, `409 EMAIL_ALREADY_REGISTERED`.
+Errors: `400 VALIDATION_FAILED`, `409 EMAIL_ALREADY_REGISTERED`, `429 RATE_LIMITED`
+(5 requests/min per IP — stricter than the app-wide default).
 
 ### `POST /api/v1/auth/login`
 
@@ -164,7 +166,16 @@ Request:
 Response `200`, `data`: same `UserResponseDto` shape as register's response. The
 session is delivered via `Set-Cookie`, not the body — see the cookie table below.
 
-Errors: `400 VALIDATION_FAILED`, `401 INVALID_CREDENTIALS`, `403 ACCOUNT_SUSPENDED`.
+Errors: `400 VALIDATION_FAILED`, `401 INVALID_CREDENTIALS`, `403 ACCOUNT_SUSPENDED`,
+`429 RATE_LIMITED`.
+
+After 5 wrong passwords in a row, the account itself locks for 15 minutes — further
+attempts return `401 INVALID_CREDENTIALS` even with the correct password, identical to
+every other invalid-credentials case (no way to tell "locked" from "wrong password" from
+the response). This is separate from and in addition to the per-IP rate limit above: the
+IP limit slows down raw request volume from one source, the lockout catches a slow or
+distributed attack against one specific account regardless of source IP. A successful
+login resets the counter.
 
 | Cookie | Lifetime | Path | Notes |
 |---|---|---|---|

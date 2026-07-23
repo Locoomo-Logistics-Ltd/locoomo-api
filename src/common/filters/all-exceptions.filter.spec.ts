@@ -1,4 +1,5 @@
 import { ArgumentsHost, BadRequestException, Logger } from '@nestjs/common';
+import { ThrottlerException } from '@nestjs/throttler';
 import { InfrastructureException } from '../exceptions/infrastructure.exception';
 import { EntityNotFoundException } from '../exceptions/entity-not-found.exception';
 import { RequestWithCorrelationId } from '../interceptors/correlation-id.interceptor';
@@ -139,6 +140,20 @@ describe('AllExceptionsFilter', () => {
         correlationId: 'corr-5',
       },
     });
+  });
+
+  it('maps a ThrottlerException to 429 RATE_LIMITED', () => {
+    const { host, status, json } = createHost({ correlationId: 'corr-6' });
+
+    filter.catch(new ThrottlerException(), host);
+
+    expect(status).toHaveBeenCalledWith(429);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        error: expect.objectContaining({ code: 'RATE_LIMITED' }) as unknown,
+      }),
+    );
   });
 
   it('resolves a correlation id even when the interceptor never ran (e.g. a Guard threw first)', () => {
