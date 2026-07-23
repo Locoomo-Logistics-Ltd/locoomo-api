@@ -26,8 +26,22 @@ export class TokenIssuanceService {
     private readonly refreshTokens: Repository<RefreshTokenEntity>,
   ) {}
 
-  // Starts a brand new token family — use on login. Rotation within an existing family is handled separately by the refresh endpoint.
-  async issueSession(user: UserEntity): Promise<IssuedSession> {
+  // Starts a brand new token family — use on login.
+  issueSession(user: UserEntity): Promise<IssuedSession> {
+    return this.createSession(user, randomUUID());
+  }
+
+  // Rotation within an existing family — use on refresh. Keeping the same
+  // familyId is what lets a replayed, already-rotated token be recognized as
+  // theft and revoke every token descended from it, not just itself.
+  rotateSession(user: UserEntity, familyId: string): Promise<IssuedSession> {
+    return this.createSession(user, familyId);
+  }
+
+  private async createSession(
+    user: UserEntity,
+    familyId: string,
+  ): Promise<IssuedSession> {
     const accessToken = await this.jwtService.signAsync(
       { sub: user.id, role: user.role },
       { expiresIn: ACCESS_TOKEN_TTL_SECONDS },
@@ -42,7 +56,7 @@ export class TokenIssuanceService {
       this.refreshTokens.create({
         userId: user.id,
         tokenHash: hashRefreshToken(refreshToken),
-        familyId: randomUUID(),
+        familyId,
         expiresAt: refreshTokenExpiresAt,
         revokedAt: null,
       }),

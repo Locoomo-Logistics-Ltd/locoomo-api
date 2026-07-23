@@ -81,6 +81,7 @@ backend greps logs for.
 |---|---|---|
 | 400 | `VALIDATION_FAILED` | Request body failed DTO validation — see `error.details` for per-field reasons |
 | 401 | `INVALID_CREDENTIALS` | Login failed — wrong password, unknown email, or account not yet activated. Deliberately identical for all three so a login attempt can't be used to enumerate registered emails; don't try to distinguish these cases in the UI |
+| 401 | `INVALID_REFRESH_TOKEN` | Refresh failed — missing, unrecognized, expired, or already-used cookie. Treat as a hard sign-out, don't retry |
 | 403 | `ACCOUNT_SUSPENDED` | Password was correct but the account is suspended |
 | 404 | `NOT_FOUND` | Route or resource doesn't exist |
 | 409 | `EMAIL_ALREADY_REGISTERED` | Registration attempted with an email already on file |
@@ -155,5 +156,29 @@ Errors: `400 VALIDATION_FAILED`, `401 INVALID_CREDENTIALS`, `403 ACCOUNT_SUSPEND
 | `refresh_token` | 30 days | `/api/v1/auth/refresh` | Only ever sent to the refresh endpoint — don't expect to see it echoed elsewhere |
 
 Both `httpOnly`, `Secure` in production, `SameSite=Strict`.
+
+### `POST /api/v1/auth/refresh`
+
+No request body — the refresh token is read from the `refresh_token` cookie, which the
+browser sends automatically (that's why it's scoped to this exact path). Call this when
+an authenticated request comes back `401` because the access token expired, then retry
+the original request.
+
+Response `200`, `data`: same `UserResponseDto` shape as login's. Both cookies are
+reissued — the old `refresh_token` is invalidated the instant a new one is issued
+(rotation on every call, not just on expiry).
+
+Errors: `401 INVALID_REFRESH_TOKEN`, `403 ACCOUNT_SUSPENDED`. On **any** error response
+from this endpoint, both session cookies are cleared server-side — treat that as a hard
+sign-out and route the user to login rather than retrying.
+
+`401 INVALID_REFRESH_TOKEN` is deliberately generic — it covers "no cookie sent,"
+"expired," and "already used" identically. One specific case worth knowing about: if two
+requests both try to refresh the same token concurrently (e.g. two tabs, or a retry
+firing before the first call returned), the second one back will get this error even
+though nothing malicious happened — refresh tokens are single-use. Don't fire refresh
+speculatively from multiple places; centralize it (e.g. one in-flight refresh promise
+shared by all callers) once you're building the interceptor that triggers this on 401.
+
 
 

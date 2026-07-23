@@ -4,23 +4,31 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Req,
   Res,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { Env } from '../../../config/env.validation';
+import { InvalidRefreshTokenException } from '../domain/exceptions/invalid-refresh-token.exception';
 import { LoginUserService } from '../application/login-user.service';
+import { RefreshSessionService } from '../application/refresh-session.service';
 import { RegisterUserService } from '../application/register-user.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { UserResponseDto } from './dto/user-response.dto';
-import { setSessionCookies } from './session-cookies';
+import {
+  clearSessionCookies,
+  REFRESH_TOKEN_COOKIE,
+  setSessionCookies,
+} from './session-cookies';
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly registerUserService: RegisterUserService,
     private readonly loginUserService: LoginUserService,
+    private readonly refreshSessionService: RefreshSessionService,
     private readonly configService: ConfigService<Env, true>,
   ) {}
 
@@ -38,12 +46,40 @@ export class AuthController {
   ): Promise<UserResponseDto> {
     const { user, session } = await this.loginUserService.login(dto);
 
-    setSessionCookies(
-      res,
-      session,
-      this.configService.get('NODE_ENV', { infer: true }) === 'production',
-    );
+    setSessionCookies(res, session, this.useSecureCookies());
 
     return UserResponseDto.fromEntity(user);
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<UserResponseDto> {
+    const rawToken = (req.cookies as Record<string, string> | undefined)?.[
+      REFRESH_TOKEN_COOKIE
+    ];
+
+    if (!rawToken) {
+      throw new InvalidRefreshTokenException();
+    }
+
+    try {
+      const { user, session } =
+        await this.refreshSessionService.refresh(rawToken);
+      setSessionCookies(res, session, this.useSecureCookies());
+      return UserResponseDto.fromEntity(user);
+    } catch (error) {
+      // Any failure (invalid/expired/reused token, suspended account) means
+      // the client is holding a session that will never work again — clear
+      // it so their next request doesn't keep retrying with a dead cookie.
+      clearSessionCookies(res);
+      throw error;
+    }
+  }
+
+  private useSecureCookies(): boolean {
+    return this.configService.get('NODE_ENV', { infer: true }) === 'production';
   }
 }

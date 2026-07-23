@@ -33,3 +33,10 @@ export function setSessionCookies(
     expires: session.refreshTokenExpiresAt,
   });
 }
+
+// Path must match what the cookie was set with — the browser identifies a
+// cookie by name+path+domain, so a mismatched path silently clears nothing.
+export function clearSessionCookies(res: Response): void {
+  res.clearCookie(ACCESS_TOKEN_COOKIE, { path: '/' });
+  res.clearCookie(REFRESH_TOKEN_COOKIE, { path: REFRESH_TOKEN_COOKIE_PATH });
+}
