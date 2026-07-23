@@ -97,6 +97,7 @@ backend greps logs for.
 | 401 | `INVALID_CREDENTIALS` | Login failed — wrong password, unknown email, or account not yet activated. Deliberately identical for all three so a login attempt can't be used to enumerate registered emails; don't try to distinguish these cases in the UI |
 | 401 | `INVALID_REFRESH_TOKEN` | Refresh failed — missing, unrecognized, expired, or already-used cookie. Treat as a hard sign-out, don't retry |
 | 401 | `INVALID_RESET_TOKEN` | Password reset confirm failed — missing, unrecognized, expired, or already-used token. Deliberately identical for all cases; send the user back to "forgot password" |
+| 401 | `INVALID_VERIFICATION_TOKEN` | Email verification failed — missing, unrecognized, expired, or already-used token. Same enumeration-avoidance reasoning; there's no harm shown to the user beyond "this link didn't work" |
 | 401 | `UNAUTHENTICATED` | No valid `access_token` cookie on a protected route — missing, invalid, or expired. Refresh and retry |
 | 403 | `ACCOUNT_SUSPENDED` | Password was correct but the account is suspended |
 | 403 | `FORBIDDEN` | Valid session, but your role can't access this route |
@@ -109,7 +110,11 @@ backend greps logs for.
 
 ### `POST /api/v1/auth/register`
 
-Consumer self-registration. Immediately active — no separate activation step.
+Consumer self-registration. Immediately active — no separate activation step, and
+verifying the email is **not** required to log in. A verification email is sent
+asynchronously (same ~10s outbox delay as password reset) with a link of the form
+`{FRONTEND_URL}/verify-email?token=...`; `emailVerifiedAt` on the user stays `null`
+until that link is used, purely informational for now.
 
 Request:
 
@@ -272,5 +277,21 @@ reset.
 
 Errors: `400 VALIDATION_FAILED`, `401 INVALID_RESET_TOKEN` (bad, expired, already-used, or
 superseded token — send the user back to request a new link), `429 RATE_LIMITED`.
+
+### `POST /api/v1/auth/verify-email`
+
+Request:
+
+```json
+{ "token": "the-token-from-the-emailed-link" }
+```
+
+Response `200`, `data: null`. Sets `emailVerifiedAt` on the account. This is informational
+only right now — nothing in the API is gated on it, and there's no "resend verification
+email" endpoint yet (unlike password reset, the link is only ever sent once, at
+registration).
+
+Errors: `400 VALIDATION_FAILED`, `401 INVALID_VERIFICATION_TOKEN` (bad, expired, or
+already-used token), `429 RATE_LIMITED`.
 
 

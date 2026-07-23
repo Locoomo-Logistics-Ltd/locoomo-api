@@ -64,17 +64,47 @@ describe('Password reset (e2e)', () => {
     });
   }
 
+  // Other suites (register, ...) enqueue real outbox rows against the same
+  // shared table and never drain them (the automatic @Interval poll is
+  // disabled in test env). A poll() here can legitimately process a batch
+  // of unrelated backlog before/alongside this email, so find our own
+  // message by recipient rather than assuming it's the last one processed,
+  // and poll in a bounded loop rather than assuming one call reaches it.
+  // Takes the *most recent* match — a test that requests a reset twice for
+  // the same address needs the newest email, not the first one still sitting
+  // in this fake's append-only log.
+  async function findSentMessage(
+    email: string,
+    subject: string,
+    alreadySeen: number,
+  ): Promise<EmailMessage> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await poller.poll();
+      const matches = fakeSender.sentMessages.filter(
+        (m) => m.to === email && m.subject === subject,
+      );
+      if (matches.length > alreadySeen) {
+        return matches[matches.length - 1];
+      }
+    }
+    throw new Error(`No new "${subject}" email observed for ${email}`);
+  }
+
   async function requestResetAndGetToken(email: string): Promise<string> {
+    const alreadySeen = fakeSender.sentMessages.filter(
+      (m) => m.to === email && m.subject === 'Reset your Locoomo password',
+    ).length;
+
     await request(app.getHttpServer())
       .post('/api/v1/auth/password-reset/request')
       .send({ email })
       .expect(200);
-    await poller.poll();
 
-    const message = fakeSender.sentMessages.at(-1);
-    if (!message) {
-      throw new Error('No reset email was enqueued/sent');
-    }
+    const message = await findSentMessage(
+      email,
+      'Reset your Locoomo password',
+      alreadySeen,
+    );
     return extractResetToken(message);
   }
 
@@ -135,8 +165,9 @@ describe('Password reset (e2e)', () => {
     const oldRawRefreshToken = oldRefreshCookie.split(';')[0].split('=')[1];
 
     const rawResetToken = await requestResetAndGetToken(email);
-    const message = fakeSender.sentMessages.at(-1)!;
-    expect(message.to).toBe(email);
+    const message = fakeSender.sentMessages.find(
+      (m) => m.to === email && m.subject === 'Reset your Locoomo password',
+    )!;
     expect(message.text).toContain(`/reset-password?token=${rawResetToken}`);
 
     await request(app.getHttpServer())
@@ -172,21 +203,27 @@ describe('Password reset (e2e)', () => {
       .expect(401);
 
     // A "your password changed" notice went out too.
-    await poller.poll();
-    const changedNotice = fakeSender.sentMessages.find(
-      (m) => m.subject === 'Your Locoomo password was changed',
+    const changedNotice = await findSentMessage(
+      email,
+      'Your Locoomo password was changed',
+      0,
     );
-    expect(changedNotice?.to).toBe(email);
+    expect(changedNotice.to).toBe(email);
   });
 
   it('responds identically for an unregistered email and sends nothing', async () => {
+    const email = 'nobody@password-reset.e2e.test';
     await request(app.getHttpServer())
       .post('/api/v1/auth/password-reset/request')
-      .send({ email: 'nobody@password-reset.e2e.test' })
+      .send({ email })
       .expect(200);
 
-    await poller.poll();
-    expect(fakeSender.sentMessages).toHaveLength(0);
+    // Drain whatever's due (including unrelated backlog from other suites)
+    // and confirm nothing addressed to this email ever shows up.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await poller.poll();
+    }
+    expect(fakeSender.sentMessages.some((m) => m.to === email)).toBe(false);
   });
 
   it('responds identically for an invited account with no password set and sends nothing', async () => {
@@ -209,8 +246,10 @@ describe('Password reset (e2e)', () => {
       .send({ email })
       .expect(200);
 
-    await poller.poll();
-    expect(fakeSender.sentMessages).toHaveLength(0);
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await poller.poll();
+    }
+    expect(fakeSender.sentMessages.some((m) => m.to === email)).toBe(false);
   });
 
   it('rejects an unrecognized reset token', async () => {

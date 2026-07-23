@@ -12,6 +12,8 @@ import { RefreshSessionService } from './application/refresh-session.service';
 import { RegisterUserService } from './application/register-user.service';
 import { RequestPasswordResetService } from './application/request-password-reset.service';
 import { TokenIssuanceService } from './application/token-issuance.service';
+import { VerifyEmailService } from './application/verify-email.service';
+import { EmailVerificationTokenEntity } from './infrastructure/entities/email-verification-token.entity';
 import { PasswordResetTokenEntity } from './infrastructure/entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './infrastructure/entities/refresh-token.entity';
 import { UserEntity } from './infrastructure/entities/user.entity';
@@ -25,6 +27,7 @@ import { RolesGuard } from './interface/roles.guard';
       UserEntity,
       RefreshTokenEntity,
       PasswordResetTokenEntity,
+      EmailVerificationTokenEntity,
     ]),
     JwtModule.registerAsync({
       useFactory: (configService: ConfigService<Env, true>) => ({
@@ -42,6 +45,7 @@ import { RolesGuard } from './interface/roles.guard';
     RefreshSessionService,
     RequestPasswordResetService,
     ConfirmPasswordResetService,
+    VerifyEmailService,
     TokenIssuanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
