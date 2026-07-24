@@ -5,19 +5,25 @@ import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Env } from '../../config/env.validation';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { ConfirmInviteService } from './application/confirm-invite.service';
 import { ConfirmPasswordResetService } from './application/confirm-password-reset.service';
+import { InviteUserService } from './application/invite-user.service';
 import { LoginUserService } from './application/login-user.service';
 import { LogoutUserService } from './application/logout-user.service';
 import { RefreshSessionService } from './application/refresh-session.service';
 import { RegisterUserService } from './application/register-user.service';
 import { RequestPasswordResetService } from './application/request-password-reset.service';
 import { TokenIssuanceService } from './application/token-issuance.service';
+import { VerifyEmailService } from './application/verify-email.service';
+import { EmailVerificationTokenEntity } from './infrastructure/entities/email-verification-token.entity';
+import { InviteTokenEntity } from './infrastructure/entities/invite-token.entity';
 import { PasswordResetTokenEntity } from './infrastructure/entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './infrastructure/entities/refresh-token.entity';
 import { UserEntity } from './infrastructure/entities/user.entity';
 import { AuthController } from './interface/auth.controller';
 import { AuthGuard } from './interface/auth.guard';
 import { RolesGuard } from './interface/roles.guard';
+import { UsersController } from './interface/users.controller';
 
 @Module({
   imports: [
@@ -25,6 +31,8 @@ import { RolesGuard } from './interface/roles.guard';
       UserEntity,
       RefreshTokenEntity,
       PasswordResetTokenEntity,
+      EmailVerificationTokenEntity,
+      InviteTokenEntity,
     ]),
     JwtModule.registerAsync({
       useFactory: (configService: ConfigService<Env, true>) => ({
@@ -34,7 +42,7 @@ import { RolesGuard } from './interface/roles.guard';
     }),
     NotificationsModule,
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, UsersController],
   providers: [
     RegisterUserService,
     LoginUserService,
@@ -42,6 +50,9 @@ import { RolesGuard } from './interface/roles.guard';
     RefreshSessionService,
     RequestPasswordResetService,
     ConfirmPasswordResetService,
+    VerifyEmailService,
+    InviteUserService,
+    ConfirmInviteService,
     TokenIssuanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },

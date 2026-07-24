@@ -37,8 +37,7 @@ to read or store. This has real implications for how you call the API:
 
 Every route except `/health` and the `/api/v1/auth/*` endpoints below requires a
 valid `access_token` cookie — this is enforced globally, not per-route, so a new
-endpoint is protected by default the moment it ships. No endpoints beyond `identity`
-exist yet, so this doesn't affect you until they do, but the contract is:
+endpoint is protected by default the moment it ships. The contract:
 
 - Missing or invalid (bad signature, malformed, wrong secret) → `401 UNAUTHENTICATED`.
 - Expired access token → also `401 UNAUTHENTICATED` (identical to missing/invalid —
@@ -46,6 +45,10 @@ exist yet, so this doesn't affect you until they do, but the contract is:
   to call `/api/v1/auth/refresh` and retry the original request.
 - Valid session, but the route requires a role you don't have → `403 FORBIDDEN`. The
   response doesn't say which role was required.
+
+`POST /api/v1/users/invite` (below) is the first route that's both authenticated *and*
+role-gated (Admin only) — the same two-layer check applies: no session → 401, valid
+session but not an Admin → 403.
 
 ## Response envelope
 
@@ -97,11 +100,13 @@ backend greps logs for.
 | 401 | `INVALID_CREDENTIALS` | Login failed — wrong password, unknown email, or account not yet activated. Deliberately identical for all three so a login attempt can't be used to enumerate registered emails; don't try to distinguish these cases in the UI |
 | 401 | `INVALID_REFRESH_TOKEN` | Refresh failed — missing, unrecognized, expired, or already-used cookie. Treat as a hard sign-out, don't retry |
 | 401 | `INVALID_RESET_TOKEN` | Password reset confirm failed — missing, unrecognized, expired, or already-used token. Deliberately identical for all cases; send the user back to "forgot password" |
+| 401 | `INVALID_VERIFICATION_TOKEN` | Email verification failed — missing, unrecognized, expired, or already-used token. Same enumeration-avoidance reasoning; there's no harm shown to the user beyond "this link didn't work" |
+| 401 | `INVALID_INVITE_TOKEN` | Invite confirm failed — missing, unrecognized, expired, or already-used token. Same reasoning; send the invitee back to whoever provisioned their account |
 | 401 | `UNAUTHENTICATED` | No valid `access_token` cookie on a protected route — missing, invalid, or expired. Refresh and retry |
 | 403 | `ACCOUNT_SUSPENDED` | Password was correct but the account is suspended |
 | 403 | `FORBIDDEN` | Valid session, but your role can't access this route |
 | 404 | `NOT_FOUND` | Route or resource doesn't exist |
-| 409 | `EMAIL_ALREADY_REGISTERED` | Registration attempted with an email already on file |
+| 409 | `EMAIL_ALREADY_REGISTERED` | Registration, or an admin invite, attempted with an email already on file |
 | 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
 
@@ -109,7 +114,11 @@ backend greps logs for.
 
 ### `POST /api/v1/auth/register`
 
-Consumer self-registration. Immediately active — no separate activation step.
+Consumer self-registration. Immediately active — no separate activation step, and
+verifying the email is **not** required to log in. A verification email is sent
+asynchronously (same ~10s outbox delay as password reset) with a link of the form
+`{FRONTEND_URL}/verify-email?token=...`; `emailVerifiedAt` on the user stays `null`
+until that link is used, purely informational for now.
 
 Request:
 
@@ -272,5 +281,79 @@ reset.
 
 Errors: `400 VALIDATION_FAILED`, `401 INVALID_RESET_TOKEN` (bad, expired, already-used, or
 superseded token — send the user back to request a new link), `429 RATE_LIMITED`.
+
+### `POST /api/v1/auth/verify-email`
+
+Request:
+
+```json
+{ "token": "the-token-from-the-emailed-link" }
+```
+
+Response `200`, `data: null`. Sets `emailVerifiedAt` on the account. This is informational
+only right now — nothing in the API is gated on it, and there's no "resend verification
+email" endpoint yet (unlike password reset, the link is only ever sent once, at
+registration).
+
+Errors: `400 VALIDATION_FAILED`, `401 INVALID_VERIFICATION_TOKEN` (bad, expired, or
+already-used token), `429 RATE_LIMITED`.
+
+### `POST /api/v1/users/invite`
+
+**Requires an authenticated Admin session** — this is not a public `/auth/*` route.
+NodeOperator, Rider, and Admin accounts are never self-registered; an existing Admin
+provisions them here.
+
+Request:
+
+```json
+{
+  "firstName": "Ada",
+  "lastName": "Lovelace",
+  "email": "ada@example.com",
+  "phone": "+2348012345678",
+  "role": "node_operator"
+}
+```
+
+`role` must be one of `node_operator`, `rider`, `admin` — `consumer` is rejected
+(`400 VALIDATION_FAILED`), that role is self-registration only.
+
+Response `201`, `data`: same `UserResponseDto` shape as register's response, with
+`"status": "invited"`. The account has no password yet and cannot log in until the
+invitee completes the confirm step below. An email is sent asynchronously (same ~10s
+outbox delay as the other flows) with a link of the form
+`{FRONTEND_URL}/accept-invite?token=...`, expiring in 7 days.
+
+Errors: `401 UNAUTHENTICATED` (no session), `403 FORBIDDEN` (session isn't an Admin),
+`400 VALIDATION_FAILED`, `409 EMAIL_ALREADY_REGISTERED`.
+
+### `POST /api/v1/auth/invite/confirm`
+
+Public — this is what the invitee's link submits to. Sets their password and activates
+the account in one step; nothing to call beforehand.
+
+Request:
+
+```json
+{
+  "token": "the-token-from-the-emailed-link",
+  "password": "New-Correct-Horse-2",
+  "passwordConfirmation": "New-Correct-Horse-2",
+  "consentAccepted": true
+}
+```
+
+Same password rules as registration. `consentAccepted` must be `true` — the inviting
+Admin can't accept the ToS/Privacy Policy on the invitee's behalf, so it's captured here
+instead of at invite-creation time.
+
+Response `200`, `data: null`. Flips `status` to `active`, sets `consentAcceptedAt` and
+`emailVerifiedAt` (following the invite link is already proof of email ownership — no
+separate verification email for admin-provisioned accounts). The account can log in
+immediately after.
+
+Errors: `400 VALIDATION_FAILED`, `401 INVALID_INVITE_TOKEN` (bad, expired, or
+already-used token), `429 RATE_LIMITED`.
 
 

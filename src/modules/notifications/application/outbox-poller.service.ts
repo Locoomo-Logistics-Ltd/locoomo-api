@@ -1,7 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThanOrEqual, Repository } from 'typeorm';
+import { Env } from '../../../config/env.validation';
 import { EmailMessage } from '../domain/email-message';
 import type { NotificationSender } from '../domain/notification-sender.port';
 import {
@@ -31,9 +33,23 @@ export class OutboxPollerService {
     private readonly outboxEvents: Repository<OutboxEventEntity>,
     @Inject(NOTIFICATION_SENDER)
     private readonly notificationSender: NotificationSender,
+    private readonly configService: ConfigService<Env, true>,
   ) {}
 
+  // Every e2e suite boots the full app, and several (register, login,
+  // password-reset, email-verification, ...) now enqueue real outbox rows
+  // as a side effect. e2e tests that care about delivery call `poll()`
+  // directly — this timer firing on top of that would mean the real
+  // NotificationSender (real SMTP creds in .env) could send mail to
+  // throwaway @*.e2e.test addresses. Same skip precedent as ThrottlerModule.
   @Interval(OUTBOX_POLL_INTERVAL_MS)
+  async handleInterval(): Promise<void> {
+    if (this.configService.get('NODE_ENV', { infer: true }) === 'test') {
+      return;
+    }
+    await this.poll();
+  }
+
   async poll(): Promise<void> {
     if (this.isPolling) {
       return;

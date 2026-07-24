@@ -7,18 +7,16 @@ import { hashToken } from '../../../common/crypto/hash-token.util';
 import { isUniqueViolation } from '../../../common/database/is-unique-violation.util';
 import { Env } from '../../../config/env.validation';
 import { OutboxService } from '../../notifications/application/outbox.service';
-import { EMAIL_VERIFICATION_TOKEN_TTL_HOURS } from '../domain/email-verification.constants';
 import { EmailAlreadyRegisteredException } from '../domain/exceptions/email-already-registered.exception';
-import { hashPassword } from '../domain/password-hasher';
-import { UserRole } from '../domain/user-role.enum';
+import { INVITE_TOKEN_TTL_DAYS } from '../domain/invite.constants';
 import { UserStatus } from '../domain/user-status.enum';
-import { EmailVerificationTokenEntity } from '../infrastructure/entities/email-verification-token.entity';
+import { InviteTokenEntity } from '../infrastructure/entities/invite-token.entity';
 import { UserEntity } from '../infrastructure/entities/user.entity';
-import { RegisterDto } from '../interface/dto/register.dto';
+import { InviteUserDto } from '../interface/dto/invite-user.dto';
 import { UserResponseDto } from '../interface/dto/user-response.dto';
 
 @Injectable()
-export class RegisterUserService {
+export class InviteUserService {
   constructor(
     @InjectRepository(UserEntity)
     private readonly users: Repository<UserEntity>,
@@ -28,7 +26,7 @@ export class RegisterUserService {
     private readonly configService: ConfigService<Env, true>,
   ) {}
 
-  async register(dto: RegisterDto): Promise<UserResponseDto> {
+  async invite(dto: InviteUserDto): Promise<UserResponseDto> {
     const email = dto.email.toLowerCase();
 
     const existing = await this.users.findOneBy({ email });
@@ -36,35 +34,33 @@ export class RegisterUserService {
       throw new EmailAlreadyRegisteredException(email);
     }
 
-    const passwordHash = await hashPassword(dto.password);
-    const rawVerificationToken = randomBytes(32).toString('hex');
-    const verificationExpiresAt = new Date(
-      Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_HOURS * 60 * 60 * 1000,
+    const rawInviteToken = randomBytes(32).toString('hex');
+    const expiresAt = new Date(
+      Date.now() + INVITE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
     );
-    const verificationLink = `${this.configService.get('FRONTEND_URL', { infer: true })}/verify-email?token=${rawVerificationToken}`;
+    const inviteLink = `${this.configService.get('FRONTEND_URL', { infer: true })}/accept-invite?token=${rawInviteToken}`;
 
     try {
       const saved = await this.dataSource.transaction(async (manager) => {
         const user = manager.create(UserEntity, {
           email,
-          passwordHash,
+          // Null until they follow the link and set one — never an
+          // admin-set password.
+          passwordHash: null,
           firstName: dto.firstName,
           lastName: dto.lastName,
           phone: dto.phone,
-          role: UserRole.CONSUMER,
-          // Consumer self-registration sets a password immediately — unlike
-          // Admin-provisioned roles, there's no separate "set your password"
-          // step, so the account is active right away.
-          status: UserStatus.ACTIVE,
-          consentAcceptedAt: new Date(),
+          role: dto.role,
+          status: UserStatus.INVITED,
+          consentAcceptedAt: null,
         });
         const savedUser = await manager.save(user);
 
         await manager.save(
-          manager.create(EmailVerificationTokenEntity, {
+          manager.create(InviteTokenEntity, {
             userId: savedUser.id,
-            tokenHash: hashToken(rawVerificationToken),
-            expiresAt: verificationExpiresAt,
+            tokenHash: hashToken(rawInviteToken),
+            expiresAt,
             usedAt: null,
           }),
         );
@@ -72,9 +68,9 @@ export class RegisterUserService {
         await this.outboxService.enqueueEmail(
           {
             to: savedUser.email,
-            subject: 'Verify your Locoomo email',
-            text: `Welcome to Locoomo! Verify your email: ${verificationLink}\n\nThis link expires in ${EMAIL_VERIFICATION_TOKEN_TTL_HOURS} hours.`,
-            html: `<p>Welcome to Locoomo!</p><p>Verify your email by clicking the link below:</p><p><a href="${verificationLink}">${verificationLink}</a></p><p>This link expires in ${EMAIL_VERIFICATION_TOKEN_TTL_HOURS} hours.</p>`,
+            subject: "You've been invited to Locoomo",
+            text: `You've been invited to join Locoomo as a ${dto.role}. Set your password to get started: ${inviteLink}\n\nThis link expires in ${INVITE_TOKEN_TTL_DAYS} days.`,
+            html: `<p>You've been invited to join Locoomo as a ${dto.role}.</p><p>Set your password to get started:</p><p><a href="${inviteLink}">${inviteLink}</a></p><p>This link expires in ${INVITE_TOKEN_TTL_DAYS} days.</p>`,
           },
           manager,
         );
@@ -85,7 +81,7 @@ export class RegisterUserService {
       return UserResponseDto.fromEntity(saved);
     } catch (error) {
       // Pre-check above handles the common case; this catches the race
-      // where two requests for the same email land concurrently.
+      // where two invites for the same email land concurrently.
       if (isUniqueViolation(error)) {
         throw new EmailAlreadyRegisteredException(email);
       }

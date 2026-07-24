@@ -48,6 +48,13 @@ describe('Outbox / notification poller (e2e)', () => {
     outboxService = moduleFixture.get(OutboxService);
     poller = moduleFixture.get(OutboxPollerService);
     outboxEvents = moduleFixture.get(getRepositoryToken(OutboxEventEntity));
+
+    // Other e2e suites (register, password reset, ...) enqueue real rows
+    // against this same table and never drain them — the automatic
+    // @Interval poll is disabled in test env specifically so it doesn't hit
+    // real SMTP. This suite makes precise, order-dependent assertions about
+    // exactly what a poll() picks up, so it needs to own an empty queue.
+    await outboxEvents.clear();
   });
 
   beforeEach(() => {
