@@ -1,7 +1,7 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Roles } from '../../../common/auth/decorators/roles.decorator';
+import { UserRole } from '../../../common/auth/user-role.enum';
 import { InviteUserService } from '../application/invite-user.service';
-import { UserRole } from '../domain/user-role.enum';
-import { Roles } from './decorators/roles.decorator';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 

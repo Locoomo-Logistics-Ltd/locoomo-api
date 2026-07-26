@@ -7,12 +7,12 @@ import { App } from 'supertest/types';
 import { Repository } from 'typeorm';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
-import { AccessTokenPayload } from '../../src/modules/identity/domain/access-token-payload';
-import { UserRole } from '../../src/modules/identity/domain/user-role.enum';
-import { CurrentUser } from '../../src/modules/identity/interface/decorators/current-user.decorator';
-import { Public } from '../../src/modules/identity/interface/decorators/public.decorator';
-import { Roles } from '../../src/modules/identity/interface/decorators/roles.decorator';
-import type { AuthenticatedUser } from '../../src/modules/identity/interface/authenticated-user';
+import { AccessTokenPayload } from '../../src/common/auth/access-token-payload';
+import { UserRole } from '../../src/common/auth/user-role.enum';
+import { CurrentUser } from '../../src/common/auth/decorators/current-user.decorator';
+import { Public } from '../../src/common/auth/decorators/public.decorator';
+import { Roles } from '../../src/common/auth/decorators/roles.decorator';
+import type { AuthenticatedUser } from '../../src/common/auth/authenticated-user';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
 
 // Only registered inside this test's TestingModule — never part of the real

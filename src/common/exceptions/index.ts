@@ -4,3 +4,5 @@ export * from './authentication.exception';
 export * from './authorization.exception';
 export * from './infrastructure.exception';
 export * from './entity-not-found.exception';
+export * from './unauthenticated.exception';
+export * from './insufficient-role.exception';

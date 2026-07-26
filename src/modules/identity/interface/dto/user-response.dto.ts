@@ -1,4 +1,4 @@
-import { UserRole } from '../../domain/user-role.enum';
+import { UserRole } from '../../../../common/auth/user-role.enum';
 import { UserStatus } from '../../domain/user-status.enum';
 import { UserEntity } from '../../infrastructure/entities/user.entity';
 

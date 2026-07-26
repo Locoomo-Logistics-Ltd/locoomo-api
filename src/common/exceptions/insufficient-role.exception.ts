@@ -1,4 +1,4 @@
-import { AuthorizationException } from '../../../../common/exceptions';
+import { AuthorizationException } from './authorization.exception';
 
 export class InsufficientRoleException extends AuthorizationException {
   readonly errorCode = 'FORBIDDEN';

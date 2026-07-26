@@ -105,7 +105,7 @@ backend greps logs for.
 | 401 | `UNAUTHENTICATED` | No valid `access_token` cookie on a protected route — missing, invalid, or expired. Refresh and retry |
 | 403 | `ACCOUNT_SUSPENDED` | Password was correct but the account is suspended |
 | 403 | `FORBIDDEN` | Valid session, but your role can't access this route |
-| 404 | `NOT_FOUND` | Route or resource doesn't exist |
+| 404 | `NOT_FOUND` | Route or resource doesn't exist. Also returned for a Node that exists but isn't `active` when you're not an Admin — visibility is hidden as "not found," not `403`, so a non-Admin can't distinguish "doesn't exist" from "pending approval" |
 | 409 | `EMAIL_ALREADY_REGISTERED` | Registration, or an admin invite, attempted with an email already on file |
 | 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
@@ -355,5 +355,132 @@ immediately after.
 
 Errors: `400 VALIDATION_FAILED`, `401 INVALID_INVITE_TOKEN` (bad, expired, or
 already-used token), `429 RATE_LIMITED`.
+
+### Pagination (list endpoints)
+
+Every list endpoint takes `page` (default `1`) and `limit` (default `20`, max `100`)
+query params and returns `data` shaped as:
+
+```json
+{
+  "items": [ "...": "endpoint-specific" ],
+  "page": 1,
+  "limit": 20,
+  "total": 42
+}
+```
+
+### `POST /api/v1/nodes`
+
+**Requires an authenticated Admin session.** Creates a Node directly — for
+field-recruited, warm-lead, chain-partner, or franchise onboarding, where an Admin
+already has all the details in hand. Self-service registration (a NodeOperator signing
+up and setting up their own Node) is a separate, not-yet-built flow (`node-operators`
+module) — that path creates Nodes in `pending` status; this one goes `active`
+immediately, since Admin authorship is itself the trust/verification gate.
+
+Request:
+
+```json
+{
+  "name": "Lekki Phase 1 Node",
+  "address": "12 Admiralty Way",
+  "city": "Lagos",
+  "state": "Lagos",
+  "country": "Nigeria",
+  "latitude": 6.4500,
+  "longitude": 3.4700,
+  "capacity": 100,
+  "operatingHours": "Mon-Sat 8am-7pm",
+  "onboardingType": "field_recruited"
+}
+```
+
+| Field | Rules |
+|---|---|
+| `name` | 1–150 chars |
+| `address` | 1–255 chars |
+| `city`, `state` | 1–100 chars |
+| `country` | optional, defaults to `"Nigeria"` |
+| `latitude`, `longitude` | valid coordinates |
+| `capacity` | integer, 1–100000 — self-reported max parcels this Node can hold; there's no capacity-reservation/locking logic yet, that lands with `orders`/`payments` |
+| `operatingHours` | optional free text, max 255 chars |
+| `onboardingType` | optional, defaults to `field_recruited`. One of `field_recruited`, `warm_lead`, `chain_partner`, `franchise` — `portal` is rejected here (`400 VALIDATION_FAILED`), it's set only by the future self-registration flow |
+
+Response `201`, `data`: same shape as the Node objects in the list/get responses below,
+with `"status": "active"`.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `400 VALIDATION_FAILED`.
+
+### `GET /api/v1/nodes`
+
+Any authenticated role. Lists Nodes, paginated (see above). Non-Admins always see only
+`active` Nodes, regardless of the `status` filter — this is what keeps
+pending/suspended/inactive Nodes out of pickup-station listings. Admins can filter by
+`status`.
+
+Query params: `page`, `limit`, `status` (Admin-only filter — `pending`, `active`,
+`inactive`, or `suspended`; ignored for non-Admins).
+
+Response `200`, `data.items[]` each:
+
+```json
+{
+  "id": "uuid",
+  "name": "Lekki Phase 1 Node",
+  "address": "12 Admiralty Way",
+  "city": "Lagos",
+  "state": "Lagos",
+  "country": "Nigeria",
+  "latitude": 6.45,
+  "longitude": 3.47,
+  "capacity": 100,
+  "status": "active",
+  "onboardingType": "field_recruited",
+  "operatingHours": "Mon-Sat 8am-7pm",
+  "createdAt": "2026-07-22T09:14:00.000Z"
+}
+```
+
+### `GET /api/v1/nodes/nearby`
+
+Any authenticated role. Proximity search — always `active`-only regardless of caller,
+since its entire purpose is "where can I actually drop off a parcel right now." Backed
+by a PostGIS `ST_DWithin`/`ST_Distance` query against a GiST-indexed geography column.
+
+Query params (all required except pagination): `latitude`, `longitude`, `radiusKm`
+(0.1–100), plus `page`/`limit`.
+
+Response `200`, `data.items[]`: same shape as the list response above, plus
+`distanceMeters` (straight-line distance from the query point), sorted nearest-first.
+
+Errors: `400 VALIDATION_FAILED` (missing/out-of-range lat/lng/radius).
+
+### `GET /api/v1/nodes/:id`
+
+Any authenticated role. Non-Admins get `404 NOT_FOUND` for a Node that exists but isn't
+`active` — same shape as "doesn't exist," so pending/suspended Nodes can't be
+fingerprinted by ID. Admins can fetch any Node regardless of status.
+
+Response `200`, `data`: same shape as one list item.
+
+Errors: `404 NOT_FOUND` (doesn't exist, or exists but hidden from your role),
+`400 VALIDATION_FAILED` (malformed id).
+
+### `PATCH /api/v1/nodes/:id`
+
+**Requires an authenticated Admin session.** All fields optional — send only what's
+changing. This is also how an Admin approves a pending Node (`{ "status": "active" }`)
+or retires one (`{ "status": "inactive" }` / `"suspended"`) — there is no delete
+endpoint, a Node is never removed, only status-transitioned.
+
+Request (all optional): `name`, `address`, `city`, `state`, `country`, `latitude`,
+`longitude`, `capacity`, `operatingHours`, `status`. `onboardingType` is immutable after
+creation and isn't accepted here.
+
+Response `200`, `data`: the updated Node, same shape as one list item.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `400 VALIDATION_FAILED`,
+`404 NOT_FOUND`.
 
 

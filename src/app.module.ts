@@ -6,6 +6,7 @@ import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './modules/identity/identity.module';
+import { NodesModule } from './modules/nodes/nodes.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
@@ -16,6 +17,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     HealthModule,
     NotificationsModule,
     IdentityModule,
+    NodesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

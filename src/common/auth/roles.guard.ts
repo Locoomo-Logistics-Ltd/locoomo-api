@@ -1,8 +1,10 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { UserRole } from '../domain/user-role.enum';
-import { InsufficientRoleException } from '../domain/exceptions/insufficient-role.exception';
-import { UnauthenticatedException } from '../domain/exceptions/unauthenticated.exception';
+import {
+  InsufficientRoleException,
+  UnauthenticatedException,
+} from '../exceptions';
+import { UserRole } from './user-role.enum';
 import { RequestWithUser } from './auth.guard';
 import { ROLES_KEY } from './decorators/roles.decorator';
 
