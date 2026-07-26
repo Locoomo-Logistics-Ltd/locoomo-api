@@ -2,11 +2,11 @@ import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
-import { AccessTokenPayload } from '../domain/access-token-payload';
-import { UnauthenticatedException } from '../domain/exceptions/unauthenticated.exception';
+import { UnauthenticatedException } from '../exceptions';
+import { AccessTokenPayload } from './access-token-payload';
 import { AuthenticatedUser } from './authenticated-user';
 import { IS_PUBLIC_KEY } from './decorators/public.decorator';
-import { ACCESS_TOKEN_COOKIE } from './session-cookies';
+import { ACCESS_TOKEN_COOKIE } from './session-cookie-names';
 
 export interface RequestWithUser extends Request {
   user?: AuthenticatedUser;

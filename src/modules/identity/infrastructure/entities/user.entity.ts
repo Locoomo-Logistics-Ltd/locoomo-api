@@ -6,7 +6,7 @@ import {
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { UserRole } from '../../domain/user-role.enum';
+import { UserRole } from '../../../../common/auth/user-role.enum';
 import { UserStatus } from '../../domain/user-status.enum';
 
 // email must be lowercased by the caller before insert/query — no DB-level

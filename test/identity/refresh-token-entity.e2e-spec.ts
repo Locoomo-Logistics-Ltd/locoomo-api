@@ -4,7 +4,7 @@ import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigModule } from '../../src/config/config.module';
 import { DatabaseModule } from '../../src/database/database.module';
-import { UserRole } from '../../src/modules/identity/domain/user-role.enum';
+import { UserRole } from '../../src/common/auth/user-role.enum';
 import { RefreshTokenEntity } from '../../src/modules/identity/infrastructure/entities/refresh-token.entity';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
 

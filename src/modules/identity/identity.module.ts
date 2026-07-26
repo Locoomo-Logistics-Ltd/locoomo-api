@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuthGuard } from '../../common/auth/auth.guard';
+import { RolesGuard } from '../../common/auth/roles.guard';
 import { Env } from '../../config/env.validation';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ConfirmInviteService } from './application/confirm-invite.service';
@@ -21,8 +23,6 @@ import { PasswordResetTokenEntity } from './infrastructure/entities/password-res
 import { RefreshTokenEntity } from './infrastructure/entities/refresh-token.entity';
 import { UserEntity } from './infrastructure/entities/user.entity';
 import { AuthController } from './interface/auth.controller';
-import { AuthGuard } from './interface/auth.guard';
-import { RolesGuard } from './interface/roles.guard';
 import { UsersController } from './interface/users.controller';
 
 @Module({

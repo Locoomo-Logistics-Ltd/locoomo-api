@@ -1,5 +1,5 @@
 import { hashPassword } from '../modules/identity/domain/password-hasher';
-import { UserRole } from '../modules/identity/domain/user-role.enum';
+import { UserRole } from '../common/auth/user-role.enum';
 import { UserStatus } from '../modules/identity/domain/user-status.enum';
 import { UserEntity } from '../modules/identity/infrastructure/entities/user.entity';
 import { AppDataSource } from './data-source';

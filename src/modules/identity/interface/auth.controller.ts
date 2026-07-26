@@ -10,6 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Throttle, seconds } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { Public } from '../../../common/auth/decorators/public.decorator';
 import { Env } from '../../../config/env.validation';
 import { InvalidRefreshTokenException } from '../domain/exceptions/invalid-refresh-token.exception';
 import { ConfirmInviteService } from '../application/confirm-invite.service';
@@ -20,7 +21,6 @@ import { RefreshSessionService } from '../application/refresh-session.service';
 import { RegisterUserService } from '../application/register-user.service';
 import { RequestPasswordResetService } from '../application/request-password-reset.service';
 import { VerifyEmailService } from '../application/verify-email.service';
-import { Public } from './decorators/public.decorator';
 import { ConfirmEmailVerificationDto } from './dto/confirm-email-verification.dto';
 import { ConfirmInviteDto } from './dto/confirm-invite.dto';
 import { ConfirmPasswordResetDto } from './dto/confirm-password-reset.dto';

@@ -10,7 +10,7 @@ import { OutboxService } from '../../notifications/application/outbox.service';
 import { EMAIL_VERIFICATION_TOKEN_TTL_HOURS } from '../domain/email-verification.constants';
 import { EmailAlreadyRegisteredException } from '../domain/exceptions/email-already-registered.exception';
 import { hashPassword } from '../domain/password-hasher';
-import { UserRole } from '../domain/user-role.enum';
+import { UserRole } from '../../../common/auth/user-role.enum';
 import { UserStatus } from '../domain/user-status.enum';
 import { EmailVerificationTokenEntity } from '../infrastructure/entities/email-verification-token.entity';
 import { UserEntity } from '../infrastructure/entities/user.entity';

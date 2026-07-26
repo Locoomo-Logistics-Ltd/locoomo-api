@@ -8,7 +8,7 @@ import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
 import { hashToken } from '../../src/common/crypto/hash-token.util';
 import { hashRefreshToken } from '../../src/modules/identity/domain/refresh-token-hasher';
-import { UserRole } from '../../src/modules/identity/domain/user-role.enum';
+import { UserRole } from '../../src/common/auth/user-role.enum';
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { PasswordResetTokenEntity } from '../../src/modules/identity/infrastructure/entities/password-reset-token.entity';
 import { RefreshTokenEntity } from '../../src/modules/identity/infrastructure/entities/refresh-token.entity';

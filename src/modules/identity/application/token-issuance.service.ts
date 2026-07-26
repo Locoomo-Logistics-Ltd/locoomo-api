@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AccessTokenPayload } from '../domain/access-token-payload';
+import { AccessTokenPayload } from '../../../common/auth/access-token-payload';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   REFRESH_TOKEN_TTL_DAYS,

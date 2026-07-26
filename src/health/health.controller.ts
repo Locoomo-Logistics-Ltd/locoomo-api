@@ -5,7 +5,7 @@ import {
   TypeOrmHealthIndicator,
 } from '@nestjs/terminus';
 import { SkipResponseEnvelope } from '../common/decorators/skip-response-envelope.decorator';
-import { Public } from '../modules/identity/interface/decorators/public.decorator';
+import { Public } from '../common/auth/decorators/public.decorator';
 
 // Infra probe target (Railway/Render) — no cookies, must stay reachable
 // without a session.

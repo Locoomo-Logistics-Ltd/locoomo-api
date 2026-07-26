@@ -8,7 +8,7 @@ import { Repository } from 'typeorm';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
 import { hashPassword } from '../../src/modules/identity/domain/password-hasher';
-import { UserRole } from '../../src/modules/identity/domain/user-role.enum';
+import { UserRole } from '../../src/common/auth/user-role.enum';
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { InviteTokenEntity } from '../../src/modules/identity/infrastructure/entities/invite-token.entity';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';

@@ -1,4 +1,4 @@
-import { AuthenticationException } from '../../../../common/exceptions';
+import { AuthenticationException } from './authentication.exception';
 
 export class UnauthenticatedException extends AuthenticationException {
   readonly errorCode = 'UNAUTHENTICATED';

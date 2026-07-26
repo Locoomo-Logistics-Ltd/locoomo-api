@@ -6,7 +6,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { UserRole } from '../../domain/user-role.enum';
+import { UserRole } from '../../../../common/auth/user-role.enum';
 
 // Consumer is deliberately excluded — that role is self-registration only
 // (CLAUDE.md #9/#7).
