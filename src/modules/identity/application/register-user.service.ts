@@ -42,6 +42,16 @@ export class RegisterUserService {
       Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_HOURS * 60 * 60 * 1000,
     );
     const verificationLink = `${this.configService.get('FRONTEND_URL', { infer: true })}/verify-email?token=${rawVerificationToken}`;
+    const role = dto.role ?? UserRole.CONSUMER;
+    // Both roles set a password immediately — unlike Admin-provisioned
+    // roles, there's no separate "set your password" step. Consumer is
+    // active right away; NodeOperator lands in pending_review until they
+    // complete Node onboarding and an Admin approves it (node-operators
+    // module).
+    const status =
+      role === UserRole.NODE_OPERATOR
+        ? UserStatus.PENDING_REVIEW
+        : UserStatus.ACTIVE;
 
     try {
       const saved = await this.dataSource.transaction(async (manager) => {
@@ -51,11 +61,8 @@ export class RegisterUserService {
           firstName: dto.firstName,
           lastName: dto.lastName,
           phone: dto.phone,
-          role: UserRole.CONSUMER,
-          // Consumer self-registration sets a password immediately — unlike
-          // Admin-provisioned roles, there's no separate "set your password"
-          // step, so the account is active right away.
-          status: UserStatus.ACTIVE,
+          role,
+          status,
           consentAcceptedAt: new Date(),
         });
         const savedUser = await manager.save(user);

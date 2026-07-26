@@ -107,6 +107,7 @@ backend greps logs for.
 | 403 | `FORBIDDEN` | Valid session, but your role can't access this route |
 | 404 | `NOT_FOUND` | Route or resource doesn't exist. Also returned for a Node that exists but isn't `active` when you're not an Admin — visibility is hidden as "not found," not `403`, so a non-Admin can't distinguish "doesn't exist" from "pending approval" |
 | 409 | `EMAIL_ALREADY_REGISTERED` | Registration, or an admin invite, attempted with an email already on file |
+| 409 | `NODE_OPERATOR_ALREADY_ONBOARDED` | `POST /node-operators/onboarding` called by an account that already has a Node |
 | 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
 
@@ -114,11 +115,19 @@ backend greps logs for.
 
 ### `POST /api/v1/auth/register`
 
-Consumer self-registration. Immediately active — no separate activation step, and
-verifying the email is **not** required to log in. A verification email is sent
-asynchronously (same ~10s outbox delay as password reset) with a link of the form
-`{FRONTEND_URL}/verify-email?token=...`; `emailVerifiedAt` on the user stays `null`
-until that link is used, purely informational for now.
+Self-registration for **Consumer** (default) or **NodeOperator** (`role: "node_operator"`
+in the request body). Rider and Admin can't self-register — Rider because the `riders`
+module (KYC docs) doesn't exist yet, Admin because it's never self-registerable; use
+`POST /users/invite` for those. This is the same endpoint for both allowed roles, not a
+separate one, differing only in `role` and the resulting `status`.
+
+Consumer is immediately `active` — no separate activation step, and verifying the email
+is **not** required to log in. NodeOperator lands in `pending_review` instead — they
+*can* log in right away (a password is set immediately, same as Consumer), but can't
+operate until they complete `POST /node-operators/onboarding` (below) and an Admin
+approves it. Either way, a verification email is sent asynchronously (same ~10s outbox
+delay as password reset) with a link of the form `{FRONTEND_URL}/verify-email?token=...`;
+`emailVerifiedAt` stays `null` until that link is used, purely informational for now.
 
 Request:
 
@@ -130,7 +139,8 @@ Request:
   "phone": "+2348012345678",
   "password": "Correct-Horse-Battery-1",
   "passwordConfirmation": "Correct-Horse-Battery-1",
-  "consentAccepted": true
+  "consentAccepted": true,
+  "role": "node_operator"
 }
 ```
 
@@ -142,6 +152,7 @@ Request:
 | `password` | 12–128 chars. No composition rules beyond length (current OWASP guidance) — don't build a strength meter checking for uppercase/symbols/etc., it'd reject valid passwords this API accepts |
 | `passwordConfirmation` | must exactly match `password` |
 | `consentAccepted` | must be `true` — ToS/Privacy Policy acceptance (NDPA), there is no "accept later" |
+| `role` | optional, defaults to `consumer`. Only `consumer` or `node_operator` accepted — anything else is `400 VALIDATION_FAILED` |
 
 Response `201`, `data`:
 
@@ -152,8 +163,8 @@ Response `201`, `data`:
   "firstName": "Ada",
   "lastName": "Lovelace",
   "phone": "+2348012345678",
-  "role": "consumer",
-  "status": "active",
+  "role": "node_operator",
+  "status": "pending_review",
   "emailVerifiedAt": null,
   "createdAt": "2026-07-22T09:14:00.000Z"
 }
@@ -482,5 +493,88 @@ Response `200`, `data`: the updated Node, same shape as one list item.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `400 VALIDATION_FAILED`,
 `404 NOT_FOUND`.
+
+### `POST /api/v1/node-operators/onboarding`
+
+**Requires an authenticated NodeOperator session** (role `node_operator` — set via
+`POST /auth/register`'s `role` field). This is the second step of self-registration:
+sets up the operator's Node (location, capacity). Creates the `Node` (`status: pending`,
+`onboardingType: portal`) and links it to your account in one action — the Node stays
+invisible in `/nodes`/`/nodes/nearby` for everyone except Admins until an Admin approves
+it (`PATCH /node-operators/:id/approve` below). One Node per operator — calling this
+twice on the same account returns `409`.
+
+Request: same fields as `POST /nodes` **except no `onboardingType`** (forced to `portal`
+server-side, not client-settable):
+
+```json
+{
+  "name": "My Store Front",
+  "address": "12 Admiralty Way",
+  "city": "Lagos",
+  "state": "Lagos",
+  "country": "Nigeria",
+  "latitude": 6.4500,
+  "longitude": 3.4700,
+  "capacity": 50,
+  "operatingHours": "Mon-Sat 8am-7pm"
+}
+```
+
+Response `201`, `data`:
+
+```json
+{
+  "profileId": "uuid",
+  "node": { "...": "same Node shape as GET /nodes/:id, status will be \"pending\"" }
+}
+```
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator),
+`400 VALIDATION_FAILED`, `409 NODE_OPERATOR_ALREADY_ONBOARDED`.
+
+### `GET /api/v1/node-operators/me`
+
+**Requires an authenticated NodeOperator session.** Returns your own profile + Node —
+use this to check whether your Node has been approved yet (`data.node.status`).
+`404 NOT_FOUND` if you haven't completed onboarding yet (call the endpoint above first).
+
+Response `200`, `data`: same shape as the onboarding response.
+
+### `GET /api/v1/node-operators/pending`
+
+**Requires an authenticated Admin session.** The review queue — NodeOperators who have
+registered and completed onboarding but aren't approved yet. Paginated (see the
+pagination section above).
+
+Response `200`, `data.items[]` each:
+
+```json
+{
+  "profileId": "uuid",
+  "userEmail": "operator@example.com",
+  "userFirstName": "Ada",
+  "userLastName": "Lovelace",
+  "submittedAt": "2026-07-22T09:14:00.000Z",
+  "node": { "...": "same Node shape as GET /nodes/:id, status will be \"pending\"" }
+}
+```
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
+
+### `PATCH /api/v1/node-operators/:id/approve`
+
+**Requires an authenticated Admin session.** `:id` is the `profileId` from the pending
+queue above (not the Node id or the user id). Approves the operator — flips the User's
+status to `active` and the Node's status to `active` together, in one transaction. After
+this, the Node shows up in `/nodes`/`/nodes/nearby` for everyone.
+
+No request body.
+
+Response `200`, `data`: same shape as the onboarding response, with `node.status:
+"active"`.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `404 NOT_FOUND`
+(no profile with that id).
 
 

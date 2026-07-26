@@ -6,6 +6,7 @@ import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './modules/identity/identity.module';
+import { NodeOperatorsModule } from './modules/node-operators/node-operators.module';
 import { NodesModule } from './modules/nodes/nodes.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 
@@ -18,6 +19,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     NotificationsModule,
     IdentityModule,
     NodesModule,
+    NodeOperatorsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

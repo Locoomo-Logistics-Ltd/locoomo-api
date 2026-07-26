@@ -1,7 +1,6 @@
 export enum UserStatus {
-  // Admin-provisioned accounts (NodeOperator, Rider, Admin) start here until the
-  // user follows their emailed link and sets a password.
   INVITED = 'invited',
+  PENDING_REVIEW = 'pending_review',
   ACTIVE = 'active',
   SUSPENDED = 'suspended',
 }

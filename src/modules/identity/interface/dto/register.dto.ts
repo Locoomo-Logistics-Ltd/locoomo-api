@@ -2,12 +2,21 @@ import {
   Equals,
   IsBoolean,
   IsEmail,
+  IsIn,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { UserRole } from '../../../../common/auth/user-role.enum';
 import { Match } from '../../../../common/validators/match.decorator';
+
+// Rider is deliberately excluded — the `riders` module (KYC docs, Cloudinary
+// upload) doesn't exist yet, so there's nowhere for a self-registered Rider
+// to go. Admin is excluded for the same reason InviteUserDto excludes
+// Consumer: never self-registerable.
+const SELF_REGISTERABLE_ROLES = [UserRole.CONSUMER, UserRole.NODE_OPERATOR];
 
 export class RegisterDto {
   @IsString()
@@ -44,4 +53,10 @@ export class RegisterDto {
     message: 'You must accept the Terms of Service and Privacy Policy',
   })
   consentAccepted!: boolean;
+
+  @IsOptional()
+  @IsIn(SELF_REGISTERABLE_ROLES, {
+    message: `role must be one of: ${SELF_REGISTERABLE_ROLES.join(', ')}`,
+  })
+  role?: UserRole;
 }

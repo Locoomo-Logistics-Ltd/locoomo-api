@@ -69,8 +69,49 @@ export class NodesService {
     return row;
   }
 
-  async update(id: string, dto: UpdateNodeDto): Promise<NodeEntity> {
-    const node = await this.nodes.findOneBy({ id });
+  // Narrow entry point for node-operators' self-registration flow — takes a
+  // plain field bag (no NodeOnboardingType/NodeStatus in its signature) so
+  // the caller never needs those enums, which live in nodes' domain/ and
+  // can't be imported cross-module. `manager` is required, not optional,
+  // since this only makes sense as part of the caller's own transaction
+  // (creating the linked NodeOperatorProfile alongside it).
+  async createPendingPortalNode(
+    dto: {
+      name: string;
+      address: string;
+      city: string;
+      state: string;
+      country?: string;
+      latitude: number;
+      longitude: number;
+      capacity: number;
+      operatingHours?: string;
+    },
+    manager: EntityManager,
+  ): Promise<NodeEntity> {
+    return this.create(
+      { ...dto, onboardingType: NodeOnboardingType.PORTAL },
+      { manager, status: NodeStatus.PENDING },
+    );
+  }
+
+  // Narrow entry point for node-operators' Admin-approval flow — same
+  // enum-hiding reasoning as createPendingPortalNode.
+  async activate(id: string, manager: EntityManager): Promise<NodeEntity> {
+    return this.update(id, { status: NodeStatus.ACTIVE }, manager);
+  }
+
+  // manager: passed by node-operators' Admin-approval flow so Node.status
+  // flips to ACTIVE in the same transaction as User.status — same
+  // manager-passing convention as create().
+  async update(
+    id: string,
+    dto: UpdateNodeDto,
+    manager?: EntityManager,
+  ): Promise<NodeEntity> {
+    const repo = manager ? manager.getRepository(NodeEntity) : this.nodes;
+
+    const node = await repo.findOneBy({ id });
     if (!node) {
       throw new EntityNotFoundException('Node', id);
     }
@@ -86,11 +127,11 @@ export class NodesService {
     node.operatingHours = dto.operatingHours ?? node.operatingHours;
     node.status = dto.status ?? node.status;
 
-    const saved = await this.nodes.save(node);
+    const saved = await repo.save(node);
 
     if (dto.latitude !== undefined || dto.longitude !== undefined) {
       await this.syncLocation(
-        this.dataSource.manager,
+        manager ?? this.dataSource.manager,
         saved.id,
         saved.latitude,
         saved.longitude,
