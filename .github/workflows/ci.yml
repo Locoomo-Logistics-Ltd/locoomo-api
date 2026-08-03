@@ -43,6 +43,12 @@ jobs:
       SMTP_USER: ci
       SMTP_PASSWORD: ci
       SMTP_FROM: 'Locoomo <no-reply@locoomo.dev>'
+      # Never actually connected to — riders e2e tests override CloudinaryService
+      # with a fake (see riders.e2e-spec.ts), so nothing dispatches through the
+      # real SDK. These just need to satisfy env validation at boot.
+      CLOUDINARY_CLOUD_NAME: ci-placeholder
+      CLOUDINARY_API_KEY: '123456789012345'
+      CLOUDINARY_API_SECRET: ci-placeholder-secret
 
     steps:
       - uses: actions/checkout@v4

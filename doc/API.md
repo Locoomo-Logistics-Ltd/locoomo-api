@@ -97,6 +97,7 @@ backend greps logs for.
 | HTTP | code | Meaning |
 |---|---|---|
 | 400 | `VALIDATION_FAILED` | Request body failed DTO validation — see `error.details` for per-field reasons |
+| 400 | `INVALID_VERIFICATION_DOCUMENT` | `POST /riders/onboarding` referenced a `cloudinaryPublicId` that doesn't correspond to an actual completed upload — re-request an upload signature and try again |
 | 401 | `INVALID_CREDENTIALS` | Login failed — wrong password, unknown email, or account not yet activated. Deliberately identical for all three so a login attempt can't be used to enumerate registered emails; don't try to distinguish these cases in the UI |
 | 401 | `INVALID_REFRESH_TOKEN` | Refresh failed — missing, unrecognized, expired, or already-used cookie. Treat as a hard sign-out, don't retry |
 | 401 | `INVALID_RESET_TOKEN` | Password reset confirm failed — missing, unrecognized, expired, or already-used token. Deliberately identical for all cases; send the user back to "forgot password" |
@@ -108,6 +109,7 @@ backend greps logs for.
 | 404 | `NOT_FOUND` | Route or resource doesn't exist. Also returned for a Node that exists but isn't `active` when you're not an Admin — visibility is hidden as "not found," not `403`, so a non-Admin can't distinguish "doesn't exist" from "pending approval" |
 | 409 | `EMAIL_ALREADY_REGISTERED` | Registration, or an admin invite, attempted with an email already on file |
 | 409 | `NODE_OPERATOR_ALREADY_ONBOARDED` | `POST /node-operators/onboarding` called by an account that already has a Node |
+| 409 | `RIDER_ALREADY_ONBOARDED` | `POST /riders/onboarding` called by an account that already has a rider profile |
 | 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
 
@@ -115,16 +117,16 @@ backend greps logs for.
 
 ### `POST /api/v1/auth/register`
 
-Self-registration for **Consumer** (default) or **NodeOperator** (`role: "node_operator"`
-in the request body). Rider and Admin can't self-register — Rider because the `riders`
-module (KYC docs) doesn't exist yet, Admin because it's never self-registerable; use
-`POST /users/invite` for those. This is the same endpoint for both allowed roles, not a
-separate one, differing only in `role` and the resulting `status`.
+Self-registration for **Consumer** (default), **NodeOperator**, or **Rider**
+(`role: "node_operator"` / `"rider"` in the request body). Admin can't self-register —
+use `POST /users/invite` for that. This is the same endpoint for all three allowed
+roles, not a separate one per role, differing only in `role` and the resulting `status`.
 
 Consumer is immediately `active` — no separate activation step, and verifying the email
-is **not** required to log in. NodeOperator lands in `pending_review` instead — they
-*can* log in right away (a password is set immediately, same as Consumer), but can't
-operate until they complete `POST /node-operators/onboarding` (below) and an Admin
+is **not** required to log in. NodeOperator/Rider land in `pending_review` instead —
+they *can* log in right away (a password is set immediately, same as Consumer), but
+can't operate until they complete their module's onboarding step
+(`POST /node-operators/onboarding` or `POST /riders/onboarding`, below) and an Admin
 approves it. Either way, a verification email is sent asynchronously (same ~10s outbox
 delay as password reset) with a link of the form `{FRONTEND_URL}/verify-email?token=...`;
 `emailVerifiedAt` stays `null` until that link is used, purely informational for now.
@@ -152,7 +154,7 @@ Request:
 | `password` | 12–128 chars. No composition rules beyond length (current OWASP guidance) — don't build a strength meter checking for uppercase/symbols/etc., it'd reject valid passwords this API accepts |
 | `passwordConfirmation` | must exactly match `password` |
 | `consentAccepted` | must be `true` — ToS/Privacy Policy acceptance (NDPA), there is no "accept later" |
-| `role` | optional, defaults to `consumer`. Only `consumer` or `node_operator` accepted — anything else is `400 VALIDATION_FAILED` |
+| `role` | optional, defaults to `consumer`. Only `consumer`, `node_operator`, or `rider` accepted — anything else is `400 VALIDATION_FAILED` |
 
 Response `201`, `data`:
 
@@ -573,6 +575,133 @@ No request body.
 
 Response `200`, `data`: same shape as the onboarding response, with `node.status:
 "active"`.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `404 NOT_FOUND`
+(no profile with that id).
+
+### `GET /api/v1/riders/verification/upload-signature`
+
+**Requires an authenticated Rider session.** Step one of rider onboarding: get a signed
+authorization to upload a verification document *directly to Cloudinary* — the file
+bytes never pass through this API. Call this, use the response to upload straight to
+Cloudinary from the client, then pass the resulting `public_id` to
+`POST /riders/onboarding` below.
+
+Query params: `documentType` — only `rating_screenshot` exists today (a screenshot of
+your ratings/reviews dashboard at the company you currently ride for).
+
+Response `200`, `data`:
+
+```json
+{
+  "signature": "...",
+  "timestamp": 1785000000,
+  "apiKey": "...",
+  "cloudName": "...",
+  "folder": "riders/{your-user-id}/verification/rating_screenshot"
+}
+```
+
+How to use this to upload (client-side, direct to Cloudinary, not to this API):
+
+```
+POST https://api.cloudinary.com/v1_1/{cloudName}/image/upload
+Content-Type: multipart/form-data
+
+file=<the image>
+api_key=<apiKey>
+timestamp=<timestamp>
+signature=<signature>
+folder=<folder>
+type=authenticated
+```
+
+Cloudinary's response includes a `public_id` — that's what you send to
+`POST /riders/onboarding`.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a Rider), `400 VALIDATION_FAILED`
+(unknown `documentType`).
+
+### `POST /api/v1/riders/onboarding`
+
+**Requires an authenticated Rider session.** Step two: submit the rest of your details
+plus the `public_id` from the Cloudinary upload above. We confirm the upload actually
+happened (via Cloudinary's Admin API) before accepting it — a stale or made-up
+`public_id` is rejected. One rider profile per account; calling this twice returns
+`409`.
+
+Request:
+
+```json
+{
+  "currentEmployer": "Existing Delivery Co",
+  "documentType": "rating_screenshot",
+  "cloudinaryPublicId": "riders/{your-user-id}/verification/rating_screenshot/abc123"
+}
+```
+
+Response `201`, `data`:
+
+```json
+{
+  "profileId": "uuid",
+  "currentEmployer": "Existing Delivery Co",
+  "status": "pending",
+  "documents": [
+    {
+      "documentType": "rating_screenshot",
+      "uploadedAt": "2026-07-22T09:14:00.000Z",
+      "viewUrl": "https://res.cloudinary.com/.../authenticated/s--.../..."
+    }
+  ]
+}
+```
+
+`viewUrl` is a signed, time-limited Cloudinary delivery URL, freshly generated on every
+response — never store it, it's not permanent.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a Rider), `400 VALIDATION_FAILED`,
+`400 INVALID_VERIFICATION_DOCUMENT` (the `cloudinaryPublicId` doesn't correspond to a
+real upload), `409 RIDER_ALREADY_ONBOARDED`.
+
+### `GET /api/v1/riders/me`
+
+**Requires an authenticated Rider session.** Returns your own profile + documents — use
+this to check whether you've been approved yet (`data.status`). `404 NOT_FOUND` if you
+haven't completed onboarding yet.
+
+Response `200`, `data`: same shape as the onboarding response.
+
+### `GET /api/v1/riders/pending`
+
+**Requires an authenticated Admin session.** The review queue — Riders who have
+registered and completed onboarding but aren't approved yet. Paginated.
+
+Response `200`, `data.items[]` each:
+
+```json
+{
+  "profileId": "uuid",
+  "userEmail": "rider@example.com",
+  "userFirstName": "Ada",
+  "userLastName": "Lovelace",
+  "currentEmployer": "Existing Delivery Co",
+  "submittedAt": "2026-07-22T09:14:00.000Z",
+  "documents": [ "...": "same document shape as the onboarding response" ]
+}
+```
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
+
+### `PATCH /api/v1/riders/:id/approve`
+
+**Requires an authenticated Admin session.** `:id` is the `profileId` from the pending
+queue above. Approves the rider — flips the User's status and the RiderProfile's status
+to `active` together, in one transaction.
+
+No request body. There is no reject/decline endpoint yet.
+
+Response `200`, `data`: same shape as the onboarding response, with `status: "active"`.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `404 NOT_FOUND`
 (no profile with that id).
