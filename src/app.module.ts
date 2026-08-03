@@ -9,6 +9,7 @@ import { IdentityModule } from './modules/identity/identity.module';
 import { NodeOperatorsModule } from './modules/node-operators/node-operators.module';
 import { NodesModule } from './modules/nodes/nodes.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { RidersModule } from './modules/riders/riders.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     IdentityModule,
     NodesModule,
     NodeOperatorsModule,
+    RidersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

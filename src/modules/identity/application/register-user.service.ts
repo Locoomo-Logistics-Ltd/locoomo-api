@@ -43,13 +43,13 @@ export class RegisterUserService {
     );
     const verificationLink = `${this.configService.get('FRONTEND_URL', { infer: true })}/verify-email?token=${rawVerificationToken}`;
     const role = dto.role ?? UserRole.CONSUMER;
-    // Both roles set a password immediately — unlike Admin-provisioned
-    // roles, there's no separate "set your password" step. Consumer is
-    // active right away; NodeOperator lands in pending_review until they
-    // complete Node onboarding and an Admin approves it (node-operators
-    // module).
+    // All self-registerable roles set a password immediately — unlike
+    // Admin-provisioned roles, there's no separate "set your password" step.
+    // Consumer is active right away; NodeOperator/Rider land in
+    // pending_review until they complete their module's onboarding step and
+    // an Admin approves it.
     const status =
-      role === UserRole.NODE_OPERATOR
+      role === UserRole.NODE_OPERATOR || role === UserRole.RIDER
         ? UserStatus.PENDING_REVIEW
         : UserStatus.ACTIVE;
 

@@ -151,25 +151,8 @@ describe('Node-operators (e2e)', () => {
       .expect(200);
   });
 
-  it('rejects self-registering as rider or admin', async () => {
-    const riderResponse = await request(app.getHttpServer())
-      .post('/api/v1/auth/register')
-      .send({
-        firstName: 'Nope',
-        lastName: 'Tester',
-        email: 'rider-reject@node-operators.e2e.test',
-        phone: '+2348012345678',
-        password,
-        passwordConfirmation: password,
-        consentAccepted: true,
-        role: UserRole.RIDER,
-      })
-      .expect(400);
-    expect((riderResponse.body as ErrorBody).error.code).toBe(
-      'VALIDATION_FAILED',
-    );
-
-    await request(app.getHttpServer())
+  it('rejects self-registering as admin', async () => {
+    const response = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .send({
         firstName: 'Nope',
@@ -182,6 +165,7 @@ describe('Node-operators (e2e)', () => {
         role: UserRole.ADMIN,
       })
       .expect(400);
+    expect((response.body as ErrorBody).error.code).toBe('VALIDATION_FAILED');
   });
 
   describe('onboarding', () => {
