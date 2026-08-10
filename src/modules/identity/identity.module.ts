@@ -17,6 +17,7 @@ import { RefreshSessionService } from './application/refresh-session.service';
 import { RegisterUserService } from './application/register-user.service';
 import { RequestPasswordResetService } from './application/request-password-reset.service';
 import { TokenIssuanceService } from './application/token-issuance.service';
+import { UserLookupService } from './application/user-lookup.service';
 import { VerifyEmailService } from './application/verify-email.service';
 import { EmailVerificationTokenEntity } from './infrastructure/entities/email-verification-token.entity';
 import { InviteTokenEntity } from './infrastructure/entities/invite-token.entity';
@@ -56,6 +57,7 @@ import { UsersController } from './interface/users.controller';
     ConfirmInviteService,
     TokenIssuanceService,
     ActivateUserService,
+    UserLookupService,
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
@@ -64,7 +66,9 @@ import { UsersController } from './interface/users.controller';
   // services later. ActivateUserService: exported so `node-operators`' Admin
   // approval flow can flip User.status=ACTIVE in the same transaction as
   // Node.status=ACTIVE — never by reaching into identity's
-  // domain/infrastructure directly.
-  exports: [RegisterUserService, ActivateUserService],
+  // domain/infrastructure directly. UserLookupService: exported so
+  // `payments` can resolve a consumer's email for Paystack's initialize
+  // call without importing UserEntity.
+  exports: [RegisterUserService, ActivateUserService, UserLookupService],
 })
 export class IdentityModule {}

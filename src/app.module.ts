@@ -9,6 +9,8 @@ import { IdentityModule } from './modules/identity/identity.module';
 import { NodeOperatorsModule } from './modules/node-operators/node-operators.module';
 import { NodesModule } from './modules/nodes/nodes.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { OrdersModule } from './modules/orders/orders.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { RidersModule } from './modules/riders/riders.module';
 
 @Module({
@@ -22,6 +24,8 @@ import { RidersModule } from './modules/riders/riders.module';
     NodesModule,
     NodeOperatorsModule,
     RidersModule,
+    OrdersModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

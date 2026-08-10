@@ -49,6 +49,10 @@ jobs:
       CLOUDINARY_CLOUD_NAME: ci-placeholder
       CLOUDINARY_API_KEY: '123456789012345'
       CLOUDINARY_API_SECRET: ci-placeholder-secret
+      # Never actually connected to — payments e2e tests override
+      # PaystackPaymentProvider with a fake. Just needs to satisfy env
+      # validation at boot.
+      PAYSTACK_SECRET_KEY: sk_test_ci-placeholder
 
     steps:
       - uses: actions/checkout@v4

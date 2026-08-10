@@ -107,11 +107,15 @@ backend greps logs for.
 | 403 | `ACCOUNT_SUSPENDED` | Password was correct but the account is suspended |
 | 403 | `FORBIDDEN` | Valid session, but your role can't access this route |
 | 404 | `NOT_FOUND` | Route or resource doesn't exist. Also returned for a Node that exists but isn't `active` when you're not an Admin — visibility is hidden as "not found," not `403`, so a non-Admin can't distinguish "doesn't exist" from "pending approval" |
+| 401 | `INVALID_WEBHOOK_SIGNATURE` | `POST /payments/webhooks/paystack` signature didn't verify — not a frontend-facing error, listed for completeness |
 | 409 | `EMAIL_ALREADY_REGISTERED` | Registration, or an admin invite, attempted with an email already on file |
 | 409 | `NODE_OPERATOR_ALREADY_ONBOARDED` | `POST /node-operators/onboarding` called by an account that already has a Node |
 | 409 | `RIDER_ALREADY_ONBOARDED` | `POST /riders/onboarding` called by an account that already has a rider profile |
-| 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; everything else defaults to 100/min |
+| 409 | `NODE_CAPACITY_UNAVAILABLE` | `POST /payments/intents` — the origin Node filled up between you seeing it in `/nodes/nearby` and this request landing. Show the consumer a "that drop-off point just filled up, try another" message, not a generic error |
+| 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
+| 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed or was unreachable when placing an order — safe to let the consumer retry |
+| 503 | `PRICING_NOT_CONFIGURED` | No Admin-configured pricing rule exists yet — an ops/config gap, not something the consumer caused; surface as "orders temporarily unavailable" |
 
 ## Endpoints
 
@@ -705,5 +709,135 @@ Response `200`, `data`: same shape as the onboarding response, with `status: "ac
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `404 NOT_FOUND`
 (no profile with that id).
+
+### `POST /api/v1/admin/pricing`
+
+**Requires an authenticated Admin session.** Adds a new pricing rule, effective
+immediately Rules are append-only: this never edits an existing rule, it adds a new one that becomes "current."
+Historical orders keep referencing whichever rule was current when their fee was
+calculated, so past orders stay explainable even after rates change.
+
+Request:
+
+```json
+{ "baseFeeNaira": 500, "perKmRateNaira": 100 }
+```
+
+Response `201`, `data`:
+
+```json
+{
+  "id": "uuid",
+  "baseFeeNaira": 500,
+  "baseFeeKobo": 50000,
+  "perKmRateNaira": 100,
+  "perKmRateKobo": 10000,
+  "effectiveFrom": "2026-07-22T09:14:00.000Z",
+  "createdByAdminId": "uuid"
+}
+```
+
+Both units are returned — `*Kobo` is what's actually stored and what
+`PaymentIntent.feeBreakdown` amounts are computed from; `*Naira` is just for display.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `400 VALIDATION_FAILED`.
+
+### `GET /api/v1/admin/pricing`
+
+**Requires an authenticated Admin session.** Rate history, newest first. Paginated.
+
+Response `200`, `data.items[]`: same shape as the create response above.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
+
+### `POST /api/v1/payments/intents`
+
+**Requires an authenticated Consumer session.** Order placement — step one of the
+delivery flow. Calculates the fee (distance between the two Nodes × the current pricing
+rule), atomically reserves a capacity slot at the origin Node, and returns a Paystack
+hosted-checkout URL to redirect the consumer to. The reservation holds for ~15 minutes;
+if payment isn't completed by then it's released automatically. Rate-limited to 5
+requests/min per IP, same as register/login.
+
+Request:
+
+```json
+{
+  "originNodeId": "uuid",
+  "destinationNodeId": "uuid",
+  "receiverFullName": "Chidinma Okafor",
+  "receiverEmail": "receiver@example.com",
+  "receiverPhone": "+2348012345678",
+  "parcelDescription": "A small box of documents",
+  "parcelSize": "small"
+}
+```
+
+| Field | Rules |
+|---|---|
+| `receiverFullName` | 1–100 chars |
+| `receiverEmail` | valid email |
+| `receiverPhone` | `+` optional, 7–15 digits, same format as registration's `phone` |
+| `parcelDescription` | 1–500 chars |
+| `parcelSize` | one of `small`, `medium`, `large`, `extra_large` — informational for the Node operator, does **not** affect the fee (pricing is distance-only) |
+
+Response `201`, `data`:
+
+```json
+{
+  "id": "uuid",
+  "originNodeId": "uuid",
+  "destinationNodeId": "uuid",
+  "receiverFullName": "Chidinma Okafor",
+  "receiverEmail": "receiver@example.com",
+  "receiverPhone": "+2348012345678",
+  "parcelDescription": "A small box of documents",
+  "parcelSize": "small",
+  "feeBreakdown": {
+    "pricingRuleId": "uuid",
+    "baseFeeKobo": 50000,
+    "perKmRateKobo": 10000,
+    "distanceKm": 4.2,
+    "totalKobo": 92000
+  },
+  "amountKobo": 92000,
+  "status": "pending",
+  "expiresAt": "2026-07-22T09:29:00.000Z",
+  "authorizationUrl": "https://checkout.paystack.com/..."
+}
+```
+
+Redirect the consumer's browser to `authorizationUrl` next — that's the actual payment
+page, hosted by Paystack. After payment, Paystack
+redirects back to `{FRONTEND_URL}/orders/payment-callback?...`; that redirect is
+UI-only and does **not** mean payment succeeded (only the server-to-server webhook
+confirms that) — land the consumer on a "processing" screen and poll `GET
+/payments/intents/:id` until `status` leaves `"pending"`.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `400 VALIDATION_FAILED`,
+`404 NOT_FOUND` (either Node doesn't exist or isn't active), `409
+NODE_CAPACITY_UNAVAILABLE`, `429 RATE_LIMITED`, `502 PAYMENT_PROVIDER_ERROR`, `503
+PRICING_NOT_CONFIGURED`.
+
+### `GET /api/v1/payments/intents/:id`
+
+**Requires an authenticated Consumer session**, and only returns your own intents
+(`404 NOT_FOUND` otherwise, not `403` — same not-found-not-forbidden pattern used
+elsewhere for ownership checks). Poll this after the Paystack redirect to find out
+whether the payment actually went through.
+
+Response `200`, `data`: same shape as the create response, minus `authorizationUrl`
+(Paystack's checkout link is single-use — nothing to redirect to on a status check).
+`status` is one of `pending` (still waiting on payment), `paid` (succeeded — an Order now
+exists, though there's no endpoint to view it yet), `failed`, or `expired` (the ~15
+minute hold lapsed unpaid).
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `404 NOT_FOUND`.
+
+### `POST /api/v1/payments/webhooks/paystack`
+
+Server-to-server only — Paystack calls this, your frontend never does. Listed here only
+for completeness. Unauthenticated (no session cookie involved), verified instead via
+Paystack's HMAC signature header.
 
 
