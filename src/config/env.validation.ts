@@ -37,6 +37,10 @@ export const envSchema = z
     CLOUDINARY_CLOUD_NAME: z.string().min(1),
     CLOUDINARY_API_KEY: z.string().min(1),
     CLOUDINARY_API_SECRET: z.string().min(1),
+    // Paystack (payments/infrastructure/paystack-payment-provider.ts) — secret
+    // key only; we use hosted-redirect checkout, so no client-side public key
+    // is ever needed server-side.
+    PAYSTACK_SECRET_KEY: z.string().min(1),
   })
   .refine(
     (config) =>

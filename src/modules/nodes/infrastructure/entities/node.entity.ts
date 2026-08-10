@@ -42,10 +42,20 @@ export class NodeEntity {
   longitude!: number;
 
   // Self-reported by the operator (or set by Admin on manual create) — max
-  // parcels this Node can hold at once. current_count is deferred until
-  // `orders`/`payments` exist to derive it from.
+  // parcels this Node can hold at once.
   @Column({ type: 'int' })
   capacity!: number;
+
+  // Atomic counter per decision #6 — incremented under SELECT...FOR UPDATE
+  // at PaymentIntent/DRAFT creation (NodesService.reserveCapacitySlot),
+  // decremented on failure/expiry/cancellation (releaseCapacitySlot). Only
+  // ever touched via those two methods, never a plain repo.save. Currently
+  // only tracks origin-side drop-off holds — release-on-parcel-departure
+  // (freeing the slot once a rider actually takes the parcel) is `handoffs`'
+  // job once that module exists; until then a completed order's slot stays
+  // held, which is correct (the parcel is still physically at the Node).
+  @Column({ type: 'int', default: 0 })
+  currentCount!: number;
 
   @Index()
   @Column({ type: 'enum', enum: NodeStatus, default: NodeStatus.PENDING })

@@ -169,7 +169,12 @@ export class NodesService {
   }
 
   // Always active-only regardless of caller — this endpoint exists to
-  // answer "where can I actually drop off a parcel right now."
+  // answer "where can I actually drop off a parcel right now." Also excludes
+  // Nodes at capacity — a full Node still exists and still shows up for
+  // Admin/riders elsewhere, it just isn't offered as a place to start a new
+  // order (see CLAUDE.md's destination-Node-full decision: hidden from new
+  // bookings, but a rider already routed there on an existing order can
+  // still complete drop-off regardless of this filter).
   async findNearby(
     query: NearbyNodesQueryDto,
   ): Promise<PaginatedResultDto<NearbyNodeResponseDto>> {
@@ -186,6 +191,7 @@ export class NodesService {
               ST_Distance(location, ${origin}) AS distance
          FROM nodes
         WHERE status = $3
+          AND "currentCount" < capacity
           AND ST_DWithin(location, ${origin}, $4)
         ORDER BY distance ASC
         LIMIT $5 OFFSET $6`,
@@ -203,6 +209,7 @@ export class NodesService {
       `SELECT COUNT(*)::int AS total
          FROM nodes
         WHERE status = $3
+          AND "currentCount" < capacity
           AND ST_DWithin(location, ${origin}, $4)`,
       [query.longitude, query.latitude, NodeStatus.ACTIVE, radiusMeters],
     );
@@ -210,6 +217,53 @@ export class NodesService {
     const items = rows.map((row) => NearbyNodeResponseDto.fromRow(row));
 
     return new PaginatedResultDto(items, query.page, query.limit, total);
+  }
+
+  // Narrow cross-module write for payments' order-placement flow (decision
+  // #6: capacity reservation is a locking transaction, never check-then-
+  // insert). `manager` is required — SELECT...FOR UPDATE only holds its lock
+  // for the lifetime of the caller's transaction, so calling this outside
+  // one would take a lock and release it immediately, defeating the point.
+  // Returns false (not a thrown exception) when the Node is full — payments
+  // owns what that means for its own order-placement flow, this method just
+  // reports the fact.
+  async reserveCapacitySlot(
+    nodeId: string,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const rows = await manager.query<
+      { capacity: number; currentCount: number }[]
+    >(`SELECT capacity, "currentCount" FROM nodes WHERE id = $1 FOR UPDATE`, [
+      nodeId,
+    ]);
+    const node = rows[0];
+    if (!node) {
+      throw new EntityNotFoundException('Node', nodeId);
+    }
+    if (node.currentCount >= node.capacity) {
+      return false;
+    }
+    await manager.query(
+      `UPDATE nodes SET "currentCount" = "currentCount" + 1 WHERE id = $1`,
+      [nodeId],
+    );
+    return true;
+  }
+
+  // Releases a hold taken by reserveCapacitySlot — payment failure, DRAFT
+  // expiry, or (later) order cancellation. A single atomic UPDATE is already
+  // race-safe without FOR UPDATE; `manager` is optional so the expiry
+  // poller can still batch it into its own transaction alongside the
+  // PaymentIntent status flip.
+  async releaseCapacitySlot(
+    nodeId: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const runner = manager ?? this.dataSource.manager;
+    await runner.query(
+      `UPDATE nodes SET "currentCount" = GREATEST("currentCount" - 1, 0) WHERE id = $1`,
+      [nodeId],
+    );
   }
 
   private async syncLocation(
