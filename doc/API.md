@@ -829,8 +829,8 @@ whether the payment actually went through.
 Response `200`, `data`: same shape as the create response, minus `authorizationUrl`
 (Paystack's checkout link is single-use — nothing to redirect to on a status check).
 `status` is one of `pending` (still waiting on payment), `paid` (succeeded — an Order now
-exists, though there's no endpoint to view it yet), `failed`, or `expired` (the ~15
-minute hold lapsed unpaid).
+exists, viewable via `GET /orders/:id`), `failed`, or `expired` (the ~15 minute hold
+lapsed unpaid).
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `404 NOT_FOUND`.
 
@@ -839,5 +839,61 @@ Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `404 NOT_FOUND`.
 Server-to-server only — Paystack calls this, your frontend never does. Listed here only
 for completeness. Unauthenticated (no session cookie involved), verified instead via
 Paystack's HMAC signature header.
+
+### `GET /api/v1/orders`
+
+**Requires an authenticated Consumer session.** Lists only the requesting consumer's own
+orders — there is no "all orders" view for a Consumer. Paginated (see
+[Pagination](#pagination-list-endpoints)).
+
+Response `200`, `data`:
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "trackingCode": "LCM-4F2K-9XPT",
+      "paymentIntentId": "uuid",
+      "originNodeId": "uuid",
+      "originNodeName": "Ikeja Node",
+      "originNodeAddress": "12 Allen Avenue, Ikeja",
+      "destinationNodeId": "uuid",
+      "destinationNodeName": "Lekki Node",
+      "destinationNodeAddress": "45 Admiralty Way, Lekki Phase 1",
+      "receiverFullName": "Chidinma Okafor",
+      "receiverEmail": "receiver@example.com",
+      "receiverPhone": "+2348012345678",
+      "parcelDescription": "A small box of documents",
+      "parcelSize": "small",
+      "amountKobo": 92000,
+      "status": "awaiting_drop_off",
+      "createdAt": "2026-07-22T09:29:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 1
+}
+```
+
+`trackingCode` is a human-friendly reference for the consumer to quote (support calls,
+order confirmation UI) — `LCM-` followed by 8 characters from a Crockford-Base32-style
+alphabet (excludes `0`/`O`, `1`/`I`/`L` so it can't be misread aloud or mistyped). It is
+**not** an authentication/collection code. Use `id`, not `trackingCode`, as the path
+param below and everywhere else you'd reference an order programmatically —
+`trackingCode` is display-only.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `400 VALIDATION_FAILED`.
+
+### `GET /api/v1/orders/:id`
+
+**Requires an authenticated Consumer session**, and only returns your own orders (`404
+NOT_FOUND` otherwise, not `403` — same not-found-not-forbidden pattern as
+`GET /payments/intents/:id`).
+
+Response `200`, `data`: same shape as one item from the list response above.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `404 NOT_FOUND`.
 
 
