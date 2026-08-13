@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { IdempotencyModule } from '../../common/idempotency/idempotency.module';
 import { IdentityModule } from '../identity/identity.module';
 import { NodesModule } from '../nodes/nodes.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersModule } from '../orders/orders.module';
 import { AdminPricingService } from './application/admin-pricing.service';
 import { ConfirmPaymentIntentPaidService } from './application/confirm-payment-intent-paid.service';
@@ -25,6 +26,7 @@ import { PricingController } from './interface/pricing.controller';
     IdempotencyModule,
     NodesModule,
     IdentityModule,
+    NotificationsModule,
     OrdersModule,
   ],
   controllers: [

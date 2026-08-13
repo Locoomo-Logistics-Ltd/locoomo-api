@@ -12,6 +12,7 @@ import { hashPassword } from '../../src/modules/identity/domain/password-hasher'
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
+import { OutboxEventEntity } from '../../src/modules/notifications/infrastructure/entities/outbox-event.entity';
 import { OrderEntity } from '../../src/modules/orders/infrastructure/entities/order.entity';
 import { ExpirePaymentIntentsService } from '../../src/modules/payments/application/expire-payment-intents.service';
 import {
@@ -126,6 +127,7 @@ describe('Payments (e2e)', () => {
   let pricingRules: Repository<PricingRuleEntity>;
   let paymentIntents: Repository<PaymentIntentEntity>;
   let orders: Repository<OrderEntity>;
+  let outboxEvents: Repository<OutboxEventEntity>;
   let jwtService: JwtService;
   let fakePaystack: FakePaystackPaymentProvider;
   let expirePaymentIntentsService: ExpirePaymentIntentsService;
@@ -233,6 +235,7 @@ describe('Payments (e2e)', () => {
     pricingRules = moduleFixture.get(getRepositoryToken(PricingRuleEntity));
     paymentIntents = moduleFixture.get(getRepositoryToken(PaymentIntentEntity));
     orders = moduleFixture.get(getRepositoryToken(OrderEntity));
+    outboxEvents = moduleFixture.get(getRepositoryToken(OutboxEventEntity));
     jwtService = moduleFixture.get(JwtService);
     expirePaymentIntentsService = moduleFixture.get(
       ExpirePaymentIntentsService,
@@ -267,6 +270,11 @@ describe('Payments (e2e)', () => {
     // cleanup itself fails — an unclosed app here is what actually hangs
     // the whole Jest process, not just this suite.
     try {
+      await outboxEvents
+        .createQueryBuilder()
+        .delete()
+        .where("payload ->> 'to' LIKE :pattern", { pattern: emailPattern })
+        .execute();
       await orders.manager.query(
         `DELETE FROM order_events WHERE "orderId" IN (
            SELECT id FROM orders WHERE "originNodeId" IN (
@@ -417,6 +425,20 @@ describe('Payments (e2e)', () => {
       expect(order).not.toBeNull();
       expect(order?.status).toBe('awaiting_drop_off');
       expect(order?.amountKobo).toBe(intent?.amountKobo);
+
+      // Order-confirmation email queued through the transactional outbox
+      // (decision #10) in the same transaction as the Order write above.
+      const outboxEvent = await outboxEvents
+        .createQueryBuilder('o')
+        .where('o."eventType" = \'email\'')
+        .andWhere("o.payload ->> 'to' = :to", {
+          to: 'webhook-happy@payments.e2e.test',
+        })
+        .andWhere("o.payload ->> 'subject' = :subject", {
+          subject: 'Your Locoomo order is confirmed',
+        })
+        .getOne();
+      expect(outboxEvent).not.toBeNull();
     });
 
     it('is idempotent under a duplicate delivery of the same event', async () => {

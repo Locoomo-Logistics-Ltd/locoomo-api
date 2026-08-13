@@ -15,6 +15,10 @@ export class OrderEntity {
   id!: string;
 
   @Index({ unique: true })
+  @Column({ type: 'varchar' })
+  trackingCode!: string;
+
+  @Index({ unique: true })
   @Column({ type: 'uuid' })
   paymentIntentId!: string;
 
