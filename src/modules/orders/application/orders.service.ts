@@ -138,6 +138,36 @@ export class OrdersService {
     );
   }
 
+  // Narrow exports for handoffs' rider<->Node code confirmations. Both are
+  // plain wrappers around transition() — the actual guard (right code,
+  // right requester) lives in handoffs' ConfirmHandoffService, not here;
+  // this only owns whether the status edge itself is legal.
+  async markPickedUpByRider(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    return this.transition(
+      orderId,
+      OrderStatus.RIDER_ASSIGNED,
+      OrderStatus.IN_TRANSIT,
+      manager,
+      OrderEventType.PICKED_UP_BY_RIDER,
+    );
+  }
+
+  async markArrivedAtDestination(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    return this.transition(
+      orderId,
+      OrderStatus.IN_TRANSIT,
+      OrderStatus.ARRIVED_AT_DESTINATION,
+      manager,
+      OrderEventType.ARRIVED_AT_DESTINATION,
+    );
+  }
+
   private async appendEvent(
     manager: EntityManager,
     orderId: string,
