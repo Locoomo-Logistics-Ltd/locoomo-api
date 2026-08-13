@@ -5,10 +5,10 @@ import { EntityNotFoundException } from '../../../common/exceptions';
 import { NodeOperatorQueryService } from '../../node-operators/application/node-operator-query.service';
 import { OrderPreviewRow } from '../interface/dto/order-preview-response.dto';
 
-// Every Node-operator-facing handoff step (drop-off today, pickup/arrival
-// intake later) needs to answer "does this order actually belong to my
-// Node" before touching it — not-found-not-forbidden on a mismatch, same
-// pattern used everywhere else in this codebase for ownership checks.
+// Every Node-operator-facing handoff step (drop-off, rider pickup/arrival,
+// intake/collection) needs to answer "does this order actually belong to
+// my Node" before touching it — not-found-not-forbidden on a mismatch,
+// same pattern used everywhere else in this codebase for ownership checks.
 @Injectable()
 export class OrderLookupService {
   constructor(
@@ -52,6 +52,26 @@ export class OrderLookupService {
 
     const rows = await this.dataSource.query<{ id: string }[]>(
       `SELECT id FROM orders WHERE id = $1 AND "originNodeId" = $2`,
+      [orderId, operatorNodeId],
+    );
+    if (rows.length === 0) {
+      throw new EntityNotFoundException('Order', orderId);
+    }
+  }
+
+  // Mirror of assertOriginNodeOwnership for the destination-side steps
+  // (rider arrival, intake, collection) — kept as a separate method rather
+  // than a parameterized column name to avoid ever interpolating anything
+  // into raw SQL beyond bound parameters.
+  async assertDestinationNodeOwnership(
+    orderId: string,
+    operatorUserId: string,
+  ): Promise<void> {
+    const operatorNodeId =
+      await this.nodeOperatorQueryService.getNodeIdForUser(operatorUserId);
+
+    const rows = await this.dataSource.query<{ id: string }[]>(
+      `SELECT id FROM orders WHERE id = $1 AND "destinationNodeId" = $2`,
       [orderId, operatorNodeId],
     );
     if (rows.length === 0) {

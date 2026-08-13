@@ -11,6 +11,8 @@ import { UserRole } from '../../src/common/auth/user-role.enum';
 import { hashPassword } from '../../src/modules/identity/domain/password-hasher';
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
+import { HandoffCodeType } from '../../src/modules/handoffs/domain/handoff-code-type.enum';
+import { HandoffCodeEntity } from '../../src/modules/handoffs/infrastructure/entities/handoff-code.entity';
 import { NodeOperatorProfileEntity } from '../../src/modules/node-operators/infrastructure/entities/node-operator-profile.entity';
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
 import { OrderStatus } from '../../src/modules/orders/domain/order-status.enum';
@@ -120,11 +122,14 @@ describe('Handoffs (e2e)', () => {
   let orderEvents: Repository<OrderEventEntity>;
   let riderProfiles: Repository<RiderProfileEntity>;
   let nodeOperatorProfiles: Repository<NodeOperatorProfileEntity>;
+  let handoffCodes: Repository<HandoffCodeEntity>;
   let jwtService: JwtService;
   let fakePaystack: FakePaystackPaymentProvider;
   let adminCookie: string;
   let originNodeId: string;
   let destinationNodeId: string;
+  let originOperatorCookie: string;
+  let destinationOperatorCookie: string;
 
   const emailPattern = '%@handoffs.e2e.test';
   const nodeNamePattern = 'handoffs.e2e.test%';
@@ -263,6 +268,42 @@ describe('Handoffs (e2e)', () => {
     return id;
   }
 
+  // Drives an order through the real drop-off + accept endpoints (not a
+  // direct DB write) so it lands at RIDER_ASSIGNED — the precondition for
+  // Phase 3's pickup-code tests.
+  async function createAssignedOrder(
+    consumerEmail: string,
+    riderCookie: string,
+  ): Promise<string> {
+    const { id: orderId } = await createPaidOrder(consumerEmail);
+    await request(app.getHttpServer())
+      .post(`/api/v1/handoffs/orders/${orderId}/drop-off`)
+      .set('Cookie', [originOperatorCookie])
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/v1/handoffs/orders/${orderId}/accept`)
+      .set('Cookie', [riderCookie])
+      .expect(200);
+    return orderId;
+  }
+
+  // Continues an already-RIDER_ASSIGNED order through the real pickup-code
+  // flow so it lands at IN_TRANSIT — the precondition for arrival-code tests.
+  async function pickUp(orderId: string, riderCookie: string): Promise<void> {
+    const codeResponse = await request(app.getHttpServer())
+      .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+      .set('Cookie', [riderCookie])
+      .send({ type: 'rider_pickup' })
+      .expect(201);
+    const code = (codeResponse.body as SuccessBody).data.code as string;
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+      .set('Cookie', [originOperatorCookie])
+      .send({ type: 'rider_pickup', code })
+      .expect(200);
+  }
+
   beforeAll(async () => {
     fakePaystack = new FakePaystackPaymentProvider();
 
@@ -287,6 +328,7 @@ describe('Handoffs (e2e)', () => {
     nodeOperatorProfiles = moduleFixture.get(
       getRepositoryToken(NodeOperatorProfileEntity),
     );
+    handoffCodes = moduleFixture.get(getRepositoryToken(HandoffCodeEntity));
     jwtService = moduleFixture.get(JwtService);
 
     const admin = await users.save(
@@ -310,10 +352,27 @@ describe('Handoffs (e2e)', () => {
 
     originNodeId = await createNode('origin');
     destinationNodeId = await createNode('destination');
+
+    originOperatorCookie = await createNodeOperator(
+      'origin-operator@handoffs.e2e.test',
+      originNodeId,
+    );
+    destinationOperatorCookie = await createNodeOperator(
+      'destination-operator@handoffs.e2e.test',
+      destinationNodeId,
+    );
   });
 
   afterAll(async () => {
     try {
+      await handoffCodes
+        .createQueryBuilder()
+        .delete()
+        .where(
+          '"orderId" IN (SELECT id FROM orders WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE :pattern))',
+          { pattern: nodeNamePattern },
+        )
+        .execute();
       await orderEvents
         .createQueryBuilder()
         .delete()
@@ -696,6 +755,290 @@ describe('Handoffs (e2e)', () => {
       await request(app.getHttpServer())
         .post(`/api/v1/handoffs/orders/${orderId}/drop-off`)
         .expect(401);
+    });
+  });
+
+  describe('POST /handoffs/orders/:id/request-code + POST /handoffs/orders/:id/confirm-handoff', () => {
+    it('completes rider pickup: assigned rider requests, origin operator confirms', async () => {
+      const { cookie: riderCookie, userId: riderId } = await createActiveRider(
+        'pickup-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'pickup-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      const codeResponse = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [riderCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+      const code = (codeResponse.body as SuccessBody).data.code as string;
+      expect(code).toMatch(/^\d{6}$/);
+
+      const confirmResponse = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [originOperatorCookie])
+        .send({ type: 'rider_pickup', code })
+        .expect(200);
+      expect((confirmResponse.body as SuccessBody).data.status).toBe(
+        'in_transit',
+      );
+
+      const order = await orders.findOneByOrFail({ id: orderId });
+      expect(order.riderId).toBe(riderId);
+    });
+
+    it('completes rider arrival after pickup: assigned rider requests, destination operator confirms', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'arrival-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'arrival-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      await pickUp(orderId, riderCookie);
+
+      const codeResponse = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [riderCookie])
+        .send({ type: 'rider_arrival' })
+        .expect(201);
+      const code = (codeResponse.body as SuccessBody).data.code as string;
+
+      const confirmResponse = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ type: 'rider_arrival', code })
+        .expect(200);
+      expect((confirmResponse.body as SuccessBody).data.status).toBe(
+        'arrived_at_destination',
+      );
+    });
+
+    it('rejects a pickup-code request from a rider who was never assigned this order', async () => {
+      const { cookie: assignedCookie } = await createActiveRider(
+        'unassigned-owner-rider@handoffs.e2e.test',
+      );
+      const { cookie: strangerCookie } = await createActiveRider(
+        'unassigned-stranger-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'unassigned-consumer@handoffs.e2e.test',
+        assignedCookie,
+      );
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [strangerCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(404);
+      expect((response.body as ErrorBody).error.code).toBe('NOT_FOUND');
+
+      // The legitimately assigned rider's own request still works —
+      // confirms this isn't blocking the order generally, only the
+      // unassigned rider specifically.
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [assignedCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+    });
+
+    it('rejects a wrong code and increments the lockout counter durably', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'wrongcode-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'wrongcode-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [riderCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [originOperatorCookie])
+        .send({ type: 'rider_pickup', code: '000000' })
+        .expect(401);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'INVALID_HANDOFF_CODE',
+      );
+
+      const handoffCode = await handoffCodes.findOneByOrFail({
+        orderId,
+        type: HandoffCodeType.RIDER_PICKUP,
+      });
+      expect(handoffCode.failedAttempts).toBe(1);
+
+      const order = await orders.findOneByOrFail({ id: orderId });
+      expect(order.status).toBe('rider_assigned');
+    });
+
+    it('locks the code out permanently after 5 wrong attempts, even with the right code', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'lockout-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'lockout-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const codeResponse = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [riderCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+      const code = (codeResponse.body as SuccessBody).data.code as string;
+
+      for (let i = 0; i < 5; i++) {
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+          .set('Cookie', [originOperatorCookie])
+          .send({ type: 'rider_pickup', code: '000000' })
+          .expect(401);
+      }
+
+      // Now even the genuinely correct code is rejected — the code itself
+      // is locked, not just the guesses.
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [originOperatorCookie])
+        .send({ type: 'rider_pickup', code })
+        .expect(401);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'INVALID_HANDOFF_CODE',
+      );
+
+      // Requesting a fresh code recovers — the rider isn't permanently
+      // stuck, just that specific code.
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [riderCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+    });
+
+    it('rejects a pickup confirm from an operator at the wrong Node', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'wrongnode-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'wrongnode-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const codeResponse = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [riderCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+      const code = (codeResponse.body as SuccessBody).data.code as string;
+
+      // destinationOperatorCookie, not originOperatorCookie — pickup only
+      // belongs to the origin Node.
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ type: 'rider_pickup', code })
+        .expect(404);
+      expect((response.body as ErrorBody).error.code).toBe('NOT_FOUND');
+    });
+
+    it('is idempotent under a duplicate confirm with the same code', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'idempotent-pickup-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'idempotent-pickup-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const codeResponse = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [riderCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+      const code = (codeResponse.body as SuccessBody).data.code as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [originOperatorCookie])
+        .send({ type: 'rider_pickup', code })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [originOperatorCookie])
+        .send({ type: 'rider_pickup', code })
+        .expect(200);
+
+      const eventCount = await orderEvents.countBy({
+        orderId,
+        type: 'picked_up_by_rider',
+      });
+      expect(eventCount).toBe(1);
+    });
+
+    it('rejects an expired code', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'expired-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'expired-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const codeResponse = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [riderCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+      const code = (codeResponse.body as SuccessBody).data.code as string;
+
+      await handoffCodes.update(
+        { orderId, type: HandoffCodeType.RIDER_PICKUP },
+        { expiresAt: new Date(Date.now() - 60_000) },
+      );
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [originOperatorCookie])
+        .send({ type: 'rider_pickup', code })
+        .expect(401);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'INVALID_HANDOFF_CODE',
+      );
+    });
+
+    it('rejects a request-code call from a non-Rider role', async () => {
+      const orderId = await createAvailableOrder(
+        'requestcode-forbidden-consumer@handoffs.e2e.test',
+      );
+      const consumerCookie = await registerAndLogin(
+        'requestcode-forbidden@handoffs.e2e.test',
+        UserRole.CONSUMER,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [consumerCookie])
+        .send({ type: 'rider_pickup' })
+        .expect(403);
+    });
+
+    it('rejects a confirm-handoff call from a non-NodeOperator role', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'confirm-forbidden-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'confirm-forbidden-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [riderCookie])
+        .send({ type: 'rider_pickup', code: '000000' })
+        .expect(403);
     });
   });
 });

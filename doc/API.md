@@ -115,6 +115,7 @@ backend greps logs for.
 | 403 | `RIDER_NOT_ACTIVE` | `POST /handoffs/orders/:id/accept` — your rider role is valid but your `RiderProfile` isn't `active` yet (still `pending` Admin review, or `suspended`) |
 | 409 | `RIDER_CAPACITY_UNAVAILABLE` | `POST /handoffs/orders/:id/accept` — you already have the maximum number of concurrent active deliveries (3). Finish or hand off one before accepting another |
 | 409 | `ILLEGAL_ORDER_TRANSITION` | A handoff scan/confirm endpoint was called while the order isn't in the state that step expects — either stale client state or someone else already advanced it. Re-fetch the order and refresh the UI rather than retrying blindly |
+| 401 | `INVALID_HANDOFF_CODE` | `POST /handoffs/orders/:id/confirm-handoff` — the code was missing, expired, already used, locked out after too many wrong guesses, or just wrong. Deliberately identical for all of these, same enumeration-avoidance reasoning as other invalid-token errors; the rider needs to request a fresh code either way |
 | 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
 | 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed or was unreachable when placing an order — safe to let the consumer retry |
@@ -1006,5 +1007,60 @@ Response `200`, `data`: same shape as the accept response above, `status:
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator), `404 NOT_FOUND` (not
 your Node), `409 ILLEGAL_ORDER_TRANSITION` (order isn't at `awaiting_drop_off`).
+
+### `POST /api/v1/handoffs/orders/:id/request-code`
+
+**Requires an authenticated, `active` Rider session, and you must be the rider assigned
+to this specific order** (`404 NOT_FOUND` otherwise — a rider who never accepted this
+order can't get a code for it; there's nothing to show a Node operator even
+if you tried). Issues a fresh 6-digit code for the handoff you're about to do — request
+it right before you're physically at the counter, not in advance, since it expires in 5
+minutes. Requesting again supersedes any prior unused code for the same `(order, type)`.
+
+Request:
+
+```json
+{ "type": "rider_pickup" }
+```
+
+`type` is `rider_pickup` (you're at the origin Node about to take the parcel) or
+`rider_arrival` (you're at the destination Node about to hand it off) — nothing else is
+accepted here.
+
+Response `201`, `data`:
+
+```json
+{ "code": "482913", "expiresAt": "2026-07-22T09:34:00.000Z" }
+```
+
+Show or read this code to the Node operator — never send it anywhere else, it's not
+logged or emailed.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Rider), `403 RIDER_NOT_ACTIVE`,
+`404 NOT_FOUND` (not your order), `400 VALIDATION_FAILED`.
+
+### `POST /api/v1/handoffs/orders/:id/confirm-handoff`
+
+**Requires an authenticated NodeOperator session, ownership-scoped to the correct side**
+— `type: "rider_pickup"` must come from the *origin* Node's operator, `type:
+"rider_arrival"` from the *destination* Node's operator (`404 NOT_FOUND` from the wrong
+one, same not-found-not-forbidden pattern as everything else). This is what you call
+after the rider shows/states their code. Rate-limited (10/min) on top of a per-code
+lockout — 5 wrong guesses locks that code out permanently; the rider has to request a
+new one, they aren't blocked from trying again.
+
+Request:
+
+```json
+{ "type": "rider_pickup", "code": "482913" }
+```
+
+Response `200`, `data`: same shape as the accept response, `status` becomes `in_transit`
+(pickup) or `arrived_at_destination` (arrival). Idempotent — a retried confirm with the
+same already-used code returns the same success, not an error.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator), `404 NOT_FOUND` (wrong
+Node for this `type`), `401 INVALID_HANDOFF_CODE`, `429 RATE_LIMITED`,
+`400 VALIDATION_FAILED`.
 
 
