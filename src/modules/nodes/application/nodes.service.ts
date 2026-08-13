@@ -42,6 +42,10 @@ export class NodesService {
   ): Promise<NodeEntity> {
     const runner = options.manager ?? this.dataSource.manager;
 
+    // manager.query() on an INSERT ... RETURNING resolves to a flat rows
+    // array (unlike UPDATE ... RETURNING, which resolves to a [rows,
+    // rowCount] tuple — see OrdersService.transition/assignRider), so a
+    // single destructure is correct here.
     const [row] = await runner.query<NodeEntity[]>(
       `INSERT INTO nodes
          (name, address, city, state, country, latitude, longitude, capacity,

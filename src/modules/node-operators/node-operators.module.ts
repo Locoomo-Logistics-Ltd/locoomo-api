@@ -22,5 +22,9 @@ import { NodeOperatorsController } from './interface/node-operators.controller';
     ApproveNodeOperatorService,
     NodeOperatorQueryService,
   ],
+  // Exported so handoffs can resolve "which Node does this operator run"
+  // (NodeOperatorQueryService.getNodeIdForUser) — never by reaching into
+  // node-operators' domain/infrastructure directly.
+  exports: [NodeOperatorQueryService],
 })
 export class NodeOperatorsModule {}

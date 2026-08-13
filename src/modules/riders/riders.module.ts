@@ -4,6 +4,7 @@ import { IdentityModule } from '../identity/identity.module';
 import { ApproveRiderService } from './application/approve-rider.service';
 import { GetUploadSignatureService } from './application/get-upload-signature.service';
 import { OnboardRiderService } from './application/onboard-rider.service';
+import { RiderCapacityService } from './application/rider-capacity.service';
 import { RiderQueryService } from './application/rider-query.service';
 import { CloudinaryService } from './infrastructure/cloudinary.service';
 import { RiderProfileEntity } from './infrastructure/entities/rider-profile.entity';
@@ -26,6 +27,11 @@ import { RidersController } from './interface/riders.controller';
     OnboardRiderService,
     ApproveRiderService,
     RiderQueryService,
+    RiderCapacityService,
   ],
+  // Exported so handoffs can reserve/release a Rider's delivery-capacity
+  // slot as part of its own accept/arrival transactions — never by reaching
+  // into riders' domain/infrastructure directly.
+  exports: [RiderCapacityService],
 })
 export class RidersModule {}
