@@ -32,6 +32,13 @@ export class OrderEntity {
   @Column({ type: 'uuid' })
   destinationNodeId!: string;
 
+  // Set by OrdersService.assignRider() once a Rider claims this order
+  // (handoffs module) — null until then. Plain uuid, not a relation, same
+  // cross-module-boundary reasoning as consumerId/originNodeId above.
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  riderId!: string | null;
+
   @Column({ type: 'varchar' })
   receiverFullName!: string;
 

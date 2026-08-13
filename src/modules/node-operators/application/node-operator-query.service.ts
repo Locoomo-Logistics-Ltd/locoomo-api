@@ -68,6 +68,23 @@ export class NodeOperatorQueryService {
     return NodeOperatorResponseDto.fromRow(rows[0]);
   }
 
+  // Narrow export for handoffs — every Node-operator-facing scan/confirm
+  // step needs "which Node does this authenticated operator run" to scope
+  // its own reads/writes to that Node only. Plain uuid lookup, not the
+  // Node-joined getMine() above (callers don't need the full Node view,
+  // just the id).
+  async getNodeIdForUser(userId: string): Promise<string> {
+    const rows = await this.dataSource.query<{ nodeId: string }[]>(
+      `SELECT "nodeId" FROM node_operator_profiles WHERE "userId" = $1`,
+      [userId],
+    );
+    const profile = rows[0];
+    if (!profile) {
+      throw new EntityNotFoundException('NodeOperatorProfile', userId);
+    }
+    return profile.nodeId;
+  }
+
   async listPending(
     query: PaginationQueryDto,
   ): Promise<PaginatedResultDto<PendingNodeOperatorResponseDto>> {

@@ -24,6 +24,12 @@ export class RiderProfileEntity {
   @Column({ type: 'enum', enum: RiderStatus, default: RiderStatus.PENDING })
   status!: RiderStatus;
 
+  // Direct mirror of NodeEntity.currentCount — atomic counter under
+  // RiderCapacityService's SELECT ... FOR UPDATE, caps concurrent
+  // deliveries at MAX_ACTIVE_ORDERS_PER_RIDER.
+  @Column({ type: 'int', default: 0 })
+  currentActiveOrderCount!: number;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 
