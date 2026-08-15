@@ -1,18 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, IsNull } from 'typeorm';
-import { hashToken } from '../../../common/crypto/hash-token.util';
+import { DataSource } from 'typeorm';
 import { EntityNotFoundException } from '../../../common/exceptions';
 import { HandoffCodeType } from '../domain/handoff-code-type.enum';
-import { generateHandoffCode } from '../domain/handoff-code';
-import { HandoffCodeEntity } from '../infrastructure/entities/handoff-code.entity';
+import { HandoffCodeIssued } from '../domain/handoff-code-issued';
+import { HandoffCodeIssuerService } from './handoff-code-issuer.service';
 
 const HANDOFF_CODE_TTL_MINUTES = 5;
-
-export interface HandoffCodeIssued {
-  code: string;
-  expiresAt: Date;
-}
 
 // The security boundary this whole endpoint exists for: a rider who was
 // never assigned this order can never get a valid code to show a Node
@@ -21,7 +15,10 @@ export interface HandoffCodeIssued {
 // notice at the counter.
 @Injectable()
 export class RequestHandoffCodeService {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly handoffCodeIssuerService: HandoffCodeIssuerService,
+  ) {}
 
   async request(
     orderId: string,
@@ -37,28 +34,14 @@ export class RequestHandoffCodeService {
       throw new EntityNotFoundException('Order', orderId);
     }
 
-    const rawCode = generateHandoffCode();
-    const expiresAt = new Date(Date.now() + HANDOFF_CODE_TTL_MINUTES * 60_000);
-
-    await this.dataSource.transaction(async (manager) => {
-      const repo = manager.getRepository(HandoffCodeEntity);
-      // Supersede any prior unused code for this (order, type) pair — only
-      // the most recently requested code should ever be valid, same
-      // pattern as RequestPasswordResetService.
-      await repo.delete({ orderId, type, usedAt: IsNull() });
-      await repo.save(
-        repo.create({
-          orderId,
-          type,
-          codeHash: hashToken(rawCode),
-          requestedByUserId: riderId,
-          expiresAt,
-          usedAt: null,
-          failedAttempts: 0,
-        }),
-      );
-    });
-
-    return { code: rawCode, expiresAt };
+    return this.dataSource.transaction((manager) =>
+      this.handoffCodeIssuerService.issue(
+        manager,
+        orderId,
+        type,
+        riderId,
+        HANDOFF_CODE_TTL_MINUTES,
+      ),
+    );
   }
 }

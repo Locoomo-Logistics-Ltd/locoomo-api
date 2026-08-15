@@ -1,16 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, EntityManager, IsNull } from 'typeorm';
-import { hashToken } from '../../../common/crypto/hash-token.util';
+import { DataSource } from 'typeorm';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
+import { NodesService } from '../../nodes/application/nodes.service';
 import { OrdersService } from '../../orders/application/orders.service';
 import { HandoffCodeType } from '../domain/handoff-code-type.enum';
 import { OrderTransitionResult } from '../domain/order-transition-result';
-import { InvalidHandoffCodeException } from '../domain/exceptions/invalid-handoff-code.exception';
-import { HandoffCodeEntity } from '../infrastructure/entities/handoff-code.entity';
+import { HandoffCodeValidatorService } from './handoff-code-validator.service';
 import { OrderLookupService } from './order-lookup.service';
-
-const MAX_HANDOFF_CODE_ATTEMPTS = 5;
 
 @Injectable()
 export class ConfirmHandoffService {
@@ -19,6 +16,8 @@ export class ConfirmHandoffService {
     private readonly orderLookupService: OrderLookupService,
     private readonly ordersService: OrdersService,
     private readonly idempotencyService: IdempotencyService,
+    private readonly handoffCodeValidatorService: HandoffCodeValidatorService,
+    private readonly nodesService: NodesService,
   ) {}
 
   async confirm(
@@ -45,8 +44,39 @@ export class ConfirmHandoffService {
     const scope = `handoffs.confirm-handoff.${type}`;
     const { result, alreadyProcessed } = await this.dataSource.transaction(
       (manager) =>
-        this.idempotencyService.withIdempotency(scope, orderId, manager, () =>
-          this.validateCodeAndTransition(orderId, type, code, manager),
+        this.idempotencyService.withIdempotency(
+          scope,
+          orderId,
+          manager,
+          async () => {
+            await this.handoffCodeValidatorService.validate(
+              manager,
+              orderId,
+              type,
+              code,
+            );
+            if (type === HandoffCodeType.RIDER_PICKUP) {
+              const order = await this.ordersService.markPickedUpByRider(
+                orderId,
+                manager,
+              );
+              // The parcel physically leaves the origin Node's premises at
+              // this exact moment — release the booking-time capacity hold
+              // (decision #6) inline, same transaction, so the origin Node
+              // doesn't stay artificially full for every order that has
+              // long since moved on. Strict-consistency effect, per
+              // decision #4.
+              await this.nodesService.releaseCapacitySlot(
+                order.originNodeId,
+                manager,
+              );
+              return order;
+            }
+            return this.ordersService.markArrivedAtDestination(
+              orderId,
+              manager,
+            );
+          },
         ),
     );
 
@@ -64,47 +94,5 @@ export class ConfirmHandoffService {
     }
 
     return result as OrderTransitionResult;
-  }
-
-  private async validateCodeAndTransition(
-    orderId: string,
-    type: HandoffCodeType,
-    code: string,
-    manager: EntityManager,
-  ): Promise<OrderTransitionResult> {
-    const handoffCode = await manager.getRepository(HandoffCodeEntity).findOne({
-      where: { orderId, type, usedAt: IsNull() },
-      order: { createdAt: 'DESC' },
-    });
-
-    const isValid =
-      !!handoffCode &&
-      handoffCode.expiresAt > new Date() &&
-      handoffCode.failedAttempts < MAX_HANDOFF_CODE_ATTEMPTS &&
-      hashToken(code) === handoffCode.codeHash;
-
-    if (!isValid) {
-      if (handoffCode) {
-        // Durable regardless of this transaction's fate — we're about to
-        // throw, which rolls back everything on `manager` including the
-        // idempotency-key insert (so the caller can retry with a correct
-        // code), but the lockout counter must survive that rollback or a
-        // wrong-code attempt could be retried forever for free. Goes
-        // through a separate connection, not `manager`.
-        await this.dataSource.query(
-          `UPDATE handoff_codes SET "failedAttempts" = "failedAttempts" + 1 WHERE id = $1`,
-          [handoffCode.id],
-        );
-      }
-      throw new InvalidHandoffCodeException();
-    }
-
-    await manager
-      .getRepository(HandoffCodeEntity)
-      .update(handoffCode.id, { usedAt: new Date() });
-
-    return type === HandoffCodeType.RIDER_PICKUP
-      ? this.ordersService.markPickedUpByRider(orderId, manager)
-      : this.ordersService.markArrivedAtDestination(orderId, manager);
   }
 }
