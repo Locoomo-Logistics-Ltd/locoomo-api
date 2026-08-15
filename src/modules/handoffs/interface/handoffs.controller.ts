@@ -17,12 +17,17 @@ import { UserRole } from '../../../common/auth/user-role.enum';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { AcceptOrderService } from '../application/accept-order.service';
 import { BrowseAvailableOrdersService } from '../application/browse-available-orders.service';
+import { ConfirmCollectionService } from '../application/confirm-collection.service';
 import { ConfirmDropOffService } from '../application/confirm-drop-off.service';
 import { ConfirmHandoffService } from '../application/confirm-handoff.service';
+import { ConfirmIntakeService } from '../application/confirm-intake.service';
 import { OrderLookupService } from '../application/order-lookup.service';
 import { RequestHandoffCodeService } from '../application/request-handoff-code.service';
+import { ResendCollectionCodeService } from '../application/resend-collection-code.service';
 import { AvailableOrderResponseDto } from './dto/available-order-response.dto';
 import { AvailableOrdersQueryDto } from './dto/available-orders-query.dto';
+import { CollectionCodeResendResponseDto } from './dto/collection-code-resend-response.dto';
+import { ConfirmCollectionDto } from './dto/confirm-collection.dto';
 import { ConfirmHandoffDto } from './dto/confirm-handoff.dto';
 import { HandoffCodeResponseDto } from './dto/handoff-code-response.dto';
 import { OrderPreviewResponseDto } from './dto/order-preview-response.dto';
@@ -38,6 +43,9 @@ export class HandoffsController {
     private readonly confirmDropOffService: ConfirmDropOffService,
     private readonly requestHandoffCodeService: RequestHandoffCodeService,
     private readonly confirmHandoffService: ConfirmHandoffService,
+    private readonly confirmIntakeService: ConfirmIntakeService,
+    private readonly resendCollectionCodeService: ResendCollectionCodeService,
+    private readonly confirmCollectionService: ConfirmCollectionService,
   ) {}
 
   @Roles(UserRole.RIDER)
@@ -115,6 +123,51 @@ export class HandoffsController {
       user.id,
       dto.type,
       dto.code,
+    );
+    return OrderTransitionResponseDto.fromResult(order);
+  }
+
+  // Destination-side equivalent of drop-off — mints and emails the
+  // receiver's collection code as part of the same transition.
+  @Roles(UserRole.NODE_OPERATOR)
+  @Post('orders/:id/intake')
+  @HttpCode(HttpStatus.OK)
+  async intake(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderTransitionResponseDto> {
+    const order = await this.confirmIntakeService.confirm(id, user.id);
+    return OrderTransitionResponseDto.fromResult(order);
+  }
+
+  // Rate-limited — this triggers a real email send, not just a lockout
+  // counter concern.
+  @Roles(UserRole.NODE_OPERATOR)
+  @Throttle({ default: { limit: 5, ttl: seconds(60) } })
+  @Post('orders/:id/collection-code/resend')
+  @HttpCode(HttpStatus.OK)
+  async resendCollectionCode(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<CollectionCodeResendResponseDto> {
+    const issued = await this.resendCollectionCodeService.resend(id, user.id);
+    return CollectionCodeResendResponseDto.fromResult(issued);
+  }
+
+  @Roles(UserRole.NODE_OPERATOR)
+  @Throttle({ default: { limit: 10, ttl: seconds(60) } })
+  @Post('orders/:id/collect')
+  @HttpCode(HttpStatus.OK)
+  async collect(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ConfirmCollectionDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderTransitionResponseDto> {
+    const order = await this.confirmCollectionService.confirm(
+      id,
+      user.id,
+      dto.code,
+      dto.identityConfirmed,
     );
     return OrderTransitionResponseDto.fromResult(order);
   }

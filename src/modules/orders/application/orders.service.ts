@@ -168,6 +168,42 @@ export class OrdersService {
     );
   }
 
+  // Narrow export for handoffs' destination-intake step — mirrors
+  // markReceivedAtOrigin (unilateral operator confirmation, no code
+  // involved), but on the destination side. The caller issues the
+  // RECEIVER_COLLECTION code as a separate step in the same transaction.
+  async markReadyForCollection(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    return this.transition(
+      orderId,
+      OrderStatus.ARRIVED_AT_DESTINATION,
+      OrderStatus.READY_FOR_COLLECTION,
+      manager,
+      OrderEventType.READY_FOR_COLLECTION,
+    );
+  }
+
+  // Narrow export for handoffs' final collection step. eventPayload carries
+  // the operator's identityConfirmed attestation (not a system-enforced
+  // name match — see ConfirmCollectionService) into the permanent
+  // OrderEvent audit trail.
+  async markCollected(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown> = {},
+  ): Promise<OrderEntity> {
+    return this.transition(
+      orderId,
+      OrderStatus.READY_FOR_COLLECTION,
+      OrderStatus.COMPLETED,
+      manager,
+      OrderEventType.COLLECTED_BY_RECEIVER,
+      eventPayload,
+    );
+  }
+
   private async appendEvent(
     manager: EntityManager,
     orderId: string,

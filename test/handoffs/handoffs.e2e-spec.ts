@@ -15,6 +15,7 @@ import { HandoffCodeType } from '../../src/modules/handoffs/domain/handoff-code-
 import { HandoffCodeEntity } from '../../src/modules/handoffs/infrastructure/entities/handoff-code.entity';
 import { NodeOperatorProfileEntity } from '../../src/modules/node-operators/infrastructure/entities/node-operator-profile.entity';
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
+import { OutboxEventEntity } from '../../src/modules/notifications/infrastructure/entities/outbox-event.entity';
 import { OrderStatus } from '../../src/modules/orders/domain/order-status.enum';
 import { OrderEventEntity } from '../../src/modules/orders/infrastructure/entities/order-event.entity';
 import { OrderEntity } from '../../src/modules/orders/infrastructure/entities/order.entity';
@@ -123,6 +124,7 @@ describe('Handoffs (e2e)', () => {
   let riderProfiles: Repository<RiderProfileEntity>;
   let nodeOperatorProfiles: Repository<NodeOperatorProfileEntity>;
   let handoffCodes: Repository<HandoffCodeEntity>;
+  let outboxEvents: Repository<OutboxEventEntity>;
   let jwtService: JwtService;
   let fakePaystack: FakePaystackPaymentProvider;
   let adminCookie: string;
@@ -133,6 +135,10 @@ describe('Handoffs (e2e)', () => {
 
   const emailPattern = '%@handoffs.e2e.test';
   const nodeNamePattern = 'handoffs.e2e.test%';
+  // createPaidOrder hardcodes this as every order's receiver — fine for
+  // this suite since no test asserts cross-order isolation of receiver
+  // identity, only of the collection code itself.
+  const receiverEmail = 'receiver@handoffs.e2e.test';
   const password = 'Correct-Horse-Battery-1';
   const riderLat = 6.45;
   const riderLng = 3.47;
@@ -304,6 +310,75 @@ describe('Handoffs (e2e)', () => {
       .expect(200);
   }
 
+  // Continues an already-IN_TRANSIT order through the real arrival-code
+  // flow so it lands at ARRIVED_AT_DESTINATION — the precondition for
+  // Phase 4's intake tests.
+  async function arrive(orderId: string, riderCookie: string): Promise<void> {
+    const codeResponse = await request(app.getHttpServer())
+      .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+      .set('Cookie', [riderCookie])
+      .send({ type: 'rider_arrival' })
+      .expect(201);
+    const code = (codeResponse.body as SuccessBody).data.code as string;
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+      .set('Cookie', [destinationOperatorCookie])
+      .send({ type: 'rider_arrival', code })
+      .expect(200);
+  }
+
+  // Drives an order all the way to ARRIVED_AT_DESTINATION via the real
+  // drop-off/accept/pickup/arrival endpoints — the precondition for Phase
+  // 4's intake tests.
+  async function createArrivedOrder(
+    consumerEmail: string,
+    riderCookie: string,
+  ): Promise<string> {
+    const orderId = await createAssignedOrder(consumerEmail, riderCookie);
+    await pickUp(orderId, riderCookie);
+    await arrive(orderId, riderCookie);
+    return orderId;
+  }
+
+  // Drives an order through the real intake endpoint so it lands at
+  // READY_FOR_COLLECTION — the precondition for Phase 4's collect/resend
+  // tests.
+  async function createReadyForCollectionOrder(
+    consumerEmail: string,
+    riderCookie: string,
+  ): Promise<string> {
+    const orderId = await createArrivedOrder(consumerEmail, riderCookie);
+    await request(app.getHttpServer())
+      .post(`/api/v1/handoffs/orders/${orderId}/intake`)
+      .set('Cookie', [destinationOperatorCookie])
+      .expect(200);
+    return orderId;
+  }
+
+  // The receiver's collection code is only ever delivered by email (never
+  // by API response — see ResendCollectionCodeService), so tests recover it
+  // the same way a real receiver would: by reading the most recent
+  // queued email addressed to them. Safe because Jest runs `it()` blocks
+  // in this file sequentially, so "most recent" always means "the one this
+  // test's own action just enqueued."
+  async function extractLatestCollectionCode(
+    receiverEmail: string,
+  ): Promise<string> {
+    const event = await outboxEvents
+      .createQueryBuilder('o')
+      .where('o."eventType" = \'email\'')
+      .andWhere("o.payload ->> 'to' = :to", { to: receiverEmail })
+      .orderBy('o."createdAt"', 'DESC')
+      .getOneOrFail();
+    const text = (event.payload as { text: string }).text;
+    const match = /\b(\d{6})\b/.exec(text);
+    if (!match) {
+      throw new Error(`No 6-digit code found in email to ${receiverEmail}`);
+    }
+    return match[1];
+  }
+
   beforeAll(async () => {
     fakePaystack = new FakePaystackPaymentProvider();
 
@@ -329,6 +404,7 @@ describe('Handoffs (e2e)', () => {
       getRepositoryToken(NodeOperatorProfileEntity),
     );
     handoffCodes = moduleFixture.get(getRepositoryToken(HandoffCodeEntity));
+    outboxEvents = moduleFixture.get(getRepositoryToken(OutboxEventEntity));
     jwtService = moduleFixture.get(JwtService);
 
     const admin = await users.save(
@@ -365,6 +441,11 @@ describe('Handoffs (e2e)', () => {
 
   afterAll(async () => {
     try {
+      await outboxEvents
+        .createQueryBuilder()
+        .delete()
+        .where("payload ->> 'to' LIKE :pattern", { pattern: emailPattern })
+        .execute();
       await handoffCodes
         .createQueryBuilder()
         .delete()
@@ -1039,6 +1120,448 @@ describe('Handoffs (e2e)', () => {
         .set('Cookie', [riderCookie])
         .send({ type: 'rider_pickup', code: '000000' })
         .expect(403);
+    });
+  });
+
+  describe('POST /handoffs/orders/:id/intake', () => {
+    it('marks the order ready for collection and emails a collection code', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'intake-rider@handoffs.e2e.test',
+      );
+      const orderId = await createArrivedOrder(
+        'intake-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/intake`)
+        .set('Cookie', [destinationOperatorCookie])
+        .expect(200);
+      expect((response.body as SuccessBody).data.status).toBe(
+        'ready_for_collection',
+      );
+
+      const order = await orders.findOneByOrFail({ id: orderId });
+      expect(order.status).toBe('ready_for_collection');
+
+      const code = await extractLatestCollectionCode(receiverEmail);
+      expect(code).toMatch(/^\d{6}$/);
+
+      const handoffCode = await handoffCodes.findOneByOrFail({
+        orderId,
+        type: HandoffCodeType.RECEIVER_COLLECTION,
+      });
+      expect(handoffCode.requestedByUserId).toBeNull();
+    });
+
+    it('is idempotent under a duplicate confirm', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'intake-idempotent-rider@handoffs.e2e.test',
+      );
+      const orderId = await createArrivedOrder(
+        'intake-idempotent-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/intake`)
+        .set('Cookie', [destinationOperatorCookie])
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/intake`)
+        .set('Cookie', [destinationOperatorCookie])
+        .expect(200);
+
+      const eventCount = await orderEvents.countBy({
+        orderId,
+        type: 'ready_for_collection',
+      });
+      expect(eventCount).toBe(1);
+    });
+
+    it("404s for an order belonging to a different Node's operator", async () => {
+      const otherNodeId = await createNode('intake-other');
+      const operatorCookie = await createNodeOperator(
+        'intake-wrong-operator@handoffs.e2e.test',
+        otherNodeId,
+      );
+      const { cookie: riderCookie } = await createActiveRider(
+        'intake-wrong-rider@handoffs.e2e.test',
+      );
+      const orderId = await createArrivedOrder(
+        'intake-wrong-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/intake`)
+        .set('Cookie', [operatorCookie])
+        .expect(404);
+    });
+
+    it('rejects a non-NodeOperator role', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'intake-forbidden-rider@handoffs.e2e.test',
+      );
+      const orderId = await createArrivedOrder(
+        'intake-forbidden-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/intake`)
+        .set('Cookie', [riderCookie])
+        .expect(403);
+    });
+
+    it('rejects an unauthenticated request', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'intake-unauth-rider@handoffs.e2e.test',
+      );
+      const orderId = await createArrivedOrder(
+        'intake-unauth-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/intake`)
+        .expect(401);
+    });
+  });
+
+  describe('POST /handoffs/orders/:id/collection-code/resend', () => {
+    it('issues a new code that supersedes the intake code', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'resend-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'resend-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const originalCode = await extractLatestCollectionCode(receiverEmail);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collection-code/resend`)
+        .set('Cookie', [destinationOperatorCookie])
+        .expect(200);
+      const newCode = await extractLatestCollectionCode(receiverEmail);
+      expect(newCode).not.toBe(originalCode);
+
+      // The superseded code no longer works...
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code: originalCode, identityConfirmed: true })
+        .expect(401);
+
+      // ...but the freshly resent one does.
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code: newCode, identityConfirmed: true })
+        .expect(200);
+    });
+
+    it('never returns the raw code in the response body', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'resend-noleak-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'resend-noleak-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collection-code/resend`)
+        .set('Cookie', [destinationOperatorCookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data;
+      expect(Object.keys(data).sort()).toEqual(['expiresAt']);
+    });
+
+    it('rejects resend before intake has run', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'resend-early-rider@handoffs.e2e.test',
+      );
+      const orderId = await createArrivedOrder(
+        'resend-early-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collection-code/resend`)
+        .set('Cookie', [destinationOperatorCookie])
+        .expect(409);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'ORDER_NOT_READY_FOR_COLLECTION',
+      );
+    });
+
+    it("404s for an order belonging to a different Node's operator", async () => {
+      const otherNodeId = await createNode('resend-other');
+      const operatorCookie = await createNodeOperator(
+        'resend-wrong-operator@handoffs.e2e.test',
+        otherNodeId,
+      );
+      const { cookie: riderCookie } = await createActiveRider(
+        'resend-wrong-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'resend-wrong-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collection-code/resend`)
+        .set('Cookie', [operatorCookie])
+        .expect(404);
+    });
+
+    it('rejects a non-NodeOperator role', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'resend-forbidden-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'resend-forbidden-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collection-code/resend`)
+        .set('Cookie', [riderCookie])
+        .expect(403);
+    });
+  });
+
+  describe('POST /handoffs/orders/:id/collect', () => {
+    it('completes collection and records the operator attestation', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'collect-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'collect-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const code = await extractLatestCollectionCode(receiverEmail);
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(200);
+      expect((response.body as SuccessBody).data.status).toBe('completed');
+
+      const order = await orders.findOneByOrFail({ id: orderId });
+      expect(order.status).toBe('completed');
+
+      const event = await orderEvents.findOneByOrFail({
+        orderId,
+        type: 'collected_by_receiver',
+      });
+      expect(event.payload).toEqual({ identityConfirmed: true });
+    });
+
+    // Proxy pickup is a legitimate real-world case (someone other than the
+    // named receiver collecting on their behalf) — the attestation is
+    // advisory, not a blocking guard, so a false value still completes the
+    // order.
+    it('completes collection even when identity was not confirmed', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'collect-noconfirm-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'collect-noconfirm-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const code = await extractLatestCollectionCode(receiverEmail);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: false })
+        .expect(200);
+
+      const event = await orderEvents.findOneByOrFail({
+        orderId,
+        type: 'collected_by_receiver',
+      });
+      expect(event.payload).toEqual({ identityConfirmed: false });
+    });
+
+    it('rejects a wrong code and increments the lockout counter durably', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'collect-wrongcode-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'collect-wrongcode-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code: '000000', identityConfirmed: true })
+        .expect(401);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'INVALID_HANDOFF_CODE',
+      );
+
+      const handoffCode = await handoffCodes.findOneByOrFail({
+        orderId,
+        type: HandoffCodeType.RECEIVER_COLLECTION,
+      });
+      expect(handoffCode.failedAttempts).toBe(1);
+
+      const order = await orders.findOneByOrFail({ id: orderId });
+      expect(order.status).toBe('ready_for_collection');
+    });
+
+    it('locks the code out permanently after 5 wrong attempts, even with the right code', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'collect-lockout-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'collect-lockout-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const code = await extractLatestCollectionCode(receiverEmail);
+
+      for (let i = 0; i < 5; i++) {
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+          .set('Cookie', [destinationOperatorCookie])
+          .send({ code: '000000', identityConfirmed: true })
+          .expect(401);
+      }
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(401);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'INVALID_HANDOFF_CODE',
+      );
+
+      // Recovers via resend, same as the rider-code lockout.
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collection-code/resend`)
+        .set('Cookie', [destinationOperatorCookie])
+        .expect(200);
+      const freshCode = await extractLatestCollectionCode(receiverEmail);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code: freshCode, identityConfirmed: true })
+        .expect(200);
+    });
+
+    it('is idempotent under a duplicate confirm with the same code', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'collect-idempotent-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'collect-idempotent-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const code = await extractLatestCollectionCode(receiverEmail);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(200);
+
+      const eventCount = await orderEvents.countBy({
+        orderId,
+        type: 'collected_by_receiver',
+      });
+      expect(eventCount).toBe(1);
+    });
+
+    it('rejects an expired code', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'collect-expired-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'collect-expired-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const code = await extractLatestCollectionCode(receiverEmail);
+
+      await handoffCodes.update(
+        { orderId, type: HandoffCodeType.RECEIVER_COLLECTION },
+        { expiresAt: new Date(Date.now() - 60_000) },
+      );
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(401);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'INVALID_HANDOFF_CODE',
+      );
+    });
+
+    it("404s for an order belonging to a different Node's operator", async () => {
+      const otherNodeId = await createNode('collect-other');
+      const operatorCookie = await createNodeOperator(
+        'collect-wrong-operator@handoffs.e2e.test',
+        otherNodeId,
+      );
+      const { cookie: riderCookie } = await createActiveRider(
+        'collect-wrong-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'collect-wrong-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const code = await extractLatestCollectionCode(receiverEmail);
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [operatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(404);
+      expect((response.body as ErrorBody).error.code).toBe('NOT_FOUND');
+    });
+
+    it('rejects a non-NodeOperator role', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'collect-forbidden-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'collect-forbidden-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [riderCookie])
+        .send({ code: '000000', identityConfirmed: true })
+        .expect(403);
+    });
+
+    it('rejects an unauthenticated request', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'collect-unauth-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'collect-unauth-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .send({ code: '000000', identityConfirmed: true })
+        .expect(401);
     });
   });
 });

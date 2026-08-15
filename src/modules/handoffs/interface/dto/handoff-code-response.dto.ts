@@ -1,4 +1,4 @@
-import { HandoffCodeIssued } from '../../application/request-handoff-code.service';
+import { HandoffCodeIssued } from '../../domain/handoff-code-issued';
 
 // The one moment the raw code is ever exposed — the rider's own
 // authenticated session requesting it, displayed in their app for them to
