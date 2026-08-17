@@ -666,6 +666,51 @@ describe('Handoffs (e2e)', () => {
       expect(profile.currentActiveOrderCount).toBe(3);
     });
 
+    it('releases the capacity slot on arrival, allowing a delivery past the cap afterward', async () => {
+      const { cookie, userId } = await createActiveRider(
+        'capacity-release-rider@handoffs.e2e.test',
+      );
+      const orderIds = [
+        await createAvailableOrder(
+          'capacity-release-consumer-1@handoffs.e2e.test',
+        ),
+        await createAvailableOrder(
+          'capacity-release-consumer-2@handoffs.e2e.test',
+        ),
+        await createAvailableOrder(
+          'capacity-release-consumer-3@handoffs.e2e.test',
+        ),
+      ];
+      for (const orderId of orderIds) {
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${orderId}/accept`)
+          .set('Cookie', [cookie])
+          .expect(200);
+      }
+      const cappedProfile = await riderProfiles.findOneByOrFail({ userId });
+      expect(cappedProfile.currentActiveOrderCount).toBe(3);
+
+      // Deliver one of the three all the way to arrival — the rider's part
+      // of the job is done, so their slot should free up even though the
+      // parcel hasn't been collected yet.
+      await pickUp(orderIds[0], cookie);
+      await arrive(orderIds[0], cookie);
+
+      const releasedProfile = await riderProfiles.findOneByOrFail({ userId });
+      expect(releasedProfile.currentActiveOrderCount).toBe(2);
+
+      const fourthOrderId = await createAvailableOrder(
+        'capacity-release-consumer-4@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${fourthOrderId}/accept`)
+        .set('Cookie', [cookie])
+        .expect(200);
+
+      const finalProfile = await riderProfiles.findOneByOrFail({ userId });
+      expect(finalProfile.currentActiveOrderCount).toBe(3);
+    });
+
     it('rejects a pending (not-yet-approved) rider', async () => {
       const cookie = await registerAndLogin(
         'pending-rider@handoffs.e2e.test',
