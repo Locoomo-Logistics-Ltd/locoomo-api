@@ -13,6 +13,14 @@ export class OnboardRiderDto {
   @MaxLength(150)
   currentEmployer!: string;
 
+  // No format regex — no single confirmed canonical format for a Nigerian
+  // driver's license number exists in the PRD/CTO decisions, so this is
+  // deliberately loose (length only) rather than an invented rule.
+  @IsString()
+  @MinLength(1)
+  @MaxLength(50)
+  licenseNumber!: string;
+
   @IsIn(DOCUMENT_TYPES, {
     message: `documentType must be one of: ${DOCUMENT_TYPES.join(', ')}`,
   })

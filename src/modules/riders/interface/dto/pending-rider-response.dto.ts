@@ -6,6 +6,7 @@ export class PendingRiderResponseDto {
   userFirstName!: string;
   userLastName!: string;
   currentEmployer!: string;
+  licenseNumber!: string | null;
   submittedAt!: Date;
   documents!: RiderDocumentResponseDto[];
 }

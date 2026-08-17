@@ -644,10 +644,16 @@ Request:
 ```json
 {
   "currentEmployer": "Existing Delivery Co",
+  "licenseNumber": "ABJ-1234567",
   "documentType": "rating_screenshot",
   "cloudinaryPublicId": "riders/{your-user-id}/verification/rating_screenshot/abc123"
 }
 ```
+
+`licenseNumber` is self-reported, no format validation beyond length (1-50 chars) — no
+photo/document verification of it exists (unlike `documentType`, which does get an actual
+Cloudinary upload check). Not backfilled for riders who onboarded before this field
+existed; `null` on their profile until further notice.
 
 Response `201`, `data`:
 
@@ -655,6 +661,7 @@ Response `201`, `data`:
 {
   "profileId": "uuid",
   "currentEmployer": "Existing Delivery Co",
+  "licenseNumber": "ABJ-1234567",
   "status": "pending",
   "documents": [
     {
@@ -695,6 +702,7 @@ Response `200`, `data.items[]` each:
   "userFirstName": "Ada",
   "userLastName": "Lovelace",
   "currentEmployer": "Existing Delivery Co",
+  "licenseNumber": "ABJ-1234567",
   "submittedAt": "2026-07-22T09:14:00.000Z",
   "documents": [ "...": "same document shape as the onboarding response" ]
 }
@@ -968,6 +976,83 @@ Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Rider), `403 RIDER_NOT_ACTIV
 `409 ILLEGAL_ORDER_TRANSITION` (order already claimed, or not yet at
 `parcel_received_at_origin`), `409 RIDER_CAPACITY_UNAVAILABLE`.
 
+### `GET /api/v1/handoffs/my-orders`
+
+**Requires an authenticated Rider session.** The counterpart to `accept` — every order
+you've ever been assigned, current and past, newest first. No status filtering server-side
+— use `status` on each item to tell what still needs action (`rider_assigned` needs a
+pickup code, `in_transit` needs an arrival code) apart from settled ones. Paginated (see
+[Pagination](#pagination-list-endpoints)).
+
+Response `200`, `data`:
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "trackingCode": "LCM-4F2K-9XPT",
+      "status": "rider_assigned",
+      "originNodeId": "uuid",
+      "originNodeName": "Yaba Node",
+      "originNodeAddress": "12 Herbert Macaulay Way",
+      "destinationNodeId": "uuid",
+      "destinationNodeName": "Lekki Node",
+      "destinationNodeAddress": "5 Admiralty Way",
+      "parcelDescription": "A small box of documents",
+      "parcelSize": "small",
+      "createdAt": "2026-07-22T09:14:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 1
+}
+```
+
+No receiver details here — same reasoning as `available-orders`, you don't need them
+until the destination side of the flow.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Rider).
+
+### `GET /api/v1/handoffs/my-node/orders`
+
+**Requires an authenticated NodeOperator session.** The counterpart to `my-orders`, for
+the other side of the counter — every order that's ever touched your Node, either as
+origin or destination, current and past, newest first. `myRole` on each item tells you
+which side your Node played on that particular order (a Node is an origin for some orders
+and a destination for others). Paginated (see [Pagination](#pagination-list-endpoints)).
+
+Response `200`, `data`:
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "trackingCode": "LCM-4F2K-9XPT",
+      "status": "parcel_received_at_origin",
+      "originNodeId": "uuid",
+      "originNodeName": "Yaba Node",
+      "destinationNodeId": "uuid",
+      "destinationNodeName": "Lekki Node",
+      "parcelDescription": "A small box of documents",
+      "parcelSize": "small",
+      "createdAt": "2026-07-22T09:14:00.000Z",
+      "myRole": "origin"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 1
+}
+```
+
+No receiver details here either — same reasoning as `by-tracking-code` below, this is a
+history/overview view, not the collection step itself.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator).
+
 ### `GET /api/v1/handoffs/orders/by-tracking-code/:code`
 
 **Requires an authenticated NodeOperator session**, and only returns orders whose
@@ -1129,5 +1214,47 @@ Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator), `404 NOT_FOUN
 Node), `401 INVALID_HANDOFF_CODE`, `429 RATE_LIMITED`, `400 VALIDATION_FAILED`.
 
 This is also the end of the parcel's lifecycle in the system today — rider payout for a
-`completed` order is manual for now (see `doc/ROADMAP.md`).
+`completed` order is manual for now, and the report below is what that manual process
+reads from.
+
+### `GET /api/v1/admin/rider-earnings`
+
+**Requires an authenticated Admin session.** Read-only payout-readiness report — not a
+payout flow. Groups every `completed` order by rider, one row per rider, so an Admin can
+see what's owed ahead of an off-system (bank transfer, cash, etc.) payout run. Paginated
+over riders (see [Pagination](#pagination-list-endpoints)), sorted by `totalAmountKobo`
+descending — the highest earners first.
+
+Response `200`, `data`:
+
+```json
+{
+  "items": [
+    {
+      "riderId": "b3f1...",
+      "riderEmail": "rider@example.com",
+      "riderFirstName": "Ada",
+      "riderLastName": "Okoye",
+      "completedOrderCount": 2,
+      "totalAmountKobo": 240000,
+      "orders": [
+        {
+          "id": "9f2a...",
+          "trackingCode": "LCM-7K2X-9QRT",
+          "amountKobo": 120000,
+          "completedAt": "2026-07-22T10:34:00.000Z"
+        }
+      ]
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 1
+}
+```
+
+ `completedAt` is the order's `updatedAt` at the moment it
+transitioned to `completed`.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
 

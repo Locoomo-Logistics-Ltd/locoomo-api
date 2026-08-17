@@ -50,6 +50,7 @@ export class OnboardRiderService {
             manager.create(RiderProfileEntity, {
               userId,
               currentEmployer: dto.currentEmployer,
+              licenseNumber: dto.licenseNumber,
               status: RiderStatus.PENDING,
             }),
           );

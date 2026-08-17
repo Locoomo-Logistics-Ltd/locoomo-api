@@ -15,12 +15,15 @@ import { CurrentUser } from '../../../common/auth/decorators/current-user.decora
 import { Roles } from '../../../common/auth/decorators/roles.decorator';
 import { UserRole } from '../../../common/auth/user-role.enum';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
+import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { AcceptOrderService } from '../application/accept-order.service';
 import { BrowseAvailableOrdersService } from '../application/browse-available-orders.service';
 import { ConfirmCollectionService } from '../application/confirm-collection.service';
 import { ConfirmDropOffService } from '../application/confirm-drop-off.service';
 import { ConfirmHandoffService } from '../application/confirm-handoff.service';
 import { ConfirmIntakeService } from '../application/confirm-intake.service';
+import { ListMyNodeOrdersService } from '../application/list-my-node-orders.service';
+import { ListMyOrdersService } from '../application/list-my-orders.service';
 import { OrderLookupService } from '../application/order-lookup.service';
 import { RequestHandoffCodeService } from '../application/request-handoff-code.service';
 import { ResendCollectionCodeService } from '../application/resend-collection-code.service';
@@ -30,6 +33,8 @@ import { CollectionCodeResendResponseDto } from './dto/collection-code-resend-re
 import { ConfirmCollectionDto } from './dto/confirm-collection.dto';
 import { ConfirmHandoffDto } from './dto/confirm-handoff.dto';
 import { HandoffCodeResponseDto } from './dto/handoff-code-response.dto';
+import { MyNodeOrderResponseDto } from './dto/my-node-order-response.dto';
+import { MyOrderResponseDto } from './dto/my-order-response.dto';
 import { OrderPreviewResponseDto } from './dto/order-preview-response.dto';
 import { OrderTransitionResponseDto } from './dto/order-transition-response.dto';
 import { RequestHandoffCodeDto } from './dto/request-handoff-code.dto';
@@ -46,6 +51,8 @@ export class HandoffsController {
     private readonly confirmIntakeService: ConfirmIntakeService,
     private readonly resendCollectionCodeService: ResendCollectionCodeService,
     private readonly confirmCollectionService: ConfirmCollectionService,
+    private readonly listMyOrdersService: ListMyOrdersService,
+    private readonly listMyNodeOrdersService: ListMyNodeOrdersService,
   ) {}
 
   @Roles(UserRole.RIDER)
@@ -54,6 +61,18 @@ export class HandoffsController {
     @Query() query: AvailableOrdersQueryDto,
   ): Promise<PaginatedResultDto<AvailableOrderResponseDto>> {
     return this.browseAvailableOrdersService.browse(query);
+  }
+
+  // The counterpart to browse()/accept() — every order this rider has ever
+  // been assigned, current and past, so they have both a work queue (filter
+  // client-side on status: rider_assigned/in_transit) and a personal record.
+  @Roles(UserRole.RIDER)
+  @Get('my-orders')
+  myOrders(
+    @Query() query: PaginationQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PaginatedResultDto<MyOrderResponseDto>> {
+    return this.listMyOrdersService.list(user.id, query);
   }
 
   @Roles(UserRole.RIDER)
@@ -65,6 +84,19 @@ export class HandoffsController {
   ): Promise<OrderTransitionResponseDto> {
     const order = await this.acceptOrderService.accept(id, user.id);
     return OrderTransitionResponseDto.fromResult(order);
+  }
+
+  // Node-operator counterpart to my-orders — every order that's ever
+  // touched this operator's Node, either as origin or destination, current
+  // and past. myRole on each item disambiguates which side of that order
+  // their Node played.
+  @Roles(UserRole.NODE_OPERATOR)
+  @Get('my-node/orders')
+  myNodeOrders(
+    @Query() query: PaginationQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PaginatedResultDto<MyNodeOrderResponseDto>> {
+    return this.listMyNodeOrdersService.list(user.id, query);
   }
 
   @Roles(UserRole.NODE_OPERATOR)

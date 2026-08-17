@@ -20,6 +20,15 @@ export class RiderProfileEntity {
   @Column({ type: 'varchar' })
   currentEmployer!: string;
 
+  // Nullable at the DB level — required by OnboardRiderDto for every new
+  // rider, but riders onboarded before this field existed have no way to
+  // backfill it yet (no update endpoint exists). No format validation
+  // beyond length: Nigerian driver's license numbers have no single
+  // confirmed canonical format in the PRD/CTO decisions, so a strict regex
+  // isn't invented here.
+  @Column({ type: 'varchar', nullable: true })
+  licenseNumber!: string | null;
+
   @Index()
   @Column({ type: 'enum', enum: RiderStatus, default: RiderStatus.PENDING })
   status!: RiderStatus;

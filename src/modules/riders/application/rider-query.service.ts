@@ -17,6 +17,7 @@ import {
 interface PendingRiderRow {
   profileId: string;
   currentEmployer: string;
+  licenseNumber: string | null;
   submittedAt: Date;
   userEmail: string;
   userFirstName: string;
@@ -53,7 +54,7 @@ export class RiderQueryService {
     const offset = (query.page - 1) * query.limit;
 
     const rows = await this.dataSource.query<PendingRiderRow[]>(
-      `SELECT rp.id AS "profileId", rp."currentEmployer",
+      `SELECT rp.id AS "profileId", rp."currentEmployer", rp."licenseNumber",
               rp."createdAt" AS "submittedAt", u.email AS "userEmail",
               u."firstName" AS "userFirstName", u."lastName" AS "userLastName"
          FROM rider_profiles rp
@@ -81,6 +82,7 @@ export class RiderQueryService {
       dto.userFirstName = row.userFirstName;
       dto.userLastName = row.userLastName;
       dto.currentEmployer = row.currentEmployer;
+      dto.licenseNumber = row.licenseNumber;
       dto.submittedAt = row.submittedAt;
       dto.documents = toRiderDocumentResponseDtos(
         docs.filter((doc) => doc.riderProfileId === row.profileId),

@@ -14,6 +14,8 @@ import { ConfirmHandoffService } from './application/confirm-handoff.service';
 import { ConfirmIntakeService } from './application/confirm-intake.service';
 import { HandoffCodeIssuerService } from './application/handoff-code-issuer.service';
 import { HandoffCodeValidatorService } from './application/handoff-code-validator.service';
+import { ListMyNodeOrdersService } from './application/list-my-node-orders.service';
+import { ListMyOrdersService } from './application/list-my-orders.service';
 import { OrderLookupService } from './application/order-lookup.service';
 import { RequestHandoffCodeService } from './application/request-handoff-code.service';
 import { ResendCollectionCodeService } from './application/resend-collection-code.service';
@@ -51,6 +53,8 @@ import { HandoffsController } from './interface/handoffs.controller';
     ConfirmIntakeService,
     ResendCollectionCodeService,
     ConfirmCollectionService,
+    ListMyOrdersService,
+    ListMyNodeOrdersService,
   ],
 })
 export class HandoffsModule {}
