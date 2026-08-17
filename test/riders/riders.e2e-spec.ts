@@ -109,6 +109,7 @@ describe('Riders (e2e)', () => {
       .set('Cookie', [operatorCookie])
       .send({
         currentEmployer: 'Existing Delivery Co',
+        licenseNumber: 'ABJ-1234567',
         documentType: 'rating_screenshot',
         cloudinaryPublicId: fakeUploadedPublicId('rating'),
         ...overrides,
@@ -294,6 +295,20 @@ describe('Riders (e2e)', () => {
         .post('/api/v1/riders/onboarding')
         .set('Cookie', [riderCookie])
         .send({
+          licenseNumber: 'ABJ-1234567',
+          documentType: 'rating_screenshot',
+          cloudinaryPublicId: publicId,
+        })
+        .expect(400);
+    });
+
+    it('rejects a missing licenseNumber', async () => {
+      const publicId = fakeUploadedPublicId('missing-license');
+      await request(app.getHttpServer())
+        .post('/api/v1/riders/onboarding')
+        .set('Cookie', [riderCookie])
+        .send({
+          currentEmployer: 'Existing Delivery Co',
           documentType: 'rating_screenshot',
           cloudinaryPublicId: publicId,
         })
@@ -307,9 +322,11 @@ describe('Riders (e2e)', () => {
       const data = (response.body as SuccessBody).data as {
         profileId: string;
         status: string;
+        licenseNumber: string;
         documents: { documentType: string; viewUrl: string }[];
       };
       expect(data.status).toBe('pending');
+      expect(data.licenseNumber).toBe('ABJ-1234567');
       expect(data.documents).toHaveLength(1);
       expect(data.documents[0].documentType).toBe('rating_screenshot');
       expect(data.documents[0].viewUrl).toContain('fake.cloudinary.test');
@@ -370,6 +387,7 @@ describe('Riders (e2e)', () => {
           profileId: string;
           userEmail: string;
           currentEmployer: string;
+          licenseNumber: string;
           documents: { viewUrl: string }[];
         }[];
       };
@@ -377,6 +395,7 @@ describe('Riders (e2e)', () => {
       expect(entry).toBeDefined();
       expect(entry?.userEmail).toBe(email);
       expect(entry?.currentEmployer).toBe('Speedy Dispatch Ltd');
+      expect(entry?.licenseNumber).toBe('ABJ-1234567');
       expect(entry?.documents[0].viewUrl).toContain('fake.cloudinary.test');
     });
 

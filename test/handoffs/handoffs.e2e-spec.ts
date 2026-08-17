@@ -223,7 +223,12 @@ describe('Handoffs (e2e)', () => {
         state: 'Lagos',
         latitude: 6.45,
         longitude: 3.47,
-        capacity: 30,
+        // High headroom, not a realistic pilot value — origin capacity is
+        // only released on rider pickup (decision #6/#4), and most of this
+        // suite's ~60 tests place an order against the shared origin Node
+        // without ever picking it up, so runtime consumption is much
+        // higher than the test count naively suggests.
+        capacity: 500,
       })
       .expect(201);
     return (response.body as SuccessBody).data.id as string;
@@ -694,6 +699,235 @@ describe('Handoffs (e2e)', () => {
 
       await request(app.getHttpServer())
         .post(`/api/v1/handoffs/orders/${orderId}/accept`)
+        .expect(401);
+    });
+  });
+
+  describe('GET /handoffs/my-orders', () => {
+    it('lists an accepted order still awaiting pickup', async () => {
+      const { cookie } = await createActiveRider(
+        'myorders-assigned-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAvailableOrder(
+        'myorders-assigned-consumer@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/accept`)
+        .set('Cookie', [cookie])
+        .expect(200);
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-orders')
+        .set('Cookie', [cookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        items: { id: string; status: string; originNodeName: string }[];
+      };
+      const item = data.items.find((row) => row.id === orderId);
+      expect(item).toBeDefined();
+      expect(item?.status).toBe('rider_assigned');
+      expect(item?.originNodeName).toContain('origin');
+    });
+
+    it('lists a picked-up order still awaiting arrival', async () => {
+      const { cookie } = await createActiveRider(
+        'myorders-transit-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'myorders-transit-consumer@handoffs.e2e.test',
+        cookie,
+      );
+      await pickUp(orderId, cookie);
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-orders')
+        .set('Cookie', [cookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        items: { id: string; status: string }[];
+      };
+      const item = data.items.find((row) => row.id === orderId);
+      expect(item).toBeDefined();
+      expect(item?.status).toBe('in_transit');
+    });
+
+    it('keeps listing an order after it moves past in_transit — full history, not just the active queue', async () => {
+      const { cookie } = await createActiveRider(
+        'myorders-arrived-rider@handoffs.e2e.test',
+      );
+      const orderId = await createArrivedOrder(
+        'myorders-arrived-consumer@handoffs.e2e.test',
+        cookie,
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-orders')
+        .set('Cookie', [cookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        items: { id: string; status: string }[];
+      };
+      const item = data.items.find((row) => row.id === orderId);
+      expect(item).toBeDefined();
+      expect(item?.status).toBe('arrived_at_destination');
+    });
+
+    it("never lists another rider's order", async () => {
+      const { cookie: ownerCookie } = await createActiveRider(
+        'myorders-owner-rider@handoffs.e2e.test',
+      );
+      const { cookie: strangerCookie } = await createActiveRider(
+        'myorders-stranger-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAvailableOrder(
+        'myorders-stranger-consumer@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/accept`)
+        .set('Cookie', [ownerCookie])
+        .expect(200);
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-orders')
+        .set('Cookie', [strangerCookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        items: { id: string }[];
+      };
+      expect(data.items.some((row) => row.id === orderId)).toBe(false);
+    });
+
+    it('rejects a non-Rider role', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-orders')
+        .set('Cookie', [originOperatorCookie])
+        .expect(403);
+    });
+
+    it('rejects an unauthenticated request', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-orders')
+        .expect(401);
+    });
+  });
+
+  describe('GET /handoffs/my-node/orders', () => {
+    it('lists an order where the operator is the origin, tagged myRole: origin', async () => {
+      const operatorCookie = await createNodeOperator(
+        'mynode-origin-operator@handoffs.e2e.test',
+        originNodeId,
+      );
+      const { id: orderId } = await createPaidOrder(
+        'mynode-origin-consumer@handoffs.e2e.test',
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-node/orders')
+        .set('Cookie', [operatorCookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        items: {
+          id: string;
+          myRole: string;
+          originNodeName: string;
+          destinationNodeName: string;
+        }[];
+      };
+      const item = data.items.find((row) => row.id === orderId);
+      expect(item).toBeDefined();
+      expect(item?.myRole).toBe('origin');
+      expect(item?.originNodeName).toContain('origin');
+      expect(item?.destinationNodeName).toContain('destination');
+    });
+
+    it('lists an order where the operator is the destination, tagged myRole: destination', async () => {
+      const operatorCookie = await createNodeOperator(
+        'mynode-dest-operator@handoffs.e2e.test',
+        destinationNodeId,
+      );
+      const { id: orderId } = await createPaidOrder(
+        'mynode-dest-consumer@handoffs.e2e.test',
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-node/orders')
+        .set('Cookie', [operatorCookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        items: { id: string; myRole: string }[];
+      };
+      const item = data.items.find((row) => row.id === orderId);
+      expect(item).toBeDefined();
+      expect(item?.myRole).toBe('destination');
+    });
+
+    it('keeps listing an order regardless of status — full history', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'mynode-history-rider@handoffs.e2e.test',
+      );
+      const operatorCookie = await createNodeOperator(
+        'mynode-history-operator@handoffs.e2e.test',
+        originNodeId,
+      );
+      const orderId = await createAssignedOrder(
+        'mynode-history-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-node/orders')
+        .set('Cookie', [operatorCookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        items: { id: string; status: string }[];
+      };
+      const item = data.items.find((row) => row.id === orderId);
+      expect(item).toBeDefined();
+      expect(item?.status).toBe('rider_assigned');
+    });
+
+    it("never lists another Node's order", async () => {
+      const otherNodeId = await createNode('mynode-other');
+      const operatorCookie = await createNodeOperator(
+        'mynode-other-operator@handoffs.e2e.test',
+        otherNodeId,
+      );
+      const { id: orderId } = await createPaidOrder(
+        'mynode-other-consumer@handoffs.e2e.test',
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-node/orders')
+        .set('Cookie', [operatorCookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        items: { id: string }[];
+      };
+      expect(data.items.some((row) => row.id === orderId)).toBe(false);
+    });
+
+    it('rejects a non-NodeOperator role', async () => {
+      const { cookie } = await createActiveRider(
+        'mynode-forbidden-rider@handoffs.e2e.test',
+      );
+
+      await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-node/orders')
+        .set('Cookie', [cookie])
+        .expect(403);
+    });
+
+    it('rejects an unauthenticated request', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-node/orders')
         .expect(401);
     });
   });
@@ -1561,6 +1795,80 @@ describe('Handoffs (e2e)', () => {
       await request(app.getHttpServer())
         .post(`/api/v1/handoffs/orders/${orderId}/collect`)
         .send({ code: '000000', identityConfirmed: true })
+        .expect(401);
+    });
+  });
+
+  // Lives here rather than orders.e2e-spec.ts (where the controller's own
+  // module file sits) because reaching COMPLETED requires driving an order
+  // through the full handoff pipeline — this suite already has every helper
+  // that needs, and duplicating that fixture setup in a new file for one
+  // read-only report isn't worth it.
+  describe('GET /admin/rider-earnings', () => {
+    it("reports a rider's completed-order totals with a per-order breakdown", async () => {
+      const { cookie: riderCookie, userId: riderId } = await createActiveRider(
+        'earnings-rider@handoffs.e2e.test',
+      );
+      const orderIdA = await createReadyForCollectionOrder(
+        'earnings-consumer-a@handoffs.e2e.test',
+        riderCookie,
+      );
+      const codeA = await extractLatestCollectionCode(receiverEmail);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderIdA}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code: codeA, identityConfirmed: true })
+        .expect(200);
+
+      const orderIdB = await createReadyForCollectionOrder(
+        'earnings-consumer-b@handoffs.e2e.test',
+        riderCookie,
+      );
+      const codeB = await extractLatestCollectionCode(receiverEmail);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderIdB}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code: codeB, identityConfirmed: true })
+        .expect(200);
+
+      const orderA = await orders.findOneByOrFail({ id: orderIdA });
+      const orderB = await orders.findOneByOrFail({ id: orderIdB });
+
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/admin/rider-earnings')
+        .query({ limit: 100 })
+        .set('Cookie', [adminCookie])
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        items: {
+          riderId: string;
+          completedOrderCount: number;
+          totalAmountKobo: number;
+          orders: { id: string; amountKobo: number }[];
+        }[];
+      };
+      const riderRow = data.items.find((item) => item.riderId === riderId);
+      expect(riderRow).toBeDefined();
+      expect(riderRow?.completedOrderCount).toBe(2);
+      expect(riderRow?.totalAmountKobo).toBe(
+        orderA.amountKobo + orderB.amountKobo,
+      );
+      expect(riderRow?.orders.map((o) => o.id)).toEqual(
+        expect.arrayContaining([orderIdA, orderIdB]),
+      );
+    });
+
+    it('rejects a non-Admin role', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/rider-earnings')
+        .set('Cookie', [originOperatorCookie])
+        .expect(403);
+    });
+
+    it('rejects an unauthenticated request', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/rider-earnings')
         .expect(401);
     });
   });

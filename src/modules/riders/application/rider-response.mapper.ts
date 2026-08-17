@@ -28,6 +28,7 @@ export function toRiderResponseDto(
   const dto = new RiderResponseDto();
   dto.profileId = profile.id;
   dto.currentEmployer = profile.currentEmployer;
+  dto.licenseNumber = profile.licenseNumber;
   dto.status = profile.status;
   dto.documents = toRiderDocumentResponseDtos(documents, cloudinaryService);
   return dto;
