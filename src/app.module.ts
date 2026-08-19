@@ -4,6 +4,7 @@ import { AppService } from './app.service';
 import { CommonModule } from './common/common.module';
 import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
+import { EarningsModule } from './modules/earnings/earnings.module';
 import { HandoffsModule } from './modules/handoffs/handoffs.module';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './modules/identity/identity.module';
@@ -28,6 +29,7 @@ import { RidersModule } from './modules/riders/riders.module';
     OrdersModule,
     PaymentsModule,
     HandoffsModule,
+    EarningsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

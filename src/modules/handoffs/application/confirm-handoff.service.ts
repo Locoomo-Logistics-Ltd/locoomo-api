@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
 import { NodesService } from '../../nodes/application/nodes.service';
 import { OrdersService } from '../../orders/application/orders.service';
+import { RiderCapacityService } from '../../riders/application/rider-capacity.service';
 import { HandoffCodeType } from '../domain/handoff-code-type.enum';
 import { OrderTransitionResult } from '../domain/order-transition-result';
 import { HandoffCodeValidatorService } from './handoff-code-validator.service';
@@ -18,6 +19,7 @@ export class ConfirmHandoffService {
     private readonly idempotencyService: IdempotencyService,
     private readonly handoffCodeValidatorService: HandoffCodeValidatorService,
     private readonly nodesService: NodesService,
+    private readonly riderCapacityService: RiderCapacityService,
   ) {}
 
   async confirm(
@@ -72,10 +74,24 @@ export class ConfirmHandoffService {
               );
               return order;
             }
-            return this.ordersService.markArrivedAtDestination(
+            const order = await this.ordersService.markArrivedAtDestination(
               orderId,
               manager,
             );
+            // The rider's physical custody of the parcel ends here — free
+            // up their delivery-capacity slot inline, same transaction, so
+            // they aren't stuck at the 3-concurrent-delivery cap for a
+            // parcel they've already handed off. Not released at COMPLETED:
+            // that could be indefinitely later (E6, unresolved) and has
+            // nothing to do with whether the rider can take on more work.
+            // Non-null: the guarded state machine requires RIDER_ASSIGNED
+            // (which atomically sets riderId) before IN_TRANSIT, which is
+            // required before this ARRIVED_AT_DESTINATION transition.
+            await this.riderCapacityService.releaseDeliverySlot(
+              order.riderId!,
+              manager,
+            );
+            return order;
           },
         ),
     );

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { IdempotencyModule } from '../../common/idempotency/idempotency.module';
+import { EarningsModule } from '../earnings/earnings.module';
 import { NodeOperatorsModule } from '../node-operators/node-operators.module';
 import { NodesModule } from '../nodes/nodes.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -33,12 +34,14 @@ import { HandoffsController } from './interface/handoffs.controller';
     // NodesModule: NodesService.releaseCapacitySlot (origin, on rider pickup).
     // IdempotencyModule: every scan/confirm endpoint (decision #5).
     // NotificationsModule: OutboxService.enqueueEmail (collection code).
+    // EarningsModule: RecordRevenueSplitService, on order completion.
     OrdersModule,
     RidersModule,
     NodeOperatorsModule,
     NodesModule,
     IdempotencyModule,
     NotificationsModule,
+    EarningsModule,
   ],
   controllers: [HandoffsController],
   providers: [
