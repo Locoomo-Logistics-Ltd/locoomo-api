@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
+import { RecordRevenueSplitService } from '../../earnings/application/record-revenue-split.service';
 import { OrdersService } from '../../orders/application/orders.service';
 import { HandoffCodeType } from '../domain/handoff-code-type.enum';
 import { OrderTransitionResult } from '../domain/order-transition-result';
@@ -23,6 +24,7 @@ export class ConfirmCollectionService {
     private readonly ordersService: OrdersService,
     private readonly idempotencyService: IdempotencyService,
     private readonly handoffCodeValidatorService: HandoffCodeValidatorService,
+    private readonly recordRevenueSplitService: RecordRevenueSplitService,
   ) {}
 
   async confirm(
@@ -49,9 +51,28 @@ export class ConfirmCollectionService {
               HandoffCodeType.RECEIVER_COLLECTION,
               code,
             );
-            return this.ordersService.markCollected(orderId, manager, {
-              identityConfirmed,
-            });
+            const order = await this.ordersService.markCollected(
+              orderId,
+              manager,
+              { identityConfirmed },
+            );
+            // Same transaction, same idempotency guard as the COMPLETED
+            // transition itself — an order can't reach COMPLETED without
+            // its revenue split being recorded atomically alongside it.
+            // Non-null riderId: guaranteed by the guarded state machine,
+            // same justification as ConfirmHandoffService's capacity
+            // release (RIDER_ASSIGNED, which sets riderId, is required
+            // before every later transition).
+            await this.recordRevenueSplitService.record(
+              {
+                orderId: order.id,
+                amountKobo: order.amountKobo,
+                riderId: order.riderId!,
+                originNodeId: order.originNodeId,
+              },
+              manager,
+            );
+            return order;
           },
         ),
     );

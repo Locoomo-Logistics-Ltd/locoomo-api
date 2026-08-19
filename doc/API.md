@@ -117,10 +117,12 @@ backend greps logs for.
 | 409 | `ILLEGAL_ORDER_TRANSITION` | A handoff scan/confirm endpoint was called while the order isn't in the state that step expects — either stale client state or someone else already advanced it. Re-fetch the order and refresh the UI rather than retrying blindly |
 | 401 | `INVALID_HANDOFF_CODE` | `POST /handoffs/orders/:id/confirm-handoff` and `POST /handoffs/orders/:id/collect` — the code was missing, expired, already used, locked out after too many wrong guesses, or just wrong. Deliberately identical for all of these, same enumeration-avoidance reasoning as other invalid-token errors; request/resend a fresh code either way |
 | 409 | `ORDER_NOT_READY_FOR_COLLECTION` | `POST /handoffs/orders/:id/collection-code/resend` — called before `POST /handoffs/orders/:id/intake` has run (or after the order's already `completed`). There's no collection code to resend yet |
+| 400 | `INVALID_REVENUE_SPLIT` | `POST /admin/revenue-split` — `riderPercent`/`nodePercent`/`platformPercent` didn't sum to 100 |
 | 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
 | 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed or was unreachable when placing an order — safe to let the consumer retry |
 | 503 | `PRICING_NOT_CONFIGURED` | No Admin-configured pricing rule exists yet — an ops/config gap, not something the consumer caused; surface as "orders temporarily unavailable" |
+| 503 | `REVENUE_SPLIT_NOT_CONFIGURED` | `POST /handoffs/orders/:id/collect` — no Admin-configured revenue-split rule exists yet, so the order can't complete without its earnings going untracked. Same ops/config gap as `PRICING_NOT_CONFIGURED`, not something the operator or receiver caused |
 
 ## Endpoints
 
@@ -1211,19 +1213,67 @@ Idempotent — a retried confirm with the same already-used code returns the sam
 not an error.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator), `404 NOT_FOUND` (wrong
-Node), `401 INVALID_HANDOFF_CODE`, `429 RATE_LIMITED`, `400 VALIDATION_FAILED`.
+Node), `401 INVALID_HANDOFF_CODE`, `429 RATE_LIMITED`, `400 VALIDATION_FAILED`,
+`503 REVENUE_SPLIT_NOT_CONFIGURED` (Admin hasn't set a revenue-split ratio yet — see the
+`earnings` endpoints below).
 
-This is also the end of the parcel's lifecycle in the system today — rider payout for a
-`completed` order is manual for now, and the report below is what that manual process
-reads from.
+This is also the end of the parcel's lifecycle in the system today. The moment an order
+reaches `completed`, its revenue is split and recorded — see the `earnings` endpoints
+below, which is where that money is actually tracked. Payout itself is still manual (an
+Admin disburses off-system); these endpoints are the record of what's owed, not a payout
+flow.
 
-### `GET /api/v1/admin/rider-earnings`
+## Earnings (revenue split)
 
-**Requires an authenticated Admin session.** Read-only payout-readiness report — not a
-payout flow. Groups every `completed` order by rider, one row per rider, so an Admin can
-see what's owed ahead of an off-system (bank transfer, cash, etc.) payout run. Paginated
-over riders (see [Pagination](#pagination-list-endpoints)), sorted by `totalAmountKobo`
-descending — the highest earners first.
+Every `completed` order is split three ways per an Admin-configured ratio (currently
+rider/origin-Node/platform) at the exact moment it completes — see
+`POST /handoffs/orders/:id/collect` above. Each party's share becomes one immutable
+`revenue_split_entries` row; nothing here ever moves money, it only records who's owed
+what and whether an Admin has settled it off-system yet.
+
+### `POST /api/v1/admin/revenue-split`
+
+**Requires an authenticated Admin session.** Sets the split ratio used for every order
+completed from now on — append-only 
+Request:
+
+```json
+{ "riderPercent": 60, "nodePercent": 20, "platformPercent": 20 }
+```
+
+The three must sum to exactly 100 or the request is rejected. The 20% Node share goes
+entirely to the **origin** Node (the one where the parcel was dropped off) — not split
+with, and not paid to, the destination Node.
+
+Response `201`, `data`:
+
+```json
+{
+  "id": "uuid",
+  "riderPercent": 60,
+  "nodePercent": 20,
+  "platformPercent": 20,
+  "effectiveFrom": "2026-07-22T09:14:00.000Z",
+  "createdByAdminId": "uuid",
+  "createdByAdminEmail": "admin@example.com"
+}
+```
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `400 VALIDATION_FAILED`,
+`400 INVALID_REVENUE_SPLIT` (doesn't sum to 100).
+
+### `GET /api/v1/admin/revenue-split`
+
+**Requires an authenticated Admin session.** Paginated rule history, newest first — same
+shape as `GET /admin/pricing`.
+
+### `GET /api/v1/admin/revenue-split/entries`
+
+**Requires an authenticated Admin session.** Every revenue-split entry across every
+completed order — three rows per order (rider, origin Node, platform). Paginated (see
+[Pagination](#pagination-list-endpoints)), newest first. Optional query filters:
+`partyType` (`rider`/`node`/`platform`) and `payoutStatus` (`pending`/`paid`) — e.g.
+`?partyType=rider&payoutStatus=pending` to see exactly what's still owed to riders.
 
 Response `200`, `data`:
 
@@ -1231,20 +1281,18 @@ Response `200`, `data`:
 {
   "items": [
     {
-      "riderId": "b3f1...",
-      "riderEmail": "rider@example.com",
-      "riderFirstName": "Ada",
-      "riderLastName": "Okoye",
-      "completedOrderCount": 2,
-      "totalAmountKobo": 240000,
-      "orders": [
-        {
-          "id": "9f2a...",
-          "trackingCode": "LCM-7K2X-9QRT",
-          "amountKobo": 120000,
-          "completedAt": "2026-07-22T10:34:00.000Z"
-        }
-      ]
+      "id": "uuid",
+      "orderId": "uuid",
+      "orderTrackingCode": "LCM-7K2X-9QRT",
+      "partyType": "rider",
+      "partyId": "uuid",
+      "partyLabel": "rider@example.com",
+      "amountKobo": 72000,
+      "payoutStatus": "pending",
+      "paidAt": null,
+      "paidByAdminId": null,
+      "paidByAdminEmail": null,
+      "createdAt": "2026-07-22T10:34:00.000Z"
     }
   ],
   "page": 1,
@@ -1253,8 +1301,65 @@ Response `200`, `data`:
 }
 ```
 
- `completedAt` is the order's `updatedAt` at the moment it
-transitioned to `completed`.
+`partyLabel` is the rider's email, the Node's name, or `"Platform"` — so you know who to
+actually pay without a second lookup. `paidByAdminEmail` is the same treatment for
+`paidByAdminId`, `null` until the entry is marked paid. `amountKobo`, never naira (this
+codebase stores money in kobo everywhere except the one typed-input exception on
+`POST /admin/pricing`, which doesn't apply here — this is a read-only report).
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
+
+### `PATCH /api/v1/admin/revenue-split/entries/:id/mark-paid`
+
+**Requires an authenticated Admin session.** Records that you settled this entry
+off-system (bank transfer, cash, whatever) — this endpoint doesn't move any money itself,
+it only tracks the fact so you don't lose track of what's already been paid. Idempotent:
+marking an already-`paid` entry again just returns its current state, not an error.
+
+No request body. Response `200`, `data`:
+
+```json
+{
+  "id": "uuid",
+  "payoutStatus": "paid",
+  "paidAt": "2026-07-22T11:00:00.000Z",
+  "paidByAdminId": "uuid",
+  "paidByAdminEmail": "admin@example.com"
+}
+```
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `404 NOT_FOUND`.
+
+### `GET /api/v1/earnings/mine`
+
+**Requires an authenticated Rider session.** Your own revenue-split entries — every order
+you've delivered, what your 60% share came to, and whether it's been paid yet. Paginated.
+
+Response `200`, `data.items[]` each:
+
+```json
+{
+  "id": "uuid",
+  "orderId": "uuid",
+  "orderTrackingCode": "LCM-7K2X-9QRT",
+  "partyType": "rider",
+  "amountKobo": 72000,
+  "payoutStatus": "pending",
+  "paidAt": null,
+  "createdAt": "2026-07-22T10:34:00.000Z"
+}
+```
+
+No `partyId`/`partyLabel` here (unlike the Admin view) — you already know who you are.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Rider).
+
+### `GET /api/v1/earnings/my-node`
+
+**Requires an authenticated NodeOperator session.** Your own Node's revenue-split
+entries. Only appears for orders where **your Node was the origin** — since the origin
+Node gets the full 20% Node share, a destination-only Node sees nothing here for that
+order. Same response shape as `GET /earnings/mine`. Paginated.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator).
 

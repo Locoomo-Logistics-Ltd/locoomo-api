@@ -8,6 +8,8 @@ import { Repository } from 'typeorm';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
 import { UserRole } from '../../src/common/auth/user-role.enum';
+import { RevenueSplitEntryEntity } from '../../src/modules/earnings/infrastructure/entities/revenue-split-entry.entity';
+import { RevenueSplitRuleEntity } from '../../src/modules/earnings/infrastructure/entities/revenue-split-rule.entity';
 import { hashPassword } from '../../src/modules/identity/domain/password-hasher';
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
@@ -118,6 +120,8 @@ describe('Handoffs (e2e)', () => {
   let users: Repository<UserEntity>;
   let nodes: Repository<NodeEntity>;
   let pricingRules: Repository<PricingRuleEntity>;
+  let revenueSplitRules: Repository<RevenueSplitRuleEntity>;
+  let revenueSplitEntries: Repository<RevenueSplitEntryEntity>;
   let paymentIntents: Repository<PaymentIntentEntity>;
   let orders: Repository<OrderEntity>;
   let orderEvents: Repository<OrderEventEntity>;
@@ -401,6 +405,12 @@ describe('Handoffs (e2e)', () => {
     users = moduleFixture.get(getRepositoryToken(UserEntity));
     nodes = moduleFixture.get(getRepositoryToken(NodeEntity));
     pricingRules = moduleFixture.get(getRepositoryToken(PricingRuleEntity));
+    revenueSplitRules = moduleFixture.get(
+      getRepositoryToken(RevenueSplitRuleEntity),
+    );
+    revenueSplitEntries = moduleFixture.get(
+      getRepositoryToken(RevenueSplitEntryEntity),
+    );
     paymentIntents = moduleFixture.get(getRepositoryToken(PaymentIntentEntity));
     orders = moduleFixture.get(getRepositoryToken(OrderEntity));
     orderEvents = moduleFixture.get(getRepositoryToken(OrderEventEntity));
@@ -430,6 +440,15 @@ describe('Handoffs (e2e)', () => {
     await asAdmin(request(app.getHttpServer()).post('/api/v1/admin/pricing'))
       .send({ baseFeeNaira: 500, perKmRateNaira: 100 })
       .expect(201);
+    // /collect hard-depends on a configured revenue-split rule (earnings
+    // module) — same reasoning as pricing above, this suite drives orders
+    // all the way to COMPLETED, so it needs its own rule rather than
+    // relying on whichever one happens to be "current" from another suite.
+    await asAdmin(
+      request(app.getHttpServer()).post('/api/v1/admin/revenue-split'),
+    )
+      .send({ riderPercent: 60, nodePercent: 20, platformPercent: 20 })
+      .expect(201);
 
     originNodeId = await createNode('origin');
     destinationNodeId = await createNode('destination');
@@ -446,6 +465,16 @@ describe('Handoffs (e2e)', () => {
 
   afterAll(async () => {
     try {
+      // revenue_split_entries has a real FK to orders(id) — must go before
+      // orders are deleted below, same reasoning as handoff_codes/order_events.
+      await revenueSplitEntries
+        .createQueryBuilder()
+        .delete()
+        .where(
+          '"orderId" IN (SELECT id FROM orders WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE :pattern))',
+          { pattern: nodeNamePattern },
+        )
+        .execute();
       await outboxEvents
         .createQueryBuilder()
         .delete()
@@ -489,6 +518,14 @@ describe('Handoffs (e2e)', () => {
         .where('name LIKE :pattern', { pattern: nodeNamePattern })
         .execute();
       await pricingRules
+        .createQueryBuilder()
+        .delete()
+        .where(
+          '"createdByAdminId" IN (SELECT id FROM users WHERE email LIKE :pattern)',
+          { pattern: emailPattern },
+        )
+        .execute();
+      await revenueSplitRules
         .createQueryBuilder()
         .delete()
         .where(
@@ -1840,80 +1877,6 @@ describe('Handoffs (e2e)', () => {
       await request(app.getHttpServer())
         .post(`/api/v1/handoffs/orders/${orderId}/collect`)
         .send({ code: '000000', identityConfirmed: true })
-        .expect(401);
-    });
-  });
-
-  // Lives here rather than orders.e2e-spec.ts (where the controller's own
-  // module file sits) because reaching COMPLETED requires driving an order
-  // through the full handoff pipeline — this suite already has every helper
-  // that needs, and duplicating that fixture setup in a new file for one
-  // read-only report isn't worth it.
-  describe('GET /admin/rider-earnings', () => {
-    it("reports a rider's completed-order totals with a per-order breakdown", async () => {
-      const { cookie: riderCookie, userId: riderId } = await createActiveRider(
-        'earnings-rider@handoffs.e2e.test',
-      );
-      const orderIdA = await createReadyForCollectionOrder(
-        'earnings-consumer-a@handoffs.e2e.test',
-        riderCookie,
-      );
-      const codeA = await extractLatestCollectionCode(receiverEmail);
-      await request(app.getHttpServer())
-        .post(`/api/v1/handoffs/orders/${orderIdA}/collect`)
-        .set('Cookie', [destinationOperatorCookie])
-        .send({ code: codeA, identityConfirmed: true })
-        .expect(200);
-
-      const orderIdB = await createReadyForCollectionOrder(
-        'earnings-consumer-b@handoffs.e2e.test',
-        riderCookie,
-      );
-      const codeB = await extractLatestCollectionCode(receiverEmail);
-      await request(app.getHttpServer())
-        .post(`/api/v1/handoffs/orders/${orderIdB}/collect`)
-        .set('Cookie', [destinationOperatorCookie])
-        .send({ code: codeB, identityConfirmed: true })
-        .expect(200);
-
-      const orderA = await orders.findOneByOrFail({ id: orderIdA });
-      const orderB = await orders.findOneByOrFail({ id: orderIdB });
-
-      const response = await request(app.getHttpServer())
-        .get('/api/v1/admin/rider-earnings')
-        .query({ limit: 100 })
-        .set('Cookie', [adminCookie])
-        .expect(200);
-
-      const data = (response.body as SuccessBody).data as {
-        items: {
-          riderId: string;
-          completedOrderCount: number;
-          totalAmountKobo: number;
-          orders: { id: string; amountKobo: number }[];
-        }[];
-      };
-      const riderRow = data.items.find((item) => item.riderId === riderId);
-      expect(riderRow).toBeDefined();
-      expect(riderRow?.completedOrderCount).toBe(2);
-      expect(riderRow?.totalAmountKobo).toBe(
-        orderA.amountKobo + orderB.amountKobo,
-      );
-      expect(riderRow?.orders.map((o) => o.id)).toEqual(
-        expect.arrayContaining([orderIdA, orderIdB]),
-      );
-    });
-
-    it('rejects a non-Admin role', async () => {
-      await request(app.getHttpServer())
-        .get('/api/v1/admin/rider-earnings')
-        .set('Cookie', [originOperatorCookie])
-        .expect(403);
-    });
-
-    it('rejects an unauthenticated request', async () => {
-      await request(app.getHttpServer())
-        .get('/api/v1/admin/rider-earnings')
         .expect(401);
     });
   });
