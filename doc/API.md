@@ -1363,3 +1363,27 @@ order. Same response shape as `GET /earnings/mine`. Paginated.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator).
 
+## Admin diagnostics
+
+### `GET /api/v1/admin/capacity-audit`
+
+**Requires an authenticated Admin session.** Read-only reconciliation report — both
+`RiderProfile.currentActiveOrderCount` and `Node.currentCount` are mutable counters
+(incremented on reservation, decremented on release)
+
+
+Response `200`, `data`:
+
+```json
+{
+  "riders": [
+    { "riderId": "uuid", "riderEmail": "rider@example.com", "storedCount": 2, "expectedCount": 1 }
+  ],
+  "nodes": [
+    { "nodeId": "uuid", "nodeName": "Yaba Node", "storedCount": 7, "expectedCount": 3 }
+  ]
+}
+```
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
+
