@@ -37,7 +37,7 @@ export class CapacityAuditQueryService {
     // Expected: orders currently assigned to this rider that they haven't
     // yet handed off — the exact set RiderCapacityService.reserveDeliverySlot/
     // releaseDeliverySlot is meant to track (decision: released on
-    // RIDER_ARRIVAL, not COMPLETED — see ConfirmHandoffService).
+    // RIDER_ARRIVAL, not COMPLETED).
     return this.dataSource.query<RiderCapacityMismatchRow[]>(
       `SELECT rp."userId" AS "riderId", u.email AS "riderEmail",
               rp."currentActiveOrderCount" AS "storedCount",
