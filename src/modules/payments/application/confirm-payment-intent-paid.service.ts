@@ -47,6 +47,7 @@ export class ConfirmPaymentIntentPaidService {
         parcelDescription: intent.parcelDescription,
         parcelSize: intent.parcelSize,
         amountKobo: intent.amountKobo,
+        destinationFeeKobo: intent.feeBreakdown.destinationFeeKobo,
       },
       manager,
     );

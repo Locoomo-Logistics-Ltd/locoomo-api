@@ -26,6 +26,7 @@ export interface CreateOrderFromPaidIntentFields {
   parcelDescription: string;
   parcelSize: ParcelSize;
   amountKobo: number;
+  destinationFeeKobo: number;
 }
 
 @Injectable()
@@ -232,6 +233,7 @@ export class OrdersService {
             parcelDescription: fields.parcelDescription,
             parcelSize: fields.parcelSize,
             amountKobo: fields.amountKobo,
+            destinationFeeKobo: fields.destinationFeeKobo,
             status: OrderStatus.AWAITING_DROP_OFF,
             trackingCode: generateTrackingCode(),
           }),

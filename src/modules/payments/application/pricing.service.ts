@@ -57,12 +57,14 @@ export class PricingService {
 
     const distanceKm = distanceMeters / 1000;
     const distanceFeeKobo = Math.round(rule.perKmRateKobo * distanceKm);
-    const totalKobo = rule.baseFeeKobo + distanceFeeKobo;
+    const totalKobo =
+      rule.baseFeeKobo + distanceFeeKobo + rule.destinationFeeKobo;
 
     return {
       pricingRuleId: rule.id,
       baseFeeKobo: rule.baseFeeKobo,
       perKmRateKobo: rule.perKmRateKobo,
+      destinationFeeKobo: rule.destinationFeeKobo,
       distanceKm,
       totalKobo,
     };

@@ -9,8 +9,10 @@ import { RevenueSplitRuleEntity } from '../infrastructure/entities/revenue-split
 export interface RecordRevenueSplitFields {
   orderId: string;
   amountKobo: number;
+  destinationFeeKobo: number;
   riderId: string;
   originNodeId: string;
+  destinationNodeId: string;
 }
 
 // Narrow cross-module write export, called by handoffs' ConfirmCollectionService
@@ -36,8 +38,14 @@ export class RecordRevenueSplitService {
       throw new RevenueSplitNotConfiguredException();
     }
 
+    // destinationFeeKobo is a dedicated pass-through to the destination
+    // Node (PricingRule.destinationFeeKobo), not part of the rider/origin-
+    // Node/platform split — the split ratio only ever applies to the
+    // remaining delivery revenue, so a destination-fee change never dilutes
+    // rider/platform economics and vice versa.
+    const deliveryRevenueKobo = fields.amountKobo - fields.destinationFeeKobo;
     const shares = calculateSplit(
-      fields.amountKobo,
+      deliveryRevenueKobo,
       rule.riderPercent,
       rule.nodePercent,
     );
@@ -56,6 +64,19 @@ export class RecordRevenueSplitService {
         partyType: RevenueSplitPartyType.NODE,
         partyId: fields.originNodeId,
         amountKobo: shares.nodeShareKobo,
+        splitRuleId: rule.id,
+      }),
+      // splitRuleId here just marks "the revenue-split ruleset in effect at
+      // completion time" for consistency with the other three rows — this
+      // entry's amountKobo doesn't actually derive from rule's percentages
+      // (it's a 1:1 copy of destinationFeeKobo). Full traceability to the
+      // exact pricing rule that set the fee is still recoverable via
+      // Order.paymentIntentId -> PaymentIntent.feeBreakdown.pricingRuleId.
+      repo.create({
+        orderId: fields.orderId,
+        partyType: RevenueSplitPartyType.DESTINATION_NODE,
+        partyId: fields.destinationNodeId,
+        amountKobo: fields.destinationFeeKobo,
         splitRuleId: rule.id,
       }),
       repo.create({

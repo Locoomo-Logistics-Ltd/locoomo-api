@@ -10,6 +10,8 @@ export class PricingRuleResponseDto {
   baseFeeKobo!: number;
   perKmRateNaira!: number;
   perKmRateKobo!: number;
+  destinationFeeNaira!: number;
+  destinationFeeKobo!: number;
   effectiveFrom!: Date;
   createdByAdminId!: string;
 
@@ -20,6 +22,8 @@ export class PricingRuleResponseDto {
     dto.baseFeeKobo = rule.baseFeeKobo;
     dto.perKmRateNaira = koboToNaira(rule.perKmRateKobo);
     dto.perKmRateKobo = rule.perKmRateKobo;
+    dto.destinationFeeNaira = koboToNaira(rule.destinationFeeKobo);
+    dto.destinationFeeKobo = rule.destinationFeeKobo;
     dto.effectiveFrom = rule.effectiveFrom;
     dto.createdByAdminId = rule.createdByAdminId;
     return dto;

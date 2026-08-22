@@ -26,6 +26,7 @@ export class AdminPricingService {
       this.pricingRules.create({
         baseFeeKobo: nairaToKobo(dto.baseFeeNaira),
         perKmRateKobo: nairaToKobo(dto.perKmRateNaira),
+        destinationFeeKobo: nairaToKobo(dto.destinationFeeNaira),
         createdByAdminId: adminId,
       }),
     );

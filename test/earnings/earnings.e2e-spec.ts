@@ -228,9 +228,11 @@ describe('Earnings (e2e)', () => {
   // duplicates handoffs.e2e-spec.ts's helper shape rather than importing
   // from it (e2e fixtures aren't shared production code, and each e2e file
   // in this codebase is self-contained).
-  async function completeOrder(
-    consumerEmail: string,
-  ): Promise<{ orderId: string; amountKobo: number }> {
+  async function completeOrder(consumerEmail: string): Promise<{
+    orderId: string;
+    amountKobo: number;
+    destinationFeeKobo: number;
+  }> {
     const consumerCookie = await registerAndLogin(
       consumerEmail,
       UserRole.CONSUMER,
@@ -298,7 +300,11 @@ describe('Earnings (e2e)', () => {
       .send({ code: collectionCode, identityConfirmed: true })
       .expect(200);
 
-    return { orderId, amountKobo: order.amountKobo };
+    return {
+      orderId,
+      amountKobo: order.amountKobo,
+      destinationFeeKobo: order.destinationFeeKobo,
+    };
   }
 
   beforeAll(async () => {
@@ -351,7 +357,7 @@ describe('Earnings (e2e)', () => {
     adminCookie = `access_token=${adminToken}`;
 
     await asAdmin(request(app.getHttpServer()).post('/api/v1/admin/pricing'))
-      .send({ baseFeeNaira: 500, perKmRateNaira: 100 })
+      .send({ baseFeeNaira: 500, perKmRateNaira: 100, destinationFeeNaira: 50 })
       .expect(201);
     await asAdmin(
       request(app.getHttpServer()).post('/api/v1/admin/revenue-split'),
@@ -535,13 +541,14 @@ describe('Earnings (e2e)', () => {
   });
 
   describe('revenue split recorded on order completion', () => {
-    it('creates exactly 3 entries (rider 60%, origin Node 20%, platform 20%) summing to amountKobo', async () => {
-      const { orderId, amountKobo } = await completeOrder(
+    it('creates exactly 4 entries (rider 60%, origin Node 20%, destination Node fee, platform 20% remainder) summing to amountKobo', async () => {
+      const { orderId, amountKobo, destinationFeeKobo } = await completeOrder(
         'split-consumer@earnings.e2e.test',
       );
+      const deliveryRevenueKobo = amountKobo - destinationFeeKobo;
 
       const entries = await revenueSplitEntries.findBy({ orderId });
-      expect(entries).toHaveLength(3);
+      expect(entries).toHaveLength(4);
 
       const riderEntry = entries.find(
         (e) => e.partyType === RevenueSplitPartyType.RIDER,
@@ -549,19 +556,30 @@ describe('Earnings (e2e)', () => {
       const nodeEntry = entries.find(
         (e) => e.partyType === RevenueSplitPartyType.NODE,
       );
+      const destinationNodeEntry = entries.find(
+        (e) => e.partyType === RevenueSplitPartyType.DESTINATION_NODE,
+      );
       const platformEntry = entries.find(
         (e) => e.partyType === RevenueSplitPartyType.PLATFORM,
       );
 
       expect(riderEntry?.partyId).toBe(riderId);
       expect(nodeEntry?.partyId).toBe(originNodeId);
+      expect(destinationNodeEntry?.partyId).toBe(destinationNodeId);
       expect(platformEntry?.partyId).toBeNull();
 
-      expect(riderEntry?.amountKobo).toBe(Math.floor(amountKobo * 0.6));
-      expect(nodeEntry?.amountKobo).toBe(Math.floor(amountKobo * 0.2));
+      // The 60/20/20 split runs on delivery revenue only (amountKobo minus
+      // the destination fee) — the destination fee is a dedicated 100%
+      // pass-through, not folded into the split.
+      expect(riderEntry?.amountKobo).toBe(
+        Math.floor(deliveryRevenueKobo * 0.6),
+      );
+      expect(nodeEntry?.amountKobo).toBe(Math.floor(deliveryRevenueKobo * 0.2));
+      expect(destinationNodeEntry?.amountKobo).toBe(destinationFeeKobo);
       expect(
         (riderEntry?.amountKobo ?? 0) +
           (nodeEntry?.amountKobo ?? 0) +
+          (destinationNodeEntry?.amountKobo ?? 0) +
           (platformEntry?.amountKobo ?? 0),
       ).toBe(amountKobo);
 
@@ -587,15 +605,16 @@ describe('Earnings (e2e)', () => {
         .expect(200);
 
       const entries = await revenueSplitEntries.findBy({ orderId });
-      expect(entries).toHaveLength(3);
+      expect(entries).toHaveLength(4);
     });
   });
 
   describe('GET /earnings/mine', () => {
     it("lists the rider's own entry for a completed order", async () => {
-      const { orderId, amountKobo } = await completeOrder(
+      const { orderId, amountKobo, destinationFeeKobo } = await completeOrder(
         'rider-mine-consumer@earnings.e2e.test',
       );
+      const deliveryRevenueKobo = amountKobo - destinationFeeKobo;
 
       const response = await request(app.getHttpServer())
         .get('/api/v1/earnings/mine')
@@ -613,7 +632,7 @@ describe('Earnings (e2e)', () => {
       const item = data.items.find((row) => row.orderId === orderId);
       expect(item).toBeDefined();
       expect(item?.partyType).toBe('rider');
-      expect(item?.amountKobo).toBe(Math.floor(amountKobo * 0.6));
+      expect(item?.amountKobo).toBe(Math.floor(deliveryRevenueKobo * 0.6));
       expect(item?.payoutStatus).toBe('pending');
     });
 
@@ -632,27 +651,30 @@ describe('Earnings (e2e)', () => {
   });
 
   describe('GET /earnings/my-node', () => {
-    it("lists the origin operator's own Node entry for a completed order", async () => {
-      const { orderId, amountKobo } = await completeOrder(
+    it("lists the origin operator's own Node entry (20% cut) but not a destination-fee entry, for a completed order", async () => {
+      const { orderId, amountKobo, destinationFeeKobo } = await completeOrder(
         'node-mine-consumer@earnings.e2e.test',
       );
+      const deliveryRevenueKobo = amountKobo - destinationFeeKobo;
 
       const response = await request(app.getHttpServer())
-        .get('/api/v1/earnings/my-node')
+        .get('/api/v1/earnings/my-node?limit=100')
         .set('Cookie', [originOperatorCookie])
         .expect(200);
 
       const data = (response.body as SuccessBody).data as {
         items: { orderId: string; partyType: string; amountKobo: number }[];
       };
-      const item = data.items.find((row) => row.orderId === orderId);
-      expect(item).toBeDefined();
-      expect(item?.partyType).toBe('node');
-      expect(item?.amountKobo).toBe(Math.floor(amountKobo * 0.2));
+      const forOrder = data.items.filter((row) => row.orderId === orderId);
+      expect(forOrder).toHaveLength(1);
+      expect(forOrder[0].partyType).toBe('node');
+      expect(forOrder[0].amountKobo).toBe(
+        Math.floor(deliveryRevenueKobo * 0.2),
+      );
     });
 
-    it('shows nothing for the destination operator — the origin Node gets the full 20%', async () => {
-      const { orderId } = await completeOrder(
+    it("lists the destination operator's own destination-fee entry, not the origin Node's 20% cut", async () => {
+      const { orderId, destinationFeeKobo } = await completeOrder(
         'node-dest-consumer@earnings.e2e.test',
       );
 
@@ -662,9 +684,12 @@ describe('Earnings (e2e)', () => {
         .expect(200);
 
       const data = (response.body as SuccessBody).data as {
-        items: { orderId: string }[];
+        items: { orderId: string; partyType: string; amountKobo: number }[];
       };
-      expect(data.items.some((row) => row.orderId === orderId)).toBe(false);
+      const forOrder = data.items.filter((row) => row.orderId === orderId);
+      expect(forOrder).toHaveLength(1);
+      expect(forOrder[0].partyType).toBe('destination_node');
+      expect(forOrder[0].amountKobo).toBe(destinationFeeKobo);
     });
 
     it('rejects a non-NodeOperator role', async () => {
@@ -682,7 +707,7 @@ describe('Earnings (e2e)', () => {
   });
 
   describe('GET /admin/revenue-split/entries', () => {
-    it('lists all 3 party entries for a completed order', async () => {
+    it('lists all 4 party entries for a completed order', async () => {
       const { orderId } = await completeOrder(
         'admin-list-consumer@earnings.e2e.test',
       );
@@ -697,11 +722,17 @@ describe('Earnings (e2e)', () => {
         items: { orderId: string; partyType: string; partyLabel: string }[];
       };
       const forOrder = data.items.filter((row) => row.orderId === orderId);
-      expect(forOrder).toHaveLength(3);
+      expect(forOrder).toHaveLength(4);
       const platformRow = forOrder.find((row) => row.partyType === 'platform');
       expect(platformRow?.partyLabel).toBe('Platform');
       const riderRow = forOrder.find((row) => row.partyType === 'rider');
       expect(riderRow?.partyLabel).toBe('rider@earnings.e2e.test');
+      const destinationNodeRow = forOrder.find(
+        (row) => row.partyType === 'destination_node',
+      );
+      expect(destinationNodeRow?.partyLabel).toBe(
+        `${nodeNamePattern.replace('%', '')}destination`,
+      );
     });
 
     it('filters by partyType', async () => {

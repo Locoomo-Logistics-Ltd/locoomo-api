@@ -735,8 +735,13 @@ calculated, so past orders stay explainable even after rates change.
 Request:
 
 ```json
-{ "baseFeeNaira": 500, "perKmRateNaira": 100 }
+{ "baseFeeNaira": 500, "perKmRateNaira": 100, "destinationFeeNaira": 50 }
 ```
+
+`destinationFeeNaira` is a flat fee added to the order total and paid entirely to the
+**destination** Node on order completion — it is not part of the rider/origin-Node/platform
+revenue split (see `POST /admin/revenue-split` and the `destination_node` party type
+below). 
 
 Response `201`, `data`:
 
@@ -747,6 +752,8 @@ Response `201`, `data`:
   "baseFeeKobo": 50000,
   "perKmRateNaira": 100,
   "perKmRateKobo": 10000,
+  "destinationFeeNaira": 50,
+  "destinationFeeKobo": 5000,
   "effectiveFrom": "2026-07-22T09:14:00.000Z",
   "createdByAdminId": "uuid"
 }
@@ -812,10 +819,11 @@ Response `201`, `data`:
     "pricingRuleId": "uuid",
     "baseFeeKobo": 50000,
     "perKmRateKobo": 10000,
+    "destinationFeeKobo": 5000,
     "distanceKm": 4.2,
-    "totalKobo": 92000
+    "totalKobo": 97000
   },
-  "amountKobo": 92000,
+  "amountKobo": 97000,
   "status": "pending",
   "expiresAt": "2026-07-22T09:29:00.000Z",
   "authorizationUrl": "https://checkout.paystack.com/..."
@@ -1225,11 +1233,19 @@ flow.
 
 ## Earnings (revenue split)
 
-Every `completed` order is split three ways per an Admin-configured ratio (currently
-rider/origin-Node/platform) at the exact moment it completes — see
-`POST /handoffs/orders/:id/collect` above. Each party's share becomes one immutable
-`revenue_split_entries` row; nothing here ever moves money, it only records who's owed
-what and whether an Admin has settled it off-system yet.
+Every `completed` order produces four `revenue_split_entries` rows at the exact moment it
+completes — see `POST /handoffs/orders/:id/collect` above:
+
+- **rider** / **node** (origin) / **platform** — an Admin-configured percentage split
+  (currently 60/20/20) of the order's delivery revenue (`amountKobo` minus the
+  destination fee below).
+- **destination_node** — a flat, dedicated fee (`PricingRule.destinationFeeKobo`, set via
+  `POST /admin/pricing`) paid entirely to the destination Node. It's a separate line item,
+  not part of the percentage split, so tuning the split ratio never changes what a
+  destination Node earns and vice versa.
+
+Each party's share is one immutable row; nothing here ever moves money, it only records
+who's owed what and whether an Admin has settled it off-system yet.
 
 ### `POST /api/v1/admin/revenue-split`
 
@@ -1270,10 +1286,11 @@ shape as `GET /admin/pricing`.
 ### `GET /api/v1/admin/revenue-split/entries`
 
 **Requires an authenticated Admin session.** Every revenue-split entry across every
-completed order — three rows per order (rider, origin Node, platform). Paginated (see
-[Pagination](#pagination-list-endpoints)), newest first. Optional query filters:
-`partyType` (`rider`/`node`/`platform`) and `payoutStatus` (`pending`/`paid`) — e.g.
-`?partyType=rider&payoutStatus=pending` to see exactly what's still owed to riders.
+completed order — four rows per order (rider, origin Node, destination Node, platform).
+Paginated (see [Pagination](#pagination-list-endpoints)), newest first. Optional query
+filters: `partyType` (`rider`/`node`/`destination_node`/`platform`) and `payoutStatus`
+(`pending`/`paid`) — e.g. `?partyType=rider&payoutStatus=pending` to see exactly what's
+still owed to riders.
 
 Response `200`, `data`:
 
@@ -1301,8 +1318,9 @@ Response `200`, `data`:
 }
 ```
 
-`partyLabel` is the rider's email, the Node's name, or `"Platform"` — so you know who to
-actually pay without a second lookup. `paidByAdminEmail` is the same treatment for
+`partyLabel` is the rider's email, the Node's name (for both `node` and
+`destination_node` rows), or `"Platform"` — so you know who to actually pay without a
+second lookup. `paidByAdminEmail` is the same treatment for
 `paidByAdminId`, `null` until the entry is marked paid. `amountKobo`, never naira (this
 codebase stores money in kobo everywhere except the one typed-input exception on
 `POST /admin/pricing`, which doesn't apply here — this is a read-only report).
@@ -1357,9 +1375,12 @@ Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Rider).
 ### `GET /api/v1/earnings/my-node`
 
 **Requires an authenticated NodeOperator session.** Your own Node's revenue-split
-entries. Only appears for orders where **your Node was the origin** — since the origin
-Node gets the full 20% Node share, a destination-only Node sees nothing here for that
-order. Same response shape as `GET /earnings/mine`. Paginated.
+entries, across both roles it plays: a `node` row for orders where your Node was the
+**origin** (the 20% split share), and a `destination_node` row for orders where your Node
+was the **destination** (the flat destination fee). A Node that's neither origin nor
+destination for a given order — or that only ever plays one role — simply sees rows of
+the corresponding `partyType` and none of the other. Same response shape as
+`GET /earnings/mine` (each item's `partyType` tells you which role it was). Paginated.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator).
 
