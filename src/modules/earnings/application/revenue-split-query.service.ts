@@ -23,18 +23,27 @@ export class RevenueSplitQueryService {
     riderId: string,
     query: PaginationQueryDto,
   ): Promise<PaginatedResultDto<RevenueSplitEntryRow>> {
-    return this.listForParty(RevenueSplitPartyType.RIDER, riderId, query);
+    return this.listForParty([RevenueSplitPartyType.RIDER], riderId, query);
   }
 
+  // A Node earns two distinct entry types depending on its role per order —
+  // NODE (origin's 20% cut) and DESTINATION_NODE (destination's flat fee,
+  // see RecordRevenueSplitService) — both keyed by the same Node id, so a
+  // Node operator's "my own earnings" view shows both without needing two
+  // separate calls.
   async listForNode(
     nodeId: string,
     query: PaginationQueryDto,
   ): Promise<PaginatedResultDto<RevenueSplitEntryRow>> {
-    return this.listForParty(RevenueSplitPartyType.NODE, nodeId, query);
+    return this.listForParty(
+      [RevenueSplitPartyType.NODE, RevenueSplitPartyType.DESTINATION_NODE],
+      nodeId,
+      query,
+    );
   }
 
   private async listForParty(
-    partyType: RevenueSplitPartyType,
+    partyTypes: RevenueSplitPartyType[],
     partyId: string,
     query: PaginationQueryDto,
   ): Promise<PaginatedResultDto<RevenueSplitEntryRow>> {
@@ -44,16 +53,16 @@ export class RevenueSplitQueryService {
       `SELECT${OWN_VIEW_COLUMNS}
          FROM revenue_split_entries e
          JOIN orders o ON o.id = e."orderId"
-        WHERE e."partyType" = $1 AND e."partyId" = $2
+        WHERE e."partyType" = ANY($1) AND e."partyId" = $2
         ORDER BY e."createdAt" DESC
         LIMIT $3 OFFSET $4`,
-      [partyType, partyId, query.limit, offset],
+      [partyTypes, partyId, query.limit, offset],
     );
 
     const [{ total }] = await this.dataSource.query<{ total: number }[]>(
       `SELECT COUNT(*)::int AS total FROM revenue_split_entries
-        WHERE "partyType" = $1 AND "partyId" = $2`,
-      [partyType, partyId],
+        WHERE "partyType" = ANY($1) AND "partyId" = $2`,
+      [partyTypes, partyId],
     );
 
     return new PaginatedResultDto(items, query.page, query.limit, total);
@@ -86,6 +95,7 @@ export class RevenueSplitQueryService {
               CASE e."partyType"
                 WHEN 'rider' THEN u.email
                 WHEN 'node' THEN n.name
+                WHEN 'destination_node' THEN n.name
                 ELSE 'Platform'
               END AS "partyLabel",
               e."amountKobo", e."payoutStatus", e."paidAt", e."paidByAdminId",
@@ -94,7 +104,7 @@ export class RevenueSplitQueryService {
          FROM revenue_split_entries e
          JOIN orders o ON o.id = e."orderId"
          LEFT JOIN users u ON e."partyType" = 'rider' AND u.id = e."partyId"
-         LEFT JOIN nodes n ON e."partyType" = 'node' AND n.id = e."partyId"
+         LEFT JOIN nodes n ON e."partyType" IN ('node', 'destination_node') AND n.id = e."partyId"
          LEFT JOIN users paidByAdmin ON paidByAdmin.id = e."paidByAdminId"
          ${where}
         ORDER BY e."createdAt" DESC

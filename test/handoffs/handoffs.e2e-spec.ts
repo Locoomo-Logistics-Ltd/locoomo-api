@@ -438,7 +438,7 @@ describe('Handoffs (e2e)', () => {
     adminCookie = `access_token=${adminToken}`;
 
     await asAdmin(request(app.getHttpServer()).post('/api/v1/admin/pricing'))
-      .send({ baseFeeNaira: 500, perKmRateNaira: 100 })
+      .send({ baseFeeNaira: 500, perKmRateNaira: 100, destinationFeeNaira: 50 })
       .expect(201);
     // /collect hard-depends on a configured revenue-split rule (earnings
     // module) — same reasoning as pricing above, this suite drives orders

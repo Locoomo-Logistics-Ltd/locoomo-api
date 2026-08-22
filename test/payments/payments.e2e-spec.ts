@@ -257,7 +257,7 @@ describe('Payments (e2e)', () => {
     adminCookie = `access_token=${adminToken}`;
 
     await asAdmin(request(app.getHttpServer()).post('/api/v1/admin/pricing'))
-      .send({ baseFeeNaira: 500, perKmRateNaira: 100 })
+      .send({ baseFeeNaira: 500, perKmRateNaira: 100, destinationFeeNaira: 50 })
       .expect(201);
 
     originNodeId = await createNode('origin', 30);

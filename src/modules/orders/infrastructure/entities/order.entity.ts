@@ -57,6 +57,13 @@ export class OrderEntity {
   @Column({ type: 'int' })
   amountKobo!: number;
 
+  // Denormalized off the PaymentIntent's snapshotted feeBreakdown — needed
+  // here (not just on PaymentIntent) because ConfirmCollectionService only
+  // has the Order at completion time, and revenue-split recording must use
+  // the fee that was actually charged, never a recomputed current rate.
+  @Column({ type: 'int', default: 0 })
+  destinationFeeKobo!: number;
+
   @Index()
   @Column({
     type: 'enum',

@@ -23,6 +23,13 @@ export class PricingRuleEntity {
   @Column({ type: 'int' })
   perKmRateKobo!: number;
 
+  // Flat fee paid entirely to the destination Node on order completion —
+  // a dedicated pass-through, not folded into the rider/origin-Node/platform
+  // split (see RevenueSplitPartyType.DESTINATION_NODE). DEFAULT 0 exists
+  // only so pre-feature rows stay valid; every new rule sets it explicitly.
+  @Column({ type: 'int', default: 0 })
+  destinationFeeKobo!: number;
+
   @Index()
   @Column({ type: 'timestamptz', default: () => 'now()' })
   effectiveFrom!: Date;

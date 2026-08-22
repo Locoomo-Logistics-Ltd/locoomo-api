@@ -67,8 +67,10 @@ export class ConfirmCollectionService {
               {
                 orderId: order.id,
                 amountKobo: order.amountKobo,
+                destinationFeeKobo: order.destinationFeeKobo,
                 riderId: order.riderId!,
                 originNodeId: order.originNodeId,
+                destinationNodeId: order.destinationNodeId,
               },
               manager,
             );
