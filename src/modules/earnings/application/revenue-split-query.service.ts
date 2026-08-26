@@ -89,6 +89,13 @@ export class RevenueSplitQueryService {
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
+    // Payout account: rider rows join rider_profiles by userId, node/
+    // destination_node rows join node_operator_profiles by nodeId (a Node's
+    // payout account is owned by its operator profile — see
+    // SetNodePayoutAccountService). Only one of rp/nop ever matches a given
+    // row, so COALESCE picks whichever one did. nodeId isn't unique on
+    // node_operator_profiles (E14, unresolved) — MVP one-operator-per-node
+    // in practice, so this returns at most one match today.
     const items = await this.dataSource.query<AdminRevenueSplitEntryRow[]>(
       `SELECT e.id, e."orderId", o."trackingCode" AS "orderTrackingCode",
               e."partyType", e."partyId",
@@ -100,12 +107,19 @@ export class RevenueSplitQueryService {
               END AS "partyLabel",
               e."amountKobo", e."payoutStatus", e."paidAt", e."paidByAdminId",
               paidByAdmin.email AS "paidByAdminEmail",
+              COALESCE(rp."payoutBankCode", nop."payoutBankCode") AS "payoutBankCode",
+              COALESCE(rp."payoutBankName", nop."payoutBankName") AS "payoutBankName",
+              COALESCE(rp."payoutAccountNumber", nop."payoutAccountNumber") AS "payoutAccountNumber",
+              COALESCE(rp."payoutAccountName", nop."payoutAccountName") AS "payoutAccountName",
+              (COALESCE(rp."payoutAccountVerifiedAt", nop."payoutAccountVerifiedAt") IS NOT NULL) AS "payoutAccountConfigured",
               e."createdAt"
          FROM revenue_split_entries e
          JOIN orders o ON o.id = e."orderId"
          LEFT JOIN users u ON e."partyType" = 'rider' AND u.id = e."partyId"
          LEFT JOIN nodes n ON e."partyType" IN ('node', 'destination_node') AND n.id = e."partyId"
          LEFT JOIN users paidByAdmin ON paidByAdmin.id = e."paidByAdminId"
+         LEFT JOIN rider_profiles rp ON e."partyType" = 'rider' AND rp."userId" = e."partyId"
+         LEFT JOIN node_operator_profiles nop ON e."partyType" IN ('node', 'destination_node') AND nop."nodeId" = e."partyId"
          ${where}
         ORDER BY e."createdAt" DESC
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,

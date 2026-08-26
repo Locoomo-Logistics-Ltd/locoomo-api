@@ -39,6 +39,28 @@ export class RiderProfileEntity {
   @Column({ type: 'int', default: 0 })
   currentActiveOrderCount!: number;
 
+  // Payout bank account — all five nullable, all-or-nothing (either every
+  // field is set together by SetRiderPayoutAccountService after a
+  // successful Paystack resolve, or every field is null). payoutAccountName
+  // is always Paystack-resolved, never client-typed — see
+  // PaystackBankService.resolveAccountNumber. payoutAccountVerifiedAt
+  // doubles as the "is this configured" signal (GET /riders/me's
+  // payoutAccountConfigured).
+  @Column({ type: 'varchar', nullable: true })
+  payoutBankCode!: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  payoutBankName!: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  payoutAccountNumber!: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  payoutAccountName!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  payoutAccountVerifiedAt!: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

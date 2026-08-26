@@ -13,6 +13,11 @@ import { PendingNodeOperatorResponseDto } from '../interface/dto/pending-node-op
 export interface NodeOperatorProfileRow {
   profileId: string;
   submittedAt: Date;
+  payoutBankCode: string | null;
+  payoutBankName: string | null;
+  payoutAccountNumber: string | null;
+  payoutAccountName: string | null;
+  payoutAccountVerifiedAt: Date | null;
   id: string;
   name: string;
   address: string;
@@ -37,6 +42,8 @@ export interface PendingNodeOperatorRow extends NodeOperatorProfileRow {
 const NODE_OPERATOR_PROFILE_COLUMNS = `
   p.id AS "profileId",
   p."createdAt" AS "submittedAt",
+  p."payoutBankCode", p."payoutBankName", p."payoutAccountNumber",
+  p."payoutAccountName", p."payoutAccountVerifiedAt",
   n.id, n.name, n.address, n.city, n.state, n.country, n.latitude, n.longitude,
   n.capacity, n.status, n."onboardingType", n."operatingHours", n."createdAt"`;
 

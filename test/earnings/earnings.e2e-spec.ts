@@ -707,7 +707,25 @@ describe('Earnings (e2e)', () => {
   });
 
   describe('GET /admin/revenue-split/entries', () => {
-    it('lists all 4 party entries for a completed order', async () => {
+    beforeAll(async () => {
+      // Verified payout account for the rider only — proves Admin sees
+      // payoutAccountConfigured true for the rider and false for a Node
+      // that never set one up, without needing to fake PaystackBankService
+      // in this suite (the verification flow itself is covered in
+      // riders.e2e-spec.ts/node-operators.e2e-spec.ts).
+      await riderProfiles.update(
+        { userId: riderId },
+        {
+          payoutBankCode: '058',
+          payoutBankName: 'GTBank',
+          payoutAccountNumber: '0123456789',
+          payoutAccountName: 'Rider Tester',
+          payoutAccountVerifiedAt: new Date(),
+        },
+      );
+    });
+
+    it('lists all 4 party entries for a completed order, with payout account visibility', async () => {
       const { orderId } = await completeOrder(
         'admin-list-consumer@earnings.e2e.test',
       );
@@ -719,20 +737,34 @@ describe('Earnings (e2e)', () => {
       ).expect(200);
 
       const data = (response.body as SuccessBody).data as {
-        items: { orderId: string; partyType: string; partyLabel: string }[];
+        items: {
+          orderId: string;
+          partyType: string;
+          partyLabel: string;
+          payoutAccountConfigured: boolean;
+          payoutBankName: string | null;
+          payoutAccountNumber: string | null;
+        }[];
       };
       const forOrder = data.items.filter((row) => row.orderId === orderId);
       expect(forOrder).toHaveLength(4);
       const platformRow = forOrder.find((row) => row.partyType === 'platform');
       expect(platformRow?.partyLabel).toBe('Platform');
+      expect(platformRow?.payoutAccountConfigured).toBe(false);
       const riderRow = forOrder.find((row) => row.partyType === 'rider');
       expect(riderRow?.partyLabel).toBe('rider@earnings.e2e.test');
+      expect(riderRow?.payoutAccountConfigured).toBe(true);
+      expect(riderRow?.payoutBankName).toBe('GTBank');
+      expect(riderRow?.payoutAccountNumber).toBe('0123456789');
+      const nodeRow = forOrder.find((row) => row.partyType === 'node');
+      expect(nodeRow?.payoutAccountConfigured).toBe(false);
       const destinationNodeRow = forOrder.find(
         (row) => row.partyType === 'destination_node',
       );
       expect(destinationNodeRow?.partyLabel).toBe(
         `${nodeNamePattern.replace('%', '')}destination`,
       );
+      expect(destinationNodeRow?.payoutAccountConfigured).toBe(false);
     });
 
     it('filters by partyType', async () => {

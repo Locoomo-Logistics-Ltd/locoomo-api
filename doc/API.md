@@ -118,9 +118,10 @@ backend greps logs for.
 | 401 | `INVALID_HANDOFF_CODE` | `POST /handoffs/orders/:id/confirm-handoff` and `POST /handoffs/orders/:id/collect` — the code was missing, expired, already used, locked out after too many wrong guesses, or just wrong. Deliberately identical for all of these, same enumeration-avoidance reasoning as other invalid-token errors; request/resend a fresh code either way |
 | 409 | `ORDER_NOT_READY_FOR_COLLECTION` | `POST /handoffs/orders/:id/collection-code/resend` — called before `POST /handoffs/orders/:id/intake` has run (or after the order's already `completed`). There's no collection code to resend yet |
 | 400 | `INVALID_REVENUE_SPLIT` | `POST /admin/revenue-split` — `riderPercent`/`nodePercent`/`platformPercent` didn't sum to 100 |
+| 400 | `BANK_ACCOUNT_VERIFICATION_FAILED` | `PATCH /riders/me/payout-account` or `PATCH /node-operators/me/payout-account` — Paystack couldn't resolve that `accountNumber` at that `bankCode`. Nothing is saved; a previously-verified payout account on file, if any, is untouched |
 | 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
-| 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed or was unreachable when placing an order — safe to let the consumer retry |
+| 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed or was unreachable — placing an order, listing banks, or resolving a payout account number. Safe to retry |
 | 503 | `PRICING_NOT_CONFIGURED` | No Admin-configured pricing rule exists yet — an ops/config gap, not something the consumer caused; surface as "orders temporarily unavailable" |
 | 503 | `REVENUE_SPLIT_NOT_CONFIGURED` | `POST /handoffs/orders/:id/collect` — no Admin-configured revenue-split rule exists yet, so the order can't complete without its earnings going untracked. Same ops/config gap as `PRICING_NOT_CONFIGURED`, not something the operator or receiver caused |
 
@@ -539,9 +540,19 @@ Response `201`, `data`:
 ```json
 {
   "profileId": "uuid",
-  "node": { "...": "same Node shape as GET /nodes/:id, status will be \"pending\"" }
+  "node": { "...": "same Node shape as GET /nodes/:id, status will be \"pending\"" },
+  "payoutAccountConfigured": false,
+  "payoutBankCode": null,
+  "payoutBankName": null,
+  "payoutAccountNumber": null,
+  "payoutAccountName": null
 }
 ```
+
+`payoutAccountConfigured`/`payoutBank*`/`payoutAccount*` are always unset at this point —
+see `PATCH /node-operators/me/payout-account` below. Frontend: use
+`payoutAccountConfigured: false` to drive a "set up your payout account" prompt on the
+operator's dashboard.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator),
 `400 VALIDATION_FAILED`, `409 NODE_OPERATOR_ALREADY_ONBOARDED`.
@@ -553,6 +564,34 @@ use this to check whether your Node has been approved yet (`data.node.status`).
 `404 NOT_FOUND` if you haven't completed onboarding yet (call the endpoint above first).
 
 Response `200`, `data`: same shape as the onboarding response.
+
+### `PATCH /api/v1/node-operators/me/payout-account`
+
+**Requires an authenticated NodeOperator session.** Sets (or replaces) your Node's payout
+bank account. Verified against the real bank at
+submission time via Paystack — you never type the account holder name yourself; it's
+resolved server-side and that's what gets stored.
+
+First call `GET /api/v1/payments/banks` to get a `bankCode` to submit (see below).
+
+Request:
+
+```json
+{ "bankCode": "058", "bankName": "Guaranty Trust Bank", "accountNumber": "0123456789" }
+```
+
+`accountNumber` must be exactly 10 digits (NUBAN). `bankName` is just a display label from
+the bank list you already fetched — not itself verified, only `accountNumber`+`bankCode`
+are checked against Paystack.
+
+Response `200`, `data`: same shape as `GET /node-operators/me`, with the new payout fields
+populated (`payoutAccountConfigured: true`, `payoutAccountName` set to whatever Paystack
+resolved — never what you sent).
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator), `400 VALIDATION_FAILED`,
+`404 NOT_FOUND` (you haven't onboarded yet), `400 BANK_ACCOUNT_VERIFICATION_FAILED`
+(Paystack couldn't resolve that account number at that bank — nothing is saved; any
+previously-verified payout account on file is left untouched).
 
 ### `GET /api/v1/node-operators/pending`
 
@@ -671,12 +710,20 @@ Response `201`, `data`:
       "uploadedAt": "2026-07-22T09:14:00.000Z",
       "viewUrl": "https://res.cloudinary.com/.../authenticated/s--.../..."
     }
-  ]
+  ],
+  "payoutAccountConfigured": false,
+  "payoutBankCode": null,
+  "payoutBankName": null,
+  "payoutAccountNumber": null,
+  "payoutAccountName": null
 }
 ```
 
 `viewUrl` is a signed, time-limited Cloudinary delivery URL, freshly generated on every
-response — never store it, it's not permanent.
+response — never store it, it's not permanent. `payoutAccountConfigured`/`payoutBank*`/
+`payoutAccount*` are always unset at this point — see
+`PATCH /riders/me/payout-account` below. Frontend: use `payoutAccountConfigured: false`
+to drive a "set up your payout account" prompt on the rider's dashboard.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a Rider), `400 VALIDATION_FAILED`,
 `400 INVALID_VERIFICATION_DOCUMENT` (the `cloudinaryPublicId` doesn't correspond to a
@@ -689,6 +736,35 @@ this to check whether you've been approved yet (`data.status`). `404 NOT_FOUND` 
 haven't completed onboarding yet.
 
 Response `200`, `data`: same shape as the onboarding response.
+
+### `PATCH /api/v1/riders/me/payout-account`
+
+**Requires an authenticated Rider session.** Sets (or replaces) your payout bank
+account — the account Admin disburses your earned revenue-split entries to (see
+[Earnings](#earnings-revenue-split) below). Verified against the real bank at submission
+time via Paystack — you never type the account holder name yourself; it's resolved
+server-side and that's what gets stored.
+
+First call `GET /api/v1/payments/banks` to get a `bankCode` to submit (see below).
+
+Request:
+
+```json
+{ "bankCode": "058", "bankName": "Guaranty Trust Bank", "accountNumber": "0123456789" }
+```
+
+`accountNumber` must be exactly 10 digits (NUBAN). `bankName` is just a display label from
+the bank list you already fetched — not itself verified, only `accountNumber`+`bankCode`
+are checked against Paystack.
+
+Response `200`, `data`: same shape as `GET /riders/me`, with the new payout fields
+populated (`payoutAccountConfigured: true`, `payoutAccountName` set to whatever Paystack
+resolved — never what you sent).
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a Rider), `400 VALIDATION_FAILED`,
+`404 NOT_FOUND` (you haven't onboarded yet), `400 BANK_ACCOUNT_VERIFICATION_FAILED`
+(Paystack couldn't resolve that account number at that bank — nothing is saved; any
+previously-verified payout account on file is left untouched).
 
 ### `GET /api/v1/riders/pending`
 
@@ -771,6 +847,26 @@ Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `400 VALIDATION_FAIL
 Response `200`, `data.items[]`: same shape as the create response above.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
+
+### `GET /api/v1/payments/banks`
+
+**Requires an authenticated Rider or NodeOperator session.** Paystack's full list of
+supported Nigerian banks — use this to populate a bank picker before calling
+`PATCH /riders/me/payout-account` or `PATCH /node-operators/me/payout-account`.
+Deliberately **not paginated** (flagged exception, same reasoning as
+`GET /admin/capacity-audit`) — it's a wholesale reference list meant to back one
+client-side dropdown/search, not a growing browsable resource.
+
+Response `200`, `data`:
+
+```json
+[
+  { "code": "058", "name": "Guaranty Trust Bank" },
+  { "code": "011", "name": "First Bank of Nigeria" }
+]
+```
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a Rider or NodeOperator).
 
 ### `POST /api/v1/payments/intents`
 
@@ -1309,6 +1405,11 @@ Response `200`, `data`:
       "paidAt": null,
       "paidByAdminId": null,
       "paidByAdminEmail": null,
+      "payoutAccountConfigured": true,
+      "payoutBankCode": "058",
+      "payoutBankName": "Guaranty Trust Bank",
+      "payoutAccountNumber": "0123456789",
+      "payoutAccountName": "Ada Lovelace",
       "createdAt": "2026-07-22T10:34:00.000Z"
     }
   ],
@@ -1324,6 +1425,11 @@ second lookup. `paidByAdminEmail` is the same treatment for
 `paidByAdminId`, `null` until the entry is marked paid. `amountKobo`, never naira (this
 codebase stores money in kobo everywhere except the one typed-input exception on
 `POST /admin/pricing`, which doesn't apply here — this is a read-only report).
+`payoutAccountConfigured`/`payoutBank*`/`payoutAccount*` are the whole point of this
+field set: the bank account to actually send money to sits right here, next to what's
+owed — no more calling the rider or operator to ask. Always `false`/`null` on `platform`
+rows (the platform has no payout account); `false`/`null` on any `rider`/`node`/
+`destination_node` row where that party hasn't called `PATCH .../me/payout-account` yet.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
 

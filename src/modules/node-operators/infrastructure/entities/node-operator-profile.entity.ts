@@ -33,6 +33,26 @@ export class NodeOperatorProfileEntity {
   @Column({ type: 'uuid' })
   nodeId!: string;
 
+  // Payout bank account for this Node — same all-or-nothing shape as
+  // RiderProfileEntity's payout fields (see that entity's comment).
+  // Node itself has no login/session, so its payout account is owned by
+  // whichever operator profile manages it (MVP one-operator-per-node, same
+  // assumption everything else here already makes).
+  @Column({ type: 'varchar', nullable: true })
+  payoutBankCode!: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  payoutBankName!: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  payoutAccountNumber!: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  payoutAccountName!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  payoutAccountVerifiedAt!: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

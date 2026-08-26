@@ -16,10 +16,12 @@ import { Roles } from '../../../common/auth/decorators/roles.decorator';
 import { UserRole } from '../../../common/auth/user-role.enum';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import { SetPayoutAccountDto } from '../../../common/dto/set-payout-account.dto';
 import { ApproveRiderService } from '../application/approve-rider.service';
 import { GetUploadSignatureService } from '../application/get-upload-signature.service';
 import { OnboardRiderService } from '../application/onboard-rider.service';
 import { RiderQueryService } from '../application/rider-query.service';
+import { SetRiderPayoutAccountService } from '../application/set-rider-payout-account.service';
 import { OnboardRiderDto } from './dto/onboard-rider.dto';
 import { PendingRiderResponseDto } from './dto/pending-rider-response.dto';
 import { RiderResponseDto } from './dto/rider-response.dto';
@@ -33,6 +35,7 @@ export class RidersController {
     private readonly onboardRiderService: OnboardRiderService,
     private readonly approveRiderService: ApproveRiderService,
     private readonly riderQueryService: RiderQueryService,
+    private readonly setRiderPayoutAccountService: SetRiderPayoutAccountService,
   ) {}
 
   @Roles(UserRole.RIDER)
@@ -58,6 +61,15 @@ export class RidersController {
   @Get('me')
   getMine(@CurrentUser() user: AuthenticatedUser): Promise<RiderResponseDto> {
     return this.riderQueryService.getMine(user.id);
+  }
+
+  @Roles(UserRole.RIDER)
+  @Patch('me/payout-account')
+  setPayoutAccount(
+    @Body() dto: SetPayoutAccountDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<RiderResponseDto> {
+    return this.setRiderPayoutAccountService.set(user.id, dto);
   }
 
   @Roles(UserRole.ADMIN)

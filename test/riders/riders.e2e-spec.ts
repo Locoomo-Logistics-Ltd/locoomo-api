@@ -11,6 +11,8 @@ import { UserRole } from '../../src/common/auth/user-role.enum';
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { hashPassword } from '../../src/modules/identity/domain/password-hasher';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
+import { BankAccountVerificationFailedException } from '../../src/modules/payments/domain/exceptions/bank-account-verification-failed.exception';
+import { PaystackBankService } from '../../src/modules/payments/application/paystack-bank.service';
 import { CloudinaryService } from '../../src/modules/riders/infrastructure/cloudinary.service';
 import { RiderProfileEntity } from '../../src/modules/riders/infrastructure/entities/rider-profile.entity';
 
@@ -50,12 +52,33 @@ class FakeCloudinaryService {
   }
 }
 
+// Fakes the Paystack bank-resolve boundary — accountNumber '0000000000' is
+// the reserved "Paystack rejects this" sentinel (mirrors
+// FakePaystackPaymentProvider's shape in payments.e2e-spec.ts).
+class FakePaystackBankService {
+  listBanks() {
+    return Promise.resolve([{ code: '058', name: 'GTBank' }]);
+  }
+
+  resolveAccountNumber(_bankCode: string, accountNumber: string) {
+    if (accountNumber === '0000000000') {
+      return Promise.reject(
+        new BankAccountVerificationFailedException(
+          'no account found (fake rejection)',
+        ),
+      );
+    }
+    return Promise.resolve({ accountName: `Resolved ${accountNumber}` });
+  }
+}
+
 describe('Riders (e2e)', () => {
   let app: INestApplication<App>;
   let users: Repository<UserEntity>;
   let profiles: Repository<RiderProfileEntity>;
   let jwtService: JwtService;
   let fakeCloudinary: FakeCloudinaryService;
+  let fakeBankService: FakePaystackBankService;
   let adminCookie: string;
 
   const emailPattern = '%@riders.e2e.test';
@@ -118,12 +141,15 @@ describe('Riders (e2e)', () => {
 
   beforeAll(async () => {
     fakeCloudinary = new FakeCloudinaryService();
+    fakeBankService = new FakePaystackBankService();
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
       .overrideProvider(CloudinaryService)
       .useValue(fakeCloudinary)
+      .overrideProvider(PaystackBankService)
+      .useValue(fakeBankService)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -439,6 +465,104 @@ describe('Riders (e2e)', () => {
         items: { profileId: string }[];
       };
       expect(data.items.some((i) => i.profileId === profileId)).toBe(false);
+    });
+  });
+
+  describe('PATCH /riders/me/payout-account', () => {
+    const email = 'payout-account@riders.e2e.test';
+    let riderCookie: string;
+
+    beforeAll(async () => {
+      await registerRider(email);
+      riderCookie = await loginCookie(email);
+      await onboardRider(riderCookie, { currentEmployer: 'Payout Test Co' });
+    });
+
+    it('rejects an unauthenticated request', async () => {
+      await request(app.getHttpServer())
+        .patch('/api/v1/riders/me/payout-account')
+        .send({
+          bankCode: '058',
+          bankName: 'GTBank',
+          accountNumber: '0123456789',
+        })
+        .expect(401);
+    });
+
+    it('rejects a non-Rider role', async () => {
+      await request(app.getHttpServer())
+        .patch('/api/v1/riders/me/payout-account')
+        .set('Cookie', [adminCookie])
+        .send({
+          bankCode: '058',
+          bankName: 'GTBank',
+          accountNumber: '0123456789',
+        })
+        .expect(403);
+    });
+
+    it('rejects an accountNumber that is not exactly 10 digits', async () => {
+      await request(app.getHttpServer())
+        .patch('/api/v1/riders/me/payout-account')
+        .set('Cookie', [riderCookie])
+        .send({ bankCode: '058', bankName: 'GTBank', accountNumber: '123' })
+        .expect(400);
+    });
+
+    it('verifies and stores the payout account, reflected on GET /riders/me', async () => {
+      const response = await request(app.getHttpServer())
+        .patch('/api/v1/riders/me/payout-account')
+        .set('Cookie', [riderCookie])
+        .send({
+          bankCode: '058',
+          bankName: 'GTBank',
+          accountNumber: '0123456789',
+        })
+        .expect(200);
+
+      const data = (response.body as SuccessBody).data as {
+        payoutAccountConfigured: boolean;
+        payoutBankName: string;
+        payoutAccountNumber: string;
+        payoutAccountName: string;
+      };
+      expect(data.payoutAccountConfigured).toBe(true);
+      expect(data.payoutBankName).toBe('GTBank');
+      expect(data.payoutAccountNumber).toBe('0123456789');
+      expect(data.payoutAccountName).toBe('Resolved 0123456789');
+
+      const getResponse = await request(app.getHttpServer())
+        .get('/api/v1/riders/me')
+        .set('Cookie', [riderCookie])
+        .expect(200);
+      const getData = (getResponse.body as SuccessBody).data as {
+        payoutAccountConfigured: boolean;
+      };
+      expect(getData.payoutAccountConfigured).toBe(true);
+    });
+
+    it('rejects an account Paystack cannot resolve, leaving the prior verified account untouched', async () => {
+      const response = await request(app.getHttpServer())
+        .patch('/api/v1/riders/me/payout-account')
+        .set('Cookie', [riderCookie])
+        .send({
+          bankCode: '058',
+          bankName: 'GTBank',
+          accountNumber: '0000000000',
+        })
+        .expect(400);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'BANK_ACCOUNT_VERIFICATION_FAILED',
+      );
+
+      const getResponse = await request(app.getHttpServer())
+        .get('/api/v1/riders/me')
+        .set('Cookie', [riderCookie])
+        .expect(200);
+      const getData = (getResponse.body as SuccessBody).data as {
+        payoutAccountNumber: string;
+      };
+      expect(getData.payoutAccountNumber).toBe('0123456789');
     });
   });
 });

@@ -16,9 +16,11 @@ import { Roles } from '../../../common/auth/decorators/roles.decorator';
 import { UserRole } from '../../../common/auth/user-role.enum';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import { SetPayoutAccountDto } from '../../../common/dto/set-payout-account.dto';
 import { ApproveNodeOperatorService } from '../application/approve-node-operator.service';
 import { NodeOperatorQueryService } from '../application/node-operator-query.service';
 import { OnboardNodeService } from '../application/onboard-node.service';
+import { SetNodePayoutAccountService } from '../application/set-node-payout-account.service';
 import { NodeOperatorResponseDto } from './dto/node-operator-response.dto';
 import { OnboardNodeDto } from './dto/onboard-node.dto';
 import { PendingNodeOperatorResponseDto } from './dto/pending-node-operator-response.dto';
@@ -29,6 +31,7 @@ export class NodeOperatorsController {
     private readonly onboardNodeService: OnboardNodeService,
     private readonly approveNodeOperatorService: ApproveNodeOperatorService,
     private readonly nodeOperatorQueryService: NodeOperatorQueryService,
+    private readonly setNodePayoutAccountService: SetNodePayoutAccountService,
   ) {}
 
   @Roles(UserRole.NODE_OPERATOR)
@@ -47,6 +50,15 @@ export class NodeOperatorsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<NodeOperatorResponseDto> {
     return this.nodeOperatorQueryService.getMine(user.id);
+  }
+
+  @Roles(UserRole.NODE_OPERATOR)
+  @Patch('me/payout-account')
+  setPayoutAccount(
+    @Body() dto: SetPayoutAccountDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<NodeOperatorResponseDto> {
+    return this.setNodePayoutAccountService.set(user.id, dto);
   }
 
   @Roles(UserRole.ADMIN)

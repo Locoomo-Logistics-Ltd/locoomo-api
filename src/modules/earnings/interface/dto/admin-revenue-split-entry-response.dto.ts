@@ -18,6 +18,14 @@ export interface AdminRevenueSplitEntryRow {
   paidAt: Date | null;
   paidByAdminId: string | null;
   paidByAdminEmail: string | null;
+  // The whole point of surfacing these here: Admin sees where to actually
+  // send money right next to what's owed, instead of having to call the
+  // party and ask. Null/false for platform rows (no payout account exists).
+  payoutAccountConfigured: boolean;
+  payoutBankCode: string | null;
+  payoutBankName: string | null;
+  payoutAccountNumber: string | null;
+  payoutAccountName: string | null;
   createdAt: Date;
 }
 
@@ -33,6 +41,11 @@ export class AdminRevenueSplitEntryResponseDto {
   paidAt!: Date | null;
   paidByAdminId!: string | null;
   paidByAdminEmail!: string | null;
+  payoutAccountConfigured!: boolean;
+  payoutBankCode!: string | null;
+  payoutBankName!: string | null;
+  payoutAccountNumber!: string | null;
+  payoutAccountName!: string | null;
   createdAt!: Date;
 
   static fromRow(
@@ -50,6 +63,11 @@ export class AdminRevenueSplitEntryResponseDto {
     dto.paidAt = row.paidAt;
     dto.paidByAdminId = row.paidByAdminId;
     dto.paidByAdminEmail = row.paidByAdminEmail;
+    dto.payoutAccountConfigured = row.payoutAccountConfigured;
+    dto.payoutBankCode = row.payoutBankCode;
+    dto.payoutBankName = row.payoutBankName;
+    dto.payoutAccountNumber = row.payoutAccountNumber;
+    dto.payoutAccountName = row.payoutAccountName;
     dto.createdAt = row.createdAt;
     return dto;
   }

@@ -15,7 +15,9 @@ import { PricingService } from './application/pricing.service';
 import { PaymentIntentEntity } from './infrastructure/entities/payment-intent.entity';
 import { PricingRuleEntity } from './infrastructure/entities/pricing-rule.entity';
 import { PaymentProviderRegistry } from './infrastructure/payment-provider.registry';
+import { PaystackBankService } from './application/paystack-bank.service';
 import { PaystackPaymentProvider } from './infrastructure/paystack-payment-provider';
+import { BanksController } from './interface/banks.controller';
 import { PaymentIntentsController } from './interface/payment-intents.controller';
 import { PaymentWebhooksController } from './interface/payment-webhooks.controller';
 import { PricingController } from './interface/pricing.controller';
@@ -33,6 +35,7 @@ import { PricingController } from './interface/pricing.controller';
     PaymentIntentsController,
     PaymentWebhooksController,
     PricingController,
+    BanksController,
   ],
   providers: [
     PricingService,
@@ -44,6 +47,11 @@ import { PricingController } from './interface/pricing.controller';
     ExpirePaymentIntentsService,
     PaystackPaymentProvider,
     PaymentProviderRegistry,
+    PaystackBankService,
   ],
+  // PaystackBankService: riders/node-operators inject this for their own
+  // PATCH me/payout-account verification — narrow cross-module export, same
+  // template as NodesService.reserveCapacitySlot.
+  exports: [PaystackBankService],
 })
 export class PaymentsModule {}
