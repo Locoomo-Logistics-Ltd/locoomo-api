@@ -31,5 +31,10 @@ export function toRiderResponseDto(
   dto.licenseNumber = profile.licenseNumber;
   dto.status = profile.status;
   dto.documents = toRiderDocumentResponseDtos(documents, cloudinaryService);
+  dto.payoutAccountConfigured = profile.payoutAccountVerifiedAt !== null;
+  dto.payoutBankCode = profile.payoutBankCode;
+  dto.payoutBankName = profile.payoutBankName;
+  dto.payoutAccountNumber = profile.payoutAccountNumber;
+  dto.payoutAccountName = profile.payoutAccountName;
   return dto;
 }
