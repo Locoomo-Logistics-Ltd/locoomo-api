@@ -53,6 +53,10 @@ jobs:
       # PaystackPaymentProvider with a fake. Just needs to satisfy env
       # validation at boot.
       PAYSTACK_SECRET_KEY: sk_test_ci-placeholder
+      # Never actually connected to — google-auth-e2e-spec overrides
+      # GoogleIdTokenVerifier with a fake. Just needs to satisfy env
+      # validation at boot.
+      GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
 
     steps:
       - uses: actions/checkout@v4

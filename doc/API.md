@@ -103,12 +103,15 @@ backend greps logs for.
 | 401 | `INVALID_RESET_TOKEN` | Password reset confirm failed — missing, unrecognized, expired, or already-used token. Deliberately identical for all cases; send the user back to "forgot password" |
 | 401 | `INVALID_VERIFICATION_TOKEN` | Email verification failed — missing, unrecognized, expired, or already-used token. Same enumeration-avoidance reasoning; there's no harm shown to the user beyond "this link didn't work" |
 | 401 | `INVALID_INVITE_TOKEN` | Invite confirm failed — missing, unrecognized, expired, or already-used token. Same reasoning; send the invitee back to whoever provisioned their account |
+| 401 | `INVALID_GOOGLE_TOKEN` | `POST /auth/google` — the Google ID token didn't verify (bad signature, wrong audience, expired), Google reported the email as unverified, or the token verified but had no usable name to register with. Retry the Google flow from scratch, it's not something the client can fix by resubmitting the same token |
+| 400 | `CONSENT_REQUIRED` | `POST /auth/google` — a brand-new account attempt without `consentAccepted: true`. Never returned when the call turns out to be a login (existing `googleId`) |
+| 400 | `PROFILE_INCOMPLETE` | `POST /riders/onboarding` or `POST /node-operators/onboarding` — the account has no `phone` set yet. Call `PATCH /users/me` first |
 | 401 | `UNAUTHENTICATED` | No valid `access_token` cookie on a protected route — missing, invalid, or expired. Refresh and retry |
 | 403 | `ACCOUNT_SUSPENDED` | Password was correct but the account is suspended |
 | 403 | `FORBIDDEN` | Valid session, but your role can't access this route |
 | 404 | `NOT_FOUND` | Route or resource doesn't exist. Also returned for a Node that exists but isn't `active` when you're not an Admin — visibility is hidden as "not found," not `403`, so a non-Admin can't distinguish "doesn't exist" from "pending approval" |
 | 401 | `INVALID_WEBHOOK_SIGNATURE` | `POST /payments/webhooks/paystack` signature didn't verify — not a frontend-facing error, listed for completeness |
-| 409 | `EMAIL_ALREADY_REGISTERED` | Registration, or an admin invite, attempted with an email already on file |
+| 409 | `EMAIL_ALREADY_REGISTERED` | Registration (password or Google), or an admin invite, attempted with an email already on file. For `POST /auth/google` specifically: the verified email belongs to a different, non-Google account — there is no auto-link, log in with the password instead |
 | 409 | `NODE_OPERATOR_ALREADY_ONBOARDED` | `POST /node-operators/onboarding` called by an account that already has a Node |
 | 409 | `RIDER_ALREADY_ONBOARDED` | `POST /riders/onboarding` called by an account that already has a rider profile |
 | 409 | `NODE_CAPACITY_UNAVAILABLE` | `POST /payments/intents` — the origin Node filled up between you seeing it in `/nodes/nearby` and this request landing. Show the consumer a "that drop-off point just filled up, try another" message, not a generic error |
@@ -143,6 +146,14 @@ approves it. Either way, a verification email is sent asynchronously (same ~10s 
 delay as password reset) with a link of the form `{FRONTEND_URL}/verify-email?token=...`;
 `emailVerifiedAt` stays `null` until that link is used, purely informational for now.
 
+**`phone` is not collected here.** Every new account — password or Google — starts with
+`phone: null` and completes it afterward via `PATCH /users/me` (below). Consumer's missing
+phone is non-blocking (delivery contact comes from the order's `receiverPhone`, not
+`User.phone`); NodeOperator/Rider **must** set it before `POST /node-operators/onboarding`
+/ `POST /riders/onboarding` will succeed — those return `400 PROFILE_INCOMPLETE` until it's
+set. Show a "complete your profile" prompt on the dashboard whenever `GET /users/me`'s
+`phone` is `null`.
+
 Request:
 
 ```json
@@ -150,7 +161,6 @@ Request:
   "firstName": "Ada",
   "lastName": "Lovelace",
   "email": "ada@example.com",
-  "phone": "+2348012345678",
   "password": "Correct-Horse-Battery-1",
   "passwordConfirmation": "Correct-Horse-Battery-1",
   "consentAccepted": true,
@@ -162,7 +172,6 @@ Request:
 |---|---|
 | `firstName`, `lastName` | 1–100 chars |
 | `email` | valid email, max 255 chars, case-insensitive (stored lowercased) |
-| `phone` | `+` optional, 7–15 digits |
 | `password` | 12–128 chars. No composition rules beyond length (current OWASP guidance) — don't build a strength meter checking for uppercase/symbols/etc., it'd reject valid passwords this API accepts |
 | `passwordConfirmation` | must exactly match `password` |
 | `consentAccepted` | must be `true` — ToS/Privacy Policy acceptance (NDPA), there is no "accept later" |
@@ -176,7 +185,7 @@ Response `201`, `data`:
   "email": "ada@example.com",
   "firstName": "Ada",
   "lastName": "Lovelace",
-  "phone": "+2348012345678",
+  "phone": null,
   "role": "node_operator",
   "status": "pending_review",
   "emailVerifiedAt": null,
@@ -189,6 +198,45 @@ login next.
 
 Errors: `400 VALIDATION_FAILED`, `409 EMAIL_ALREADY_REGISTERED`, `429 RATE_LIMITED`
 (5 requests/min per IP — stricter than the app-wide default).
+
+### `POST /api/v1/auth/google`
+
+Sign up or log in with Google — one endpoint, both outcomes, distinguished server-side by
+whether the verified Google account is already linked to a user. This is a **signup path
+for new users, not an alternate login for an existing password-based account**: if the
+verified email already belongs to a different (password, invited, ...) account, this is
+rejected outright rather than logged into or linked — see `EMAIL_ALREADY_REGISTERED` above.
+
+The frontend obtains a signed ID token via Google Identity Services client-side and sends
+just that token here — the backend independently verifies it against Google's own keys, it
+never trusts a client-asserted email/name. `role`/`consentAccepted` only matter if this
+turns out to create a new account; both are ignored on a plain login (existing `googleId`).
+
+Request:
+
+```json
+{
+  "idToken": "the-signed-id-token-from-google-identity-services",
+  "role": "rider",
+  "consentAccepted": true
+}
+```
+
+| Field | Rules |
+|---|---|
+| `idToken` | required, the raw Google ID token |
+| `role` | optional, defaults to `consumer`. Only `consumer`, `node_operator`, or `rider` — same list as `POST /auth/register`. Ignored when the call turns out to be a login |
+| `consentAccepted` | required to be `true` **only when this creates a new account** — omit or send `false` on a call you expect to be a login |
+
+Response `200`, `data`: same `UserResponseDto` shape as login/register — `phone: null` on a
+freshly created account, same as password registration. **Unlike `POST /auth/register`,
+this logs the user in immediately** — session cookies are set on the response, since a
+Google-created account has no password to log in with afterward. Same cookie table as
+`POST /auth/login` below.
+
+Errors: `400 VALIDATION_FAILED`, `400 CONSENT_REQUIRED`, `401 INVALID_GOOGLE_TOKEN`,
+`403 ACCOUNT_SUSPENDED`, `409 EMAIL_ALREADY_REGISTERED`, `429 RATE_LIMITED` (same 5/min
+bracket as register/login).
 
 ### `POST /api/v1/auth/login`
 
@@ -381,6 +429,32 @@ immediately after.
 Errors: `400 VALIDATION_FAILED`, `401 INVALID_INVITE_TOKEN` (bad, expired, or
 already-used token), `429 RATE_LIMITED`.
 
+### `GET /api/v1/users/me`
+
+**Requires an authenticated session — any role.** Returns the caller's own account, same
+`UserResponseDto` shape as register/login. The field to actually watch is `phone`: `null`
+means the profile-completion nudge (see `POST /auth/register` above) should show.
+
+Response `200`, `data`: same shape as register's response.
+
+Errors: `401 UNAUTHENTICATED`.
+
+### `PATCH /api/v1/users/me`
+
+**Requires an authenticated session — any role.** Sets `phone`, the one thing registration
+(password or Google) never collects. Callable again later to change it; there's no
+"locked after first set" behavior.
+
+Request:
+
+```json
+{ "phone": "+2348012345678" }
+```
+
+Response `200`, `data`: the updated `UserResponseDto`.
+
+Errors: `400 VALIDATION_FAILED`, `401 UNAUTHENTICATED`.
+
 ### Pagination (list endpoints)
 
 Every list endpoint takes `page` (default `1`) and `limit` (default `20`, max `100`)
@@ -554,8 +628,12 @@ see `PATCH /node-operators/me/payout-account` below. Frontend: use
 `payoutAccountConfigured: false` to drive a "set up your payout account" prompt on the
 operator's dashboard.
 
+Requires `phone` to already be set on your account (`PATCH /users/me`) — registration no
+longer collects it, and dispatch needs a real contact number. `400 PROFILE_INCOMPLETE` if
+it isn't set yet.
+
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator),
-`400 VALIDATION_FAILED`, `409 NODE_OPERATOR_ALREADY_ONBOARDED`.
+`400 VALIDATION_FAILED`, `400 PROFILE_INCOMPLETE`, `409 NODE_OPERATOR_ALREADY_ONBOARDED`.
 
 ### `GET /api/v1/node-operators/me`
 
@@ -725,9 +803,13 @@ response — never store it, it's not permanent. `payoutAccountConfigured`/`payo
 `PATCH /riders/me/payout-account` below. Frontend: use `payoutAccountConfigured: false`
 to drive a "set up your payout account" prompt on the rider's dashboard.
 
+Requires `phone` to already be set on your account (`PATCH /users/me`) — registration no
+longer collects it, and dispatch needs a real contact number. `400 PROFILE_INCOMPLETE` if
+it isn't set yet.
+
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a Rider), `400 VALIDATION_FAILED`,
-`400 INVALID_VERIFICATION_DOCUMENT` (the `cloudinaryPublicId` doesn't correspond to a
-real upload), `409 RIDER_ALREADY_ONBOARDED`.
+`400 PROFILE_INCOMPLETE`, `400 INVALID_VERIFICATION_DOCUMENT` (the `cloudinaryPublicId`
+doesn't correspond to a real upload), `409 RIDER_ALREADY_ONBOARDED`.
 
 ### `GET /api/v1/riders/me`
 

@@ -10,9 +10,11 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { ActivateUserService } from './application/activate-user.service';
 import { ConfirmInviteService } from './application/confirm-invite.service';
 import { ConfirmPasswordResetService } from './application/confirm-password-reset.service';
+import { GoogleAuthService } from './application/google-auth.service';
 import { InviteUserService } from './application/invite-user.service';
 import { LoginUserService } from './application/login-user.service';
 import { LogoutUserService } from './application/logout-user.service';
+import { MyProfileService } from './application/my-profile.service';
 import { RefreshSessionService } from './application/refresh-session.service';
 import { RegisterUserService } from './application/register-user.service';
 import { RequestPasswordResetService } from './application/request-password-reset.service';
@@ -24,6 +26,7 @@ import { InviteTokenEntity } from './infrastructure/entities/invite-token.entity
 import { PasswordResetTokenEntity } from './infrastructure/entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './infrastructure/entities/refresh-token.entity';
 import { UserEntity } from './infrastructure/entities/user.entity';
+import { GoogleIdTokenVerifier } from './infrastructure/google-id-token-verifier';
 import { AuthController } from './interface/auth.controller';
 import { UsersController } from './interface/users.controller';
 
@@ -58,6 +61,9 @@ import { UsersController } from './interface/users.controller';
     TokenIssuanceService,
     ActivateUserService,
     UserLookupService,
+    GoogleAuthService,
+    GoogleIdTokenVerifier,
+    MyProfileService,
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],

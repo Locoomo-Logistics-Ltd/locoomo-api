@@ -15,6 +15,7 @@ import { Env } from '../../../config/env.validation';
 import { InvalidRefreshTokenException } from '../domain/exceptions/invalid-refresh-token.exception';
 import { ConfirmInviteService } from '../application/confirm-invite.service';
 import { ConfirmPasswordResetService } from '../application/confirm-password-reset.service';
+import { GoogleAuthService } from '../application/google-auth.service';
 import { LoginUserService } from '../application/login-user.service';
 import { LogoutUserService } from '../application/logout-user.service';
 import { RefreshSessionService } from '../application/refresh-session.service';
@@ -24,6 +25,7 @@ import { VerifyEmailService } from '../application/verify-email.service';
 import { ConfirmEmailVerificationDto } from './dto/confirm-email-verification.dto';
 import { ConfirmInviteDto } from './dto/confirm-invite.dto';
 import { ConfirmPasswordResetDto } from './dto/confirm-password-reset.dto';
+import { GoogleAuthDto } from './dto/google-auth.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RequestPasswordResetDto } from './dto/request-password-reset.dto';
@@ -47,6 +49,7 @@ export class AuthController {
     private readonly confirmPasswordResetService: ConfirmPasswordResetService,
     private readonly verifyEmailService: VerifyEmailService,
     private readonly confirmInviteService: ConfirmInviteService,
+    private readonly googleAuthService: GoogleAuthService,
     private readonly configService: ConfigService<Env, true>,
   ) {}
 
@@ -68,6 +71,23 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<UserResponseDto> {
     const { user, session } = await this.loginUserService.login(dto);
+
+    setSessionCookies(res, session, this.useSecureCookies());
+
+    return UserResponseDto.fromEntity(user);
+  }
+
+  // Same 5/min throttle bracket as register/login — a comparable
+  // enumeration surface (the 409 on an already-registered email leaks
+  // exactly what register's own collision response already does).
+  @Throttle({ default: { limit: 5, ttl: seconds(60) } })
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  async google(
+    @Body() dto: GoogleAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<UserResponseDto> {
+    const { user, session } = await this.googleAuthService.authenticate(dto);
 
     setSessionCookies(res, session, this.useSecureCookies());
 

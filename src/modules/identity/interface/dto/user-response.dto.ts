@@ -7,7 +7,7 @@ export class UserResponseDto {
   email!: string;
   firstName!: string;
   lastName!: string;
-  phone!: string;
+  phone!: string | null;
   role!: UserRole;
   status!: UserStatus;
   emailVerifiedAt!: Date | null;

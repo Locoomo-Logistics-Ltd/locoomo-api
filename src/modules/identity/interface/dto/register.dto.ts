@@ -5,20 +5,12 @@ import {
   IsIn,
   IsOptional,
   IsString,
-  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
 import { UserRole } from '../../../../common/auth/user-role.enum';
 import { Match } from '../../../../common/validators/match.decorator';
-
-// Admin is excluded for the same reason InviteUserDto excludes Consumer:
-// never self-registerable.
-const SELF_REGISTERABLE_ROLES = [
-  UserRole.CONSUMER,
-  UserRole.NODE_OPERATOR,
-  UserRole.RIDER,
-];
+import { SELF_REGISTERABLE_ROLES } from '../../domain/self-registerable-roles.constant';
 
 export class RegisterDto {
   @IsString()
@@ -34,12 +26,6 @@ export class RegisterDto {
   @IsEmail()
   @MaxLength(255)
   email!: string;
-
-  @IsString()
-  @Matches(/^\+?[0-9]{7,15}$/, {
-    message: 'phone must be a valid phone number',
-  })
-  phone!: string;
 
   @IsString()
   @MinLength(12, { message: 'password must be at least 12 characters' })

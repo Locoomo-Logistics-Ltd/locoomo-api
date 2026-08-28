@@ -42,7 +42,6 @@ describe('POST /api/v1/auth/refresh (e2e)', () => {
       firstName: 'Refresh',
       lastName: 'Tester',
       email,
-      phone: '+2348012345678',
       password,
       passwordConfirmation: password,
       consentAccepted: true,

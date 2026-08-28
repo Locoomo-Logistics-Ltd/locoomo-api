@@ -81,7 +81,6 @@ describe('Node-operators (e2e)', () => {
         firstName: 'Operator',
         lastName: 'Tester',
         email,
-        phone: '+2348012345678',
         password,
         passwordConfirmation: password,
         consentAccepted: true,
@@ -101,6 +100,17 @@ describe('Node-operators (e2e)', () => {
       throw new Error('No access_token cookie in login response');
     }
     return accessCookie.split(';')[0];
+  }
+
+  // Phone is no longer collected at registration — onboarding hard-gates on
+  // it (OnboardNodeService), so any test flow that onboards needs this
+  // between loginCookie and the onboarding POST.
+  async function completeProfile(cookie: string): Promise<void> {
+    await request(app.getHttpServer())
+      .patch('/api/v1/users/me')
+      .set('Cookie', [cookie])
+      .send({ phone: '+2348012345678' })
+      .expect(200);
   }
 
   beforeAll(async () => {
@@ -160,7 +170,6 @@ describe('Node-operators (e2e)', () => {
         firstName: 'Operator',
         lastName: 'Tester',
         email,
-        phone: '+2348012345678',
         password,
         passwordConfirmation: password,
         consentAccepted: true,
@@ -171,6 +180,7 @@ describe('Node-operators (e2e)', () => {
     const data = (response.body as SuccessBody).data;
     expect(data.role).toBe('node_operator');
     expect(data.status).toBe('pending_review');
+    expect(data.phone).toBeNull();
 
     await request(app.getHttpServer())
       .post('/api/v1/auth/login')
@@ -185,7 +195,6 @@ describe('Node-operators (e2e)', () => {
         firstName: 'Nope',
         lastName: 'Tester',
         email: 'admin-reject@node-operators.e2e.test',
-        phone: '+2348012345678',
         password,
         passwordConfirmation: password,
         consentAccepted: true,
@@ -202,6 +211,7 @@ describe('Node-operators (e2e)', () => {
     beforeAll(async () => {
       await registerNodeOperator(email);
       operatorCookie = await loginCookie(email);
+      await completeProfile(operatorCookie);
     });
 
     it('rejects an unauthenticated onboarding attempt', async () => {
@@ -276,6 +286,36 @@ describe('Node-operators (e2e)', () => {
     });
   });
 
+  describe('onboarding requires a completed profile', () => {
+    const email = 'profile-incomplete@node-operators.e2e.test';
+    let operatorCookie: string;
+
+    beforeAll(async () => {
+      await registerNodeOperator(email);
+      operatorCookie = await loginCookie(email);
+    });
+
+    it('rejects onboarding while phone has not been set', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/node-operators/onboarding')
+        .set('Cookie', [operatorCookie])
+        .send(onboardPayload('incomplete'))
+        .expect(400);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'PROFILE_INCOMPLETE',
+      );
+    });
+
+    it('succeeds once the profile is completed via PATCH /users/me', async () => {
+      await completeProfile(operatorCookie);
+      await request(app.getHttpServer())
+        .post('/api/v1/node-operators/onboarding')
+        .set('Cookie', [operatorCookie])
+        .send(onboardPayload('now-complete'))
+        .expect(201);
+    });
+  });
+
   describe('admin review queue and approval', () => {
     const email = 'approval-flow@node-operators.e2e.test';
     let operatorCookie: string;
@@ -285,6 +325,7 @@ describe('Node-operators (e2e)', () => {
     beforeAll(async () => {
       await registerNodeOperator(email);
       operatorCookie = await loginCookie(email);
+      await completeProfile(operatorCookie);
 
       const response = await request(app.getHttpServer())
         .post('/api/v1/node-operators/onboarding')
@@ -388,6 +429,7 @@ describe('Node-operators (e2e)', () => {
     beforeAll(async () => {
       await registerNodeOperator(email);
       operatorCookie = await loginCookie(email);
+      await completeProfile(operatorCookie);
       await request(app.getHttpServer())
         .post('/api/v1/node-operators/onboarding')
         .set('Cookie', [operatorCookie])

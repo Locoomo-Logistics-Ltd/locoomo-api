@@ -137,7 +137,6 @@ describe('Orders (e2e)', () => {
         firstName: 'Consumer',
         lastName: 'Tester',
         email,
-        phone: '+2348012345678',
         password,
         passwordConfirmation: password,
         consentAccepted: true,
