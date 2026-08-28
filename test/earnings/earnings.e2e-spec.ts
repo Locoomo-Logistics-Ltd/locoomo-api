@@ -157,7 +157,6 @@ describe('Earnings (e2e)', () => {
         firstName: 'Tester',
         lastName: 'Tester',
         email,
-        phone: '+2348012345678',
         password,
         passwordConfirmation: password,
         consentAccepted: true,

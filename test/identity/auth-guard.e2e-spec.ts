@@ -179,7 +179,6 @@ describe('AuthGuard / RolesGuard (e2e)', () => {
         firstName: 'Guard',
         lastName: 'Tester',
         email: 'guardcheck@auth-guard.e2e.test',
-        phone: '+2348012345678',
         password: 'Correct-Horse-Battery-1',
         passwordConfirmation: 'Correct-Horse-Battery-1',
         consentAccepted: true,

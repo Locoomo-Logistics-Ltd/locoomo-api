@@ -95,7 +95,6 @@ describe('Riders (e2e)', () => {
         firstName: 'Rider',
         lastName: 'Tester',
         email,
-        phone: '+2348012345678',
         password,
         passwordConfirmation: password,
         consentAccepted: true,
@@ -115,6 +114,17 @@ describe('Riders (e2e)', () => {
       throw new Error('No access_token cookie in login response');
     }
     return accessCookie.split(';')[0];
+  }
+
+  // Phone is no longer collected at registration — onboarding hard-gates on
+  // it (OnboardRiderService), so any test flow that onboards needs this
+  // between loginCookie and onboardRider.
+  async function completeProfile(cookie: string): Promise<void> {
+    await request(app.getHttpServer())
+      .patch('/api/v1/users/me')
+      .set('Cookie', [cookie])
+      .send({ phone: '+2348012345678' })
+      .expect(200);
   }
 
   function fakeUploadedPublicId(tag: string): string {
@@ -193,7 +203,6 @@ describe('Riders (e2e)', () => {
         firstName: 'Rider',
         lastName: 'Tester',
         email,
-        phone: '+2348012345678',
         password,
         passwordConfirmation: password,
         consentAccepted: true,
@@ -204,6 +213,7 @@ describe('Riders (e2e)', () => {
     const data = (response.body as SuccessBody).data;
     expect(data.role).toBe('rider');
     expect(data.status).toBe('pending_review');
+    expect(data.phone).toBeNull();
 
     await request(app.getHttpServer())
       .post('/api/v1/auth/login')
@@ -274,6 +284,7 @@ describe('Riders (e2e)', () => {
     beforeAll(async () => {
       await registerRider(email);
       riderCookie = await loginCookie(email);
+      await completeProfile(riderCookie);
     });
 
     it('rejects an unauthenticated onboarding attempt', async () => {
@@ -380,6 +391,30 @@ describe('Riders (e2e)', () => {
     });
   });
 
+  describe('onboarding requires a completed profile', () => {
+    const email = 'profile-incomplete@riders.e2e.test';
+    let riderCookie: string;
+
+    beforeAll(async () => {
+      await registerRider(email);
+      riderCookie = await loginCookie(email);
+    });
+
+    it('rejects onboarding while phone has not been set', async () => {
+      const response = await onboardRider(riderCookie);
+      expect(response.status).toBe(400);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'PROFILE_INCOMPLETE',
+      );
+    });
+
+    it('succeeds once the profile is completed via PATCH /users/me', async () => {
+      await completeProfile(riderCookie);
+      const response = await onboardRider(riderCookie);
+      expect(response.status).toBe(201);
+    });
+  });
+
   describe('admin review queue and approval', () => {
     const email = 'approval-flow@riders.e2e.test';
     let riderCookie: string;
@@ -388,6 +423,7 @@ describe('Riders (e2e)', () => {
     beforeAll(async () => {
       await registerRider(email);
       riderCookie = await loginCookie(email);
+      await completeProfile(riderCookie);
 
       const response = await onboardRider(riderCookie, {
         currentEmployer: 'Speedy Dispatch Ltd',
@@ -475,6 +511,7 @@ describe('Riders (e2e)', () => {
     beforeAll(async () => {
       await registerRider(email);
       riderCookie = await loginCookie(email);
+      await completeProfile(riderCookie);
       await onboardRider(riderCookie, { currentEmployer: 'Payout Test Co' });
     });
 

@@ -2,8 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { isUniqueViolation } from '../../../common/database/is-unique-violation.util';
+import { UserLookupService } from '../../identity/application/user-lookup.service';
 import { RiderStatus } from '../domain/rider-status.enum';
 import { InvalidVerificationDocumentException } from '../domain/exceptions/invalid-verification-document.exception';
+import { ProfileIncompleteException } from '../domain/exceptions/profile-incomplete.exception';
 import { RiderAlreadyOnboardedException } from '../domain/exceptions/rider-already-onboarded.exception';
 import { CloudinaryService } from '../infrastructure/cloudinary.service';
 import { RiderProfileEntity } from '../infrastructure/entities/rider-profile.entity';
@@ -20,6 +22,7 @@ export class OnboardRiderService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly userLookupService: UserLookupService,
   ) {}
 
   async onboard(
@@ -32,6 +35,14 @@ export class OnboardRiderService {
     const existing = await this.profiles.findOneBy({ userId });
     if (existing) {
       throw new RiderAlreadyOnboardedException();
+    }
+
+    // Phone is no longer collected at registration (password or Google) —
+    // dispatch/physical handoffs need a real contact number, so this is the
+    // hard-gate enforcement point.
+    const phone = await this.userLookupService.getPhone(userId);
+    if (!phone) {
+      throw new ProfileIncompleteException();
     }
 
     // Confirms the client actually completed the signed upload rather than

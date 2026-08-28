@@ -57,7 +57,6 @@ describe('Password reset (e2e)', () => {
       firstName: 'Reset',
       lastName: 'Tester',
       email,
-      phone: '+2348012345678',
       password,
       passwordConfirmation: password,
       consentAccepted: true,

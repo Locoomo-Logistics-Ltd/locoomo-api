@@ -59,7 +59,6 @@ describe('Email verification (e2e)', () => {
         firstName: 'Verify',
         lastName: 'Tester',
         email,
-        phone: '+2348012345678',
         password,
         passwordConfirmation: password,
         consentAccepted: true,

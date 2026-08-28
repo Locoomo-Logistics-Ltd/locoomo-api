@@ -2,8 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { isUniqueViolation } from '../../../common/database/is-unique-violation.util';
+import { UserLookupService } from '../../identity/application/user-lookup.service';
 import { NodesService } from '../../nodes/application/nodes.service';
 import { NodeOperatorAlreadyOnboardedException } from '../domain/exceptions/node-operator-already-onboarded.exception';
+import { ProfileIncompleteException } from '../domain/exceptions/profile-incomplete.exception';
 import { NodeOperatorProfileEntity } from '../infrastructure/entities/node-operator-profile.entity';
 import { NodeOperatorResponseDto } from '../interface/dto/node-operator-response.dto';
 import { OnboardNodeDto } from '../interface/dto/onboard-node.dto';
@@ -16,6 +18,7 @@ export class OnboardNodeService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly nodesService: NodesService,
+    private readonly userLookupService: UserLookupService,
   ) {}
 
   async onboard(
@@ -27,6 +30,14 @@ export class OnboardNodeService {
     const existing = await this.profiles.findOneBy({ userId });
     if (existing) {
       throw new NodeOperatorAlreadyOnboardedException();
+    }
+
+    // Phone is no longer collected at registration (password or Google) —
+    // dispatch/physical handoffs need a real contact number, so this is the
+    // hard-gate enforcement point.
+    const phone = await this.userLookupService.getPhone(userId);
+    if (!phone) {
+      throw new ProfileIncompleteException();
     }
 
     try {

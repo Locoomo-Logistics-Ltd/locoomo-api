@@ -35,8 +35,24 @@ export class UserEntity {
   @Column({ type: 'varchar' })
   lastName!: string;
 
-  @Column({ type: 'varchar' })
-  phone!: string;
+  // Nullable — no longer collected at registration (neither password nor
+  // Google signup can reliably obtain it there; see google-auth.service.ts).
+  // Set later via PATCH /users/me. Null is a real, expected, long-lived
+  // state, not a transient one — GET /users/me exposes it as-is so the
+  // frontend can nudge for it; Rider/NodeOperator onboarding hard-gates on
+  // it (see UserLookupService.getPhone).
+  @Column({ type: 'varchar', nullable: true })
+  phone!: string | null;
+
+  // Google's `sub` claim — set only for accounts created via Google
+  // sign-in. Unique so a Google identity can only ever back one account;
+  // deliberately a plain nullable column on UserEntity, not a separate
+  // identities table — same reasoning passwordHash is nullable here rather
+  // than living in its own table. Promote to a join table only if a second
+  // OAuth provider becomes a real requirement.
+  @Index({ unique: true })
+  @Column({ type: 'varchar', nullable: true })
+  googleId!: string | null;
 
   @Column({ type: 'enum', enum: UserRole })
   role!: UserRole;

@@ -60,7 +60,7 @@ export class RegisterUserService {
           passwordHash,
           firstName: dto.firstName,
           lastName: dto.lastName,
-          phone: dto.phone,
+          phone: null,
           role,
           status,
           consentAcceptedAt: new Date(),

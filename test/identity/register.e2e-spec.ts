@@ -31,7 +31,6 @@ describe('POST /api/v1/auth/register (e2e)', () => {
     firstName: 'Ada',
     lastName: 'Lovelace',
     email: 'ada@register.e2e.test',
-    phone: '+2348012345678',
     password: 'Correct-Horse-Battery-1',
     passwordConfirmation: 'Correct-Horse-Battery-1',
     consentAccepted: true,
@@ -68,6 +67,7 @@ describe('POST /api/v1/auth/register (e2e)', () => {
     expect(data.email).toBe('ada@register.e2e.test');
     expect(data.role).toBe('consumer');
     expect(data.status).toBe('active');
+    expect(data.phone).toBeNull();
     expect(data.passwordHash).toBeUndefined();
     expect(data.password).toBeUndefined();
 
@@ -75,6 +75,7 @@ describe('POST /api/v1/auth/register (e2e)', () => {
       email: 'ada@register.e2e.test',
     });
     expect(stored.passwordHash).not.toBeNull();
+    expect(stored.phone).toBeNull();
     expect(stored.consentAcceptedAt).toBeInstanceOf(Date);
   });
 

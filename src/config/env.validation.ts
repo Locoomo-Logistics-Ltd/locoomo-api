@@ -41,6 +41,12 @@ export const envSchema = z
     // key only; we use hosted-redirect checkout, so no client-side public key
     // is ever needed server-side.
     PAYSTACK_SECRET_KEY: z.string().min(1),
+    // Google Sign-In (identity/application/google-auth.service.ts) — the
+    // OAuth client ID registered for this app, used as the `audience` when
+    // verifying a Google ID token. Public value, not a secret; no client
+    // secret is needed since we only ever verify a client-obtained ID token
+    // server-side, never do a server-side code exchange.
+    GOOGLE_CLIENT_ID: z.string().min(1),
   })
   .refine(
     (config) =>
