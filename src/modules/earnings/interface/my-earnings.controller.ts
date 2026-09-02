@@ -40,11 +40,11 @@ export class MyEarningsController {
     @Query() query: PaginationQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<PaginatedResultDto<RevenueSplitEntryResponseDto>> {
-    const nodeId = await this.nodeOperatorQueryService.getNodeIdForUser(
+    const nodeIds = await this.nodeOperatorQueryService.getNodeIdsForUser(
       user.id,
     );
     const result = await this.revenueSplitQueryService.listForNode(
-      nodeId,
+      nodeIds,
       query,
     );
     return new PaginatedResultDto(

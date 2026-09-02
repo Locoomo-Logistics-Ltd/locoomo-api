@@ -11,7 +11,7 @@ import { UserRole } from '../../src/common/auth/user-role.enum';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { hashPassword } from '../../src/modules/identity/domain/password-hasher';
-import { NodeOperatorProfileEntity } from '../../src/modules/node-operators/infrastructure/entities/node-operator-profile.entity';
+import { NodeMembershipEntity } from '../../src/modules/node-operators/infrastructure/entities/node-membership.entity';
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
 import { BankAccountVerificationFailedException } from '../../src/modules/payments/domain/exceptions/bank-account-verification-failed.exception';
 import { PaystackBankService } from '../../src/modules/payments/application/paystack-bank.service';
@@ -24,6 +24,11 @@ interface ErrorBody {
 interface SuccessBody {
   success: true;
   data: Record<string, unknown>;
+}
+
+interface SuccessListBody {
+  success: true;
+  data: Record<string, unknown>[];
 }
 
 // Fakes the Paystack bank-resolve boundary — accountNumber '0000000000' is
@@ -48,7 +53,7 @@ class FakePaystackBankService {
 describe('Node-operators (e2e)', () => {
   let app: INestApplication<App>;
   let users: Repository<UserEntity>;
-  let profiles: Repository<NodeOperatorProfileEntity>;
+  let memberships: Repository<NodeMembershipEntity>;
   let nodes: Repository<NodeEntity>;
   let jwtService: JwtService;
   let fakeBankService: FakePaystackBankService;
@@ -128,7 +133,7 @@ describe('Node-operators (e2e)', () => {
     await app.init();
 
     users = moduleFixture.get(getRepositoryToken(UserEntity));
-    profiles = moduleFixture.get(getRepositoryToken(NodeOperatorProfileEntity));
+    memberships = moduleFixture.get(getRepositoryToken(NodeMembershipEntity));
     nodes = moduleFixture.get(getRepositoryToken(NodeEntity));
     jwtService = moduleFixture.get(JwtService);
 
@@ -243,7 +248,7 @@ describe('Node-operators (e2e)', () => {
         .expect(400);
     });
 
-    it('creates a pending, portal-onboarded Node tied to the operator', async () => {
+    it('creates a pending, portal-onboarded Node tied to the operator as owner', async () => {
       const response = await request(app.getHttpServer())
         .post('/api/v1/node-operators/onboarding')
         .set('Cookie', [operatorCookie])
@@ -252,29 +257,37 @@ describe('Node-operators (e2e)', () => {
 
       const data = (response.body as SuccessBody).data as {
         profileId: string;
+        roleAtNode: string;
         node: { status: string; onboardingType: string };
       };
+      expect(data.roleAtNode).toBe('owner');
       expect(data.node.status).toBe('pending');
       expect(data.node.onboardingType).toBe('portal');
 
       const user = await users.findOneByOrFail({ email });
-      const profile = await profiles.findOneByOrFail({ userId: user.id });
-      expect(profile.id).toBe(data.profileId);
+      const membership = await memberships.findOneByOrFail({
+        userId: user.id,
+      });
+      expect(membership.id).toBe(data.profileId);
+      expect(membership.roleAtNode).toBe('owner');
     });
 
-    it('returns the same profile via GET /node-operators/me', async () => {
+    it('lists the Node via GET /node-operators/me/nodes', async () => {
       const response = await request(app.getHttpServer())
-        .get('/api/v1/node-operators/me')
+        .get('/api/v1/node-operators/me/nodes')
         .set('Cookie', [operatorCookie])
         .expect(200);
 
-      const data = (response.body as SuccessBody).data as {
+      const data = (response.body as SuccessListBody).data as {
+        roleAtNode: string;
         node: { status: string };
-      };
-      expect(data.node.status).toBe('pending');
+      }[];
+      expect(data).toHaveLength(1);
+      expect(data[0].roleAtNode).toBe('owner');
+      expect(data[0].node.status).toBe('pending');
     });
 
-    it('rejects a second onboarding attempt from the same operator', async () => {
+    it('rejects a second /onboarding call once already onboarded', async () => {
       const response = await request(app.getHttpServer())
         .post('/api/v1/node-operators/onboarding')
         .set('Cookie', [operatorCookie])
@@ -282,6 +295,63 @@ describe('Node-operators (e2e)', () => {
         .expect(409);
       expect((response.body as ErrorBody).error.code).toBe(
         'NODE_OPERATOR_ALREADY_ONBOARDED',
+      );
+    });
+  });
+
+  describe('adding additional Nodes', () => {
+    const email = 'multi-node@node-operators.e2e.test';
+    let operatorCookie: string;
+
+    beforeAll(async () => {
+      await registerNodeOperator(email);
+      operatorCookie = await loginCookie(email);
+      await completeProfile(operatorCookie);
+    });
+
+    it('rejects POST /node-operators/nodes before completing initial onboarding', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/node-operators/nodes')
+        .set('Cookie', [operatorCookie])
+        .send(onboardPayload('too-early'))
+        .expect(400);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'NODE_OPERATOR_NOT_ONBOARDED',
+      );
+    });
+
+    it('adds a second Node once onboarded, both visible via GET /me/nodes', async () => {
+      const first = await request(app.getHttpServer())
+        .post('/api/v1/node-operators/onboarding')
+        .set('Cookie', [operatorCookie])
+        .send(onboardPayload('first'))
+        .expect(201);
+
+      const second = await request(app.getHttpServer())
+        .post('/api/v1/node-operators/nodes')
+        .set('Cookie', [operatorCookie])
+        .send(onboardPayload('second'))
+        .expect(201);
+
+      const firstData = (first.body as SuccessBody).data as {
+        node: { id: string };
+      };
+      const secondData = (second.body as SuccessBody).data as {
+        roleAtNode: string;
+        node: { id: string };
+      };
+      expect(secondData.roleAtNode).toBe('owner');
+      expect(secondData.node.id).not.toBe(firstData.node.id);
+
+      const listResponse = await request(app.getHttpServer())
+        .get('/api/v1/node-operators/me/nodes')
+        .set('Cookie', [operatorCookie])
+        .expect(200);
+      const items = (listResponse.body as SuccessListBody).data as {
+        node: { id: string };
+      }[];
+      expect(items.map((i) => i.node.id).sort()).toEqual(
+        [firstData.node.id, secondData.node.id].sort(),
       );
     });
   });
@@ -420,26 +490,50 @@ describe('Node-operators (e2e)', () => {
       const data = (response.body as SuccessBody).data as { status: string };
       expect(data.status).toBe('active');
     });
+
+    it('a 2nd Node from this already-active operator still appears in the pending queue', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/node-operators/nodes')
+        .set('Cookie', [operatorCookie])
+        .send(onboardPayload('second-node-after-approval'))
+        .expect(201);
+      const secondProfileId = (response.body as SuccessBody).data
+        .profileId as string;
+
+      const pendingResponse = await request(app.getHttpServer())
+        .get('/api/v1/node-operators/pending?limit=100')
+        .set('Cookie', [adminCookie])
+        .expect(200);
+      const items = (pendingResponse.body as SuccessBody).data as {
+        items: { profileId: string }[];
+      };
+      expect(items.items.some((i) => i.profileId === secondProfileId)).toBe(
+        true,
+      );
+    });
   });
 
-  describe('PATCH /node-operators/me/payout-account', () => {
+  describe('PATCH /node-operators/nodes/:nodeId/payout-account', () => {
     const email = 'payout-account@node-operators.e2e.test';
     let operatorCookie: string;
+    let nodeId: string;
 
     beforeAll(async () => {
       await registerNodeOperator(email);
       operatorCookie = await loginCookie(email);
       await completeProfile(operatorCookie);
-      await request(app.getHttpServer())
+      const response = await request(app.getHttpServer())
         .post('/api/v1/node-operators/onboarding')
         .set('Cookie', [operatorCookie])
         .send(onboardPayload('payout-account'))
         .expect(201);
+      nodeId = ((response.body as SuccessBody).data as { node: { id: string } })
+        .node.id;
     });
 
     it('rejects an unauthenticated request', async () => {
       await request(app.getHttpServer())
-        .patch('/api/v1/node-operators/me/payout-account')
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/payout-account`)
         .send({
           bankCode: '058',
           bankName: 'GTBank',
@@ -450,7 +544,7 @@ describe('Node-operators (e2e)', () => {
 
     it('rejects a non-NodeOperator role', async () => {
       await request(app.getHttpServer())
-        .patch('/api/v1/node-operators/me/payout-account')
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/payout-account`)
         .set('Cookie', [adminCookie])
         .send({
           bankCode: '058',
@@ -460,17 +554,31 @@ describe('Node-operators (e2e)', () => {
         .expect(403);
     });
 
+    it('404s for a Node the caller does not own', async () => {
+      await request(app.getHttpServer())
+        .patch(
+          '/api/v1/node-operators/nodes/00000000-0000-0000-0000-000000000000/payout-account',
+        )
+        .set('Cookie', [operatorCookie])
+        .send({
+          bankCode: '058',
+          bankName: 'GTBank',
+          accountNumber: '0123456789',
+        })
+        .expect(404);
+    });
+
     it('rejects an accountNumber that is not exactly 10 digits', async () => {
       await request(app.getHttpServer())
-        .patch('/api/v1/node-operators/me/payout-account')
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/payout-account`)
         .set('Cookie', [operatorCookie])
         .send({ bankCode: '058', bankName: 'GTBank', accountNumber: '123' })
         .expect(400);
     });
 
-    it('verifies and stores the payout account, reflected on GET /node-operators/me', async () => {
+    it('verifies and stores the payout account, reflected on GET /me/nodes', async () => {
       const response = await request(app.getHttpServer())
-        .patch('/api/v1/node-operators/me/payout-account')
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/payout-account`)
         .set('Cookie', [operatorCookie])
         .send({
           bankCode: '058',
@@ -491,18 +599,20 @@ describe('Node-operators (e2e)', () => {
       expect(data.payoutAccountName).toBe('Resolved 0123456789');
 
       const getResponse = await request(app.getHttpServer())
-        .get('/api/v1/node-operators/me')
+        .get('/api/v1/node-operators/me/nodes')
         .set('Cookie', [operatorCookie])
         .expect(200);
-      const getData = (getResponse.body as SuccessBody).data as {
+      const items = (getResponse.body as SuccessListBody).data as {
+        node: { id: string };
         payoutAccountConfigured: boolean;
-      };
-      expect(getData.payoutAccountConfigured).toBe(true);
+      }[];
+      const mine = items.find((i) => i.node.id === nodeId);
+      expect(mine?.payoutAccountConfigured).toBe(true);
     });
 
     it('rejects an account Paystack cannot resolve, leaving the prior verified account untouched', async () => {
       const response = await request(app.getHttpServer())
-        .patch('/api/v1/node-operators/me/payout-account')
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/payout-account`)
         .set('Cookie', [operatorCookie])
         .send({
           bankCode: '058',
@@ -515,13 +625,15 @@ describe('Node-operators (e2e)', () => {
       );
 
       const getResponse = await request(app.getHttpServer())
-        .get('/api/v1/node-operators/me')
+        .get('/api/v1/node-operators/me/nodes')
         .set('Cookie', [operatorCookie])
         .expect(200);
-      const getData = (getResponse.body as SuccessBody).data as {
+      const items = (getResponse.body as SuccessListBody).data as {
+        node: { id: string };
         payoutAccountNumber: string;
-      };
-      expect(getData.payoutAccountNumber).toBe('0123456789');
+      }[];
+      const mine = items.find((i) => i.node.id === nodeId);
+      expect(mine?.payoutAccountNumber).toBe('0123456789');
     });
   });
 });

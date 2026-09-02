@@ -4,30 +4,36 @@ import { Repository } from 'typeorm';
 import { SetPayoutAccountDto } from '../../../common/dto/set-payout-account.dto';
 import { EntityNotFoundException } from '../../../common/exceptions';
 import { PaystackBankService } from '../../payments/application/paystack-bank.service';
-import { NodeOperatorProfileEntity } from '../infrastructure/entities/node-operator-profile.entity';
+import { NodeMembershipRole } from '../domain/node-membership-role.enum';
+import { NodeMembershipEntity } from '../infrastructure/entities/node-membership.entity';
 import { NodeOperatorResponseDto } from '../interface/dto/node-operator-response.dto';
 import { NodeOperatorQueryService } from './node-operator-query.service';
 
 // Same verify-first shape as riders' SetRiderPayoutAccountService — see that
-// file's comment. Writes onto NodeOperatorProfileEntity, not NodeEntity:
-// the Node itself has no login/session, so its payout account is owned by
-// whichever operator profile manages it (MVP one-operator-per-node).
+// file's comment. Scoped by (userId, nodeId), not userId alone — an
+// operator can now have several memberships, so nodeId disambiguates which
+// one's payout account is being set. Only an OWNER membership may do this;
+// a staff (Phase 2) membership on the same Node is rejected the same way a
+// non-member is — hidden as not-found, not a 403, matching the pattern
+// already used elsewhere for resources a caller shouldn't be able to probe
+// the existence of.
 @Injectable()
 export class SetNodePayoutAccountService {
   constructor(
-    @InjectRepository(NodeOperatorProfileEntity)
-    private readonly profiles: Repository<NodeOperatorProfileEntity>,
+    @InjectRepository(NodeMembershipEntity)
+    private readonly memberships: Repository<NodeMembershipEntity>,
     private readonly paystackBankService: PaystackBankService,
     private readonly nodeOperatorQueryService: NodeOperatorQueryService,
   ) {}
 
   async set(
     userId: string,
+    nodeId: string,
     dto: SetPayoutAccountDto,
   ): Promise<NodeOperatorResponseDto> {
-    const profile = await this.profiles.findOneBy({ userId });
-    if (!profile) {
-      throw new EntityNotFoundException('NodeOperatorProfile', userId);
+    const membership = await this.memberships.findOneBy({ userId, nodeId });
+    if (!membership || membership.roleAtNode !== NodeMembershipRole.OWNER) {
+      throw new EntityNotFoundException('NodeMembership', nodeId);
     }
 
     const { accountName } = await this.paystackBankService.resolveAccountNumber(
@@ -35,13 +41,13 @@ export class SetNodePayoutAccountService {
       dto.accountNumber,
     );
 
-    profile.payoutBankCode = dto.bankCode;
-    profile.payoutBankName = dto.bankName;
-    profile.payoutAccountNumber = dto.accountNumber;
-    profile.payoutAccountName = accountName;
-    profile.payoutAccountVerifiedAt = new Date();
-    await this.profiles.save(profile);
+    membership.payoutBankCode = dto.bankCode;
+    membership.payoutBankName = dto.bankName;
+    membership.payoutAccountNumber = dto.accountNumber;
+    membership.payoutAccountName = accountName;
+    membership.payoutAccountVerifiedAt = new Date();
+    await this.memberships.save(membership);
 
-    return this.nodeOperatorQueryService.getMine(userId);
+    return this.nodeOperatorQueryService.getForNode(userId, nodeId);
   }
 }

@@ -74,7 +74,15 @@ import { UsersController } from './interface/users.controller';
   // Node.status=ACTIVE — never by reaching into identity's
   // domain/infrastructure directly. UserLookupService: exported so
   // `payments` can resolve a consumer's email for Paystack's initialize
-  // call without importing UserEntity.
-  exports: [RegisterUserService, ActivateUserService, UserLookupService],
+  // call without importing UserEntity. InviteUserService: exported so
+  // `node-operators` can provision a NODE_STAFF account for its own
+  // owner-invite flow — only `.inviteNodeStaff()` is meant for cross-module
+  // use, same convention as the exports above.
+  exports: [
+    RegisterUserService,
+    ActivateUserService,
+    UserLookupService,
+    InviteUserService,
+  ],
 })
 export class IdentityModule {}

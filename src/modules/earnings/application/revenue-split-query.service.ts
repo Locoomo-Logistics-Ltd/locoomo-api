@@ -23,28 +23,29 @@ export class RevenueSplitQueryService {
     riderId: string,
     query: PaginationQueryDto,
   ): Promise<PaginatedResultDto<RevenueSplitEntryRow>> {
-    return this.listForParty([RevenueSplitPartyType.RIDER], riderId, query);
+    return this.listForParty([RevenueSplitPartyType.RIDER], [riderId], query);
   }
 
   // A Node earns two distinct entry types depending on its role per order —
   // NODE (origin's 20% cut) and DESTINATION_NODE (destination's flat fee,
   // see RecordRevenueSplitService) — both keyed by the same Node id, so a
   // Node operator's "my own earnings" view shows both without needing two
-  // separate calls.
+  // separate calls. `nodeIds` (plural) since an operator can now run more
+  // than one Node — this aggregates across all of them.
   async listForNode(
-    nodeId: string,
+    nodeIds: string[],
     query: PaginationQueryDto,
   ): Promise<PaginatedResultDto<RevenueSplitEntryRow>> {
     return this.listForParty(
       [RevenueSplitPartyType.NODE, RevenueSplitPartyType.DESTINATION_NODE],
-      nodeId,
+      nodeIds,
       query,
     );
   }
 
   private async listForParty(
     partyTypes: RevenueSplitPartyType[],
-    partyId: string,
+    partyIds: string[],
     query: PaginationQueryDto,
   ): Promise<PaginatedResultDto<RevenueSplitEntryRow>> {
     const offset = (query.page - 1) * query.limit;
@@ -53,16 +54,16 @@ export class RevenueSplitQueryService {
       `SELECT${OWN_VIEW_COLUMNS}
          FROM revenue_split_entries e
          JOIN orders o ON o.id = e."orderId"
-        WHERE e."partyType" = ANY($1) AND e."partyId" = $2
+        WHERE e."partyType" = ANY($1) AND e."partyId" = ANY($2)
         ORDER BY e."createdAt" DESC
         LIMIT $3 OFFSET $4`,
-      [partyTypes, partyId, query.limit, offset],
+      [partyTypes, partyIds, query.limit, offset],
     );
 
     const [{ total }] = await this.dataSource.query<{ total: number }[]>(
       `SELECT COUNT(*)::int AS total FROM revenue_split_entries
-        WHERE "partyType" = ANY($1) AND "partyId" = $2`,
-      [partyTypes, partyId],
+        WHERE "partyType" = ANY($1) AND "partyId" = ANY($2)`,
+      [partyTypes, partyIds],
     );
 
     return new PaginatedResultDto(items, query.page, query.limit, total);
@@ -90,12 +91,16 @@ export class RevenueSplitQueryService {
       conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     // Payout account: rider rows join rider_profiles by userId, node/
-    // destination_node rows join node_operator_profiles by nodeId (a Node's
-    // payout account is owned by its operator profile — see
+    // destination_node rows join node_memberships by nodeId (a Node's
+    // payout account is owned by whichever membership row manages it — see
     // SetNodePayoutAccountService). Only one of rp/nop ever matches a given
-    // row, so COALESCE picks whichever one did. nodeId isn't unique on
-    // node_operator_profiles (E14, unresolved) — MVP one-operator-per-node
-    // in practice, so this returns at most one match today.
+    // row, so COALESCE picks whichever one did. A Node can now have several
+    // membership rows (one owner plus, from Phase 2, any number of staff),
+    // so the join is restricted to roleAtNode = 'owner' — without that it
+    // would fan out (one entry becoming N result rows) once a Node has
+    // staff. nodeId still isn't unique among owner rows alone (E14,
+    // unresolved multi-owner-per-node) — MVP one-owner-per-node in
+    // practice, so this returns at most one match today.
     const items = await this.dataSource.query<AdminRevenueSplitEntryRow[]>(
       `SELECT e.id, e."orderId", o."trackingCode" AS "orderTrackingCode",
               e."partyType", e."partyId",
@@ -119,7 +124,7 @@ export class RevenueSplitQueryService {
          LEFT JOIN nodes n ON e."partyType" IN ('node', 'destination_node') AND n.id = e."partyId"
          LEFT JOIN users paidByAdmin ON paidByAdmin.id = e."paidByAdminId"
          LEFT JOIN rider_profiles rp ON e."partyType" = 'rider' AND rp."userId" = e."partyId"
-         LEFT JOIN node_operator_profiles nop ON e."partyType" IN ('node', 'destination_node') AND nop."nodeId" = e."partyId"
+         LEFT JOIN node_memberships nop ON e."partyType" IN ('node', 'destination_node') AND nop."nodeId" = e."partyId" AND nop."roleAtNode" = 'owner'
          ${where}
         ORDER BY e."createdAt" DESC
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,

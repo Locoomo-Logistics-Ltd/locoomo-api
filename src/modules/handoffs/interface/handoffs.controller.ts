@@ -90,7 +90,11 @@ export class HandoffsController {
   // touched this operator's Node, either as origin or destination, current
   // and past. myRole on each item disambiguates which side of that order
   // their Node played.
-  @Roles(UserRole.NODE_OPERATOR)
+  // NODE_STAFF alongside NODE_OPERATOR — operating a Node's handoffs isn't
+  // owner-only. OrderLookupService/ListMyNodeOrdersService already scope by
+  // every Node the caller has *any* membership at (getNodeIdsForUser), so
+  // this is the only change needed to actually grant staff that access.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
   @Get('my-node/orders')
   myNodeOrders(
     @Query() query: PaginationQueryDto,
@@ -99,7 +103,11 @@ export class HandoffsController {
     return this.listMyNodeOrdersService.list(user.id, query);
   }
 
-  @Roles(UserRole.NODE_OPERATOR)
+  // NODE_STAFF alongside NODE_OPERATOR — operating a Node's handoffs isn't
+  // owner-only. OrderLookupService/ListMyNodeOrdersService already scope by
+  // every Node the caller has *any* membership at (getNodeIdsForUser), so
+  // this is the only change needed to actually grant staff that access.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
   @Get('orders/by-tracking-code/:code')
   async findByTrackingCode(
     @Param('code') code: string,
@@ -112,7 +120,11 @@ export class HandoffsController {
     return OrderPreviewResponseDto.fromRow(row);
   }
 
-  @Roles(UserRole.NODE_OPERATOR)
+  // NODE_STAFF alongside NODE_OPERATOR — operating a Node's handoffs isn't
+  // owner-only. OrderLookupService/ListMyNodeOrdersService already scope by
+  // every Node the caller has *any* membership at (getNodeIdsForUser), so
+  // this is the only change needed to actually grant staff that access.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
   @Post('orders/:id/drop-off')
   @HttpCode(HttpStatus.OK)
   async dropOff(
@@ -141,7 +153,11 @@ export class HandoffsController {
 
   // Rate-limited on top of the per-code failedAttempts lockout — defense in
   // depth against a wrong-code guessing spree from one IP.
-  @Roles(UserRole.NODE_OPERATOR)
+  // NODE_STAFF alongside NODE_OPERATOR — operating a Node's handoffs isn't
+  // owner-only. OrderLookupService/ListMyNodeOrdersService already scope by
+  // every Node the caller has *any* membership at (getNodeIdsForUser), so
+  // this is the only change needed to actually grant staff that access.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
   @Throttle({ default: { limit: 10, ttl: seconds(60) } })
   @Post('orders/:id/confirm-handoff')
   @HttpCode(HttpStatus.OK)
@@ -161,7 +177,11 @@ export class HandoffsController {
 
   // Destination-side equivalent of drop-off — mints and emails the
   // receiver's collection code as part of the same transition.
-  @Roles(UserRole.NODE_OPERATOR)
+  // NODE_STAFF alongside NODE_OPERATOR — operating a Node's handoffs isn't
+  // owner-only. OrderLookupService/ListMyNodeOrdersService already scope by
+  // every Node the caller has *any* membership at (getNodeIdsForUser), so
+  // this is the only change needed to actually grant staff that access.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
   @Post('orders/:id/intake')
   @HttpCode(HttpStatus.OK)
   async intake(
@@ -174,7 +194,11 @@ export class HandoffsController {
 
   // Rate-limited — this triggers a real email send, not just a lockout
   // counter concern.
-  @Roles(UserRole.NODE_OPERATOR)
+  // NODE_STAFF alongside NODE_OPERATOR — operating a Node's handoffs isn't
+  // owner-only. OrderLookupService/ListMyNodeOrdersService already scope by
+  // every Node the caller has *any* membership at (getNodeIdsForUser), so
+  // this is the only change needed to actually grant staff that access.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
   @Throttle({ default: { limit: 5, ttl: seconds(60) } })
   @Post('orders/:id/collection-code/resend')
   @HttpCode(HttpStatus.OK)
@@ -186,7 +210,11 @@ export class HandoffsController {
     return CollectionCodeResendResponseDto.fromResult(issued);
   }
 
-  @Roles(UserRole.NODE_OPERATOR)
+  // NODE_STAFF alongside NODE_OPERATOR — operating a Node's handoffs isn't
+  // owner-only. OrderLookupService/ListMyNodeOrdersService already scope by
+  // every Node the caller has *any* membership at (getNodeIdsForUser), so
+  // this is the only change needed to actually grant staff that access.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
   @Throttle({ default: { limit: 10, ttl: seconds(60) } })
   @Post('orders/:id/collect')
   @HttpCode(HttpStatus.OK)

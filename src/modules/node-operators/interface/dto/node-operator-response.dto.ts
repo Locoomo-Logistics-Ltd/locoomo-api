@@ -25,6 +25,10 @@ const NO_PAYOUT_ACCOUNT: PayoutAccountFields = {
 
 export class NodeOperatorResponseDto {
   profileId!: string;
+  // 'owner' or 'staff' (Phase 2) — which relationship the caller has to
+  // this specific Node, so the frontend can show "you own this" vs.
+  // "you're staff here" and hide owner-only actions accordingly.
+  roleAtNode!: string;
   node!: NodeResponseDto;
   // Own-view payout account fields — shown in full, same reasoning as
   // RiderResponseDto's. payoutAccountConfigured is the dashboard-prompt
@@ -39,11 +43,13 @@ export class NodeOperatorResponseDto {
   // that also call this never have payout details yet at that point.
   static fromEntity(
     profileId: string,
+    roleAtNode: string,
     node: NodeEntityLike,
     payout: PayoutAccountFields = NO_PAYOUT_ACCOUNT,
   ): NodeOperatorResponseDto {
     const dto = new NodeOperatorResponseDto();
     dto.profileId = profileId;
+    dto.roleAtNode = roleAtNode;
     dto.node = NodeResponseDto.fromEntity(node);
     dto.payoutAccountConfigured = payout.payoutAccountVerifiedAt !== null;
     dto.payoutBankCode = payout.payoutBankCode;
@@ -56,6 +62,7 @@ export class NodeOperatorResponseDto {
   static fromRow(row: NodeOperatorProfileRow): NodeOperatorResponseDto {
     return NodeOperatorResponseDto.fromEntity(
       row.profileId,
+      row.roleAtNode,
       row as unknown as NodeEntityLike,
       row,
     );

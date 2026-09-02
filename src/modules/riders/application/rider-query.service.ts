@@ -24,9 +24,9 @@ interface PendingRiderRow {
   userLastName: string;
 }
 
-// rider_profiles carries its own status (unlike node_operator_profiles,
-// which relies on Node.status) — no cross-module status join needed here,
-// only the users join for display fields (email/name).
+// rider_profiles carries its own status (unlike node_memberships, which
+// relies on Node.status) — no cross-module status join needed here, only
+// the users join for display fields (email/name).
 @Injectable()
 export class RiderQueryService {
   constructor(
