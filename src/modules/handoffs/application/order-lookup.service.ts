@@ -7,8 +7,9 @@ import { OrderPreviewRow } from '../interface/dto/order-preview-response.dto';
 
 // Every Node-operator-facing handoff step (drop-off, rider pickup/arrival,
 // intake/collection) needs to answer "does this order actually belong to
-// my Node" before touching it — not-found-not-forbidden on a mismatch,
-// same pattern used everywhere else in this codebase for ownership checks.
+// one of my Nodes" before touching it — not-found-not-forbidden on a
+// mismatch, same pattern used everywhere else in this codebase for
+// ownership checks.
 @Injectable()
 export class OrderLookupService {
   constructor(
@@ -20,8 +21,8 @@ export class OrderLookupService {
     trackingCode: string,
     operatorUserId: string,
   ): Promise<OrderPreviewRow> {
-    const operatorNodeId =
-      await this.nodeOperatorQueryService.getNodeIdForUser(operatorUserId);
+    const operatorNodeIds =
+      await this.nodeOperatorQueryService.getNodeIdsForUser(operatorUserId);
 
     const rows = await this.dataSource.query<OrderPreviewRow[]>(
       `SELECT o.id, o."trackingCode", o.status, o."originNodeId",
@@ -29,8 +30,8 @@ export class OrderLookupService {
               o."createdAt", dest.name AS "destinationNodeName"
          FROM orders o
          JOIN nodes dest ON dest.id = o."destinationNodeId"
-        WHERE o."trackingCode" = $1 AND o."originNodeId" = $2`,
-      [trackingCode, operatorNodeId],
+        WHERE o."trackingCode" = $1 AND o."originNodeId" = ANY($2)`,
+      [trackingCode, operatorNodeIds],
     );
     const order = rows[0];
     if (!order) {
@@ -47,12 +48,12 @@ export class OrderLookupService {
     orderId: string,
     operatorUserId: string,
   ): Promise<void> {
-    const operatorNodeId =
-      await this.nodeOperatorQueryService.getNodeIdForUser(operatorUserId);
+    const operatorNodeIds =
+      await this.nodeOperatorQueryService.getNodeIdsForUser(operatorUserId);
 
     const rows = await this.dataSource.query<{ id: string }[]>(
-      `SELECT id FROM orders WHERE id = $1 AND "originNodeId" = $2`,
-      [orderId, operatorNodeId],
+      `SELECT id FROM orders WHERE id = $1 AND "originNodeId" = ANY($2)`,
+      [orderId, operatorNodeIds],
     );
     if (rows.length === 0) {
       throw new EntityNotFoundException('Order', orderId);
@@ -67,12 +68,12 @@ export class OrderLookupService {
     orderId: string,
     operatorUserId: string,
   ): Promise<void> {
-    const operatorNodeId =
-      await this.nodeOperatorQueryService.getNodeIdForUser(operatorUserId);
+    const operatorNodeIds =
+      await this.nodeOperatorQueryService.getNodeIdsForUser(operatorUserId);
 
     const rows = await this.dataSource.query<{ id: string }[]>(
-      `SELECT id FROM orders WHERE id = $1 AND "destinationNodeId" = $2`,
-      [orderId, operatorNodeId],
+      `SELECT id FROM orders WHERE id = $1 AND "destinationNodeId" = ANY($2)`,
+      [orderId, operatorNodeIds],
     );
     if (rows.length === 0) {
       throw new EntityNotFoundException('Order', orderId);

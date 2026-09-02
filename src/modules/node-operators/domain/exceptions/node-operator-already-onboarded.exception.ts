@@ -5,6 +5,8 @@ export class NodeOperatorAlreadyOnboardedException extends BusinessException {
   readonly httpStatus = 409;
 
   constructor() {
-    super('This account has already set up a Node');
+    super(
+      'This account has already completed onboarding — use POST /node-operators/nodes to add another Node',
+    );
   }
 }

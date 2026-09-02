@@ -6,6 +6,7 @@ import {
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { NodeMembershipRole } from '../../domain/node-membership-role.enum';
 
 // userId/nodeId are plain columns, not TypeORM relations — NodeEntity and
 // UserEntity belong to other modules, and a `@ManyToOne` relation would
@@ -15,29 +16,37 @@ import {
 // (e.g. the Admin pending-review queue) go through a raw SQL join instead of
 // a TypeORM relation, the same reasoning nodes.service.ts already applies to
 // its own proximity query.
-@Entity('node_operator_profiles')
-export class NodeOperatorProfileEntity {
+//
+// One row per (userId, nodeId) pair — a user can have a membership at
+// several Nodes (one operator running multiple locations), and a Node can
+// have several members (one owner plus any number of staff, Phase 2).
+// roleAtNode is what actually gates capability, not which endpoint created
+// the row.
+@Entity('node_memberships')
+@Index(['userId', 'nodeId'], { unique: true })
+export class NodeMembershipEntity {
   @PrimaryColumn('uuid', { default: () => 'gen_random_uuid()' })
   id!: string;
 
-  // One Node per operator, MVP (PRD: "NodeOperator tied to exactly one
-  // Node") — enforced here via a unique index, not just an application
-  // check.
-  @Index({ unique: true })
   @Column({ type: 'uuid' })
   userId!: string;
 
-  // Deliberately not unique — Node stays naturally one-to-many with
-  // operators at the DB level so relaxing "one active operator per Node"
-  // for E14 later is an application-rule change, not a migration.
   @Column({ type: 'uuid' })
   nodeId!: string;
 
-  // Payout bank account for this Node — same all-or-nothing shape as
-  // RiderProfileEntity's payout fields (see that entity's comment).
-  // Node itself has no login/session, so its payout account is owned by
-  // whichever operator profile manages it (MVP one-operator-per-node, same
-  // assumption everything else here already makes).
+  @Column({
+    type: 'enum',
+    enum: NodeMembershipRole,
+    default: NodeMembershipRole.OWNER,
+  })
+  roleAtNode!: NodeMembershipRole;
+
+  // Payout bank account — deliberately kept per-membership-row rather than
+  // extracted to an owner-level entity: a franchise-style owner may
+  // genuinely want a different payout account per location, and this is
+  // already the right granularity for that. Only ever set on an OWNER row
+  // in practice (SetNodePayoutAccountService requires it) — staff rows just
+  // carry nulls here, same all-or-nothing shape as RiderProfileEntity's.
   @Column({ type: 'varchar', nullable: true })
   payoutBankCode!: string | null;
 

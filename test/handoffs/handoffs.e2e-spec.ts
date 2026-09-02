@@ -15,7 +15,7 @@ import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
 import { HandoffCodeType } from '../../src/modules/handoffs/domain/handoff-code-type.enum';
 import { HandoffCodeEntity } from '../../src/modules/handoffs/infrastructure/entities/handoff-code.entity';
-import { NodeOperatorProfileEntity } from '../../src/modules/node-operators/infrastructure/entities/node-operator-profile.entity';
+import { NodeMembershipEntity } from '../../src/modules/node-operators/infrastructure/entities/node-membership.entity';
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
 import { OutboxEventEntity } from '../../src/modules/notifications/infrastructure/entities/outbox-event.entity';
 import { OrderStatus } from '../../src/modules/orders/domain/order-status.enum';
@@ -126,7 +126,7 @@ describe('Handoffs (e2e)', () => {
   let orders: Repository<OrderEntity>;
   let orderEvents: Repository<OrderEventEntity>;
   let riderProfiles: Repository<RiderProfileEntity>;
-  let nodeOperatorProfiles: Repository<NodeOperatorProfileEntity>;
+  let nodeMemberships: Repository<NodeMembershipEntity>;
   let handoffCodes: Repository<HandoffCodeEntity>;
   let outboxEvents: Repository<OutboxEventEntity>;
   let jwtService: JwtService;
@@ -209,8 +209,8 @@ describe('Handoffs (e2e)', () => {
   ): Promise<string> {
     const cookie = await registerAndLogin(email, UserRole.NODE_OPERATOR);
     const user = await users.findOneByOrFail({ email });
-    await nodeOperatorProfiles.save(
-      nodeOperatorProfiles.create({ userId: user.id, nodeId }),
+    await nodeMemberships.save(
+      nodeMemberships.create({ userId: user.id, nodeId }),
     );
     return cookie;
   }
@@ -414,8 +414,8 @@ describe('Handoffs (e2e)', () => {
     orders = moduleFixture.get(getRepositoryToken(OrderEntity));
     orderEvents = moduleFixture.get(getRepositoryToken(OrderEventEntity));
     riderProfiles = moduleFixture.get(getRepositoryToken(RiderProfileEntity));
-    nodeOperatorProfiles = moduleFixture.get(
-      getRepositoryToken(NodeOperatorProfileEntity),
+    nodeMemberships = moduleFixture.get(
+      getRepositoryToken(NodeMembershipEntity),
     );
     handoffCodes = moduleFixture.get(getRepositoryToken(HandoffCodeEntity));
     outboxEvents = moduleFixture.get(getRepositoryToken(OutboxEventEntity));

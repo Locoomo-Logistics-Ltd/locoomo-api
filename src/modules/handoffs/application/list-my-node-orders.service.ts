@@ -10,7 +10,7 @@ import {
 } from '../interface/dto/my-node-order-response.dto';
 
 // Rider's counterpart, for the other side of the counter — every order
-// that's ever touched this operator's Node, either as origin or
+// that's ever touched any of this operator's Nodes, either as origin or
 // destination, current and past, newest first. Same "show everything,
 // `status`/`myRole` tell the client what it's looking at" shape as
 // ListMyOrdersService, rather than a narrower active-only queue.
@@ -25,28 +25,28 @@ export class ListMyNodeOrdersService {
     operatorUserId: string,
     query: PaginationQueryDto,
   ): Promise<PaginatedResultDto<MyNodeOrderResponseDto>> {
-    const nodeId =
-      await this.nodeOperatorQueryService.getNodeIdForUser(operatorUserId);
+    const nodeIds =
+      await this.nodeOperatorQueryService.getNodeIdsForUser(operatorUserId);
     const offset = (query.page - 1) * query.limit;
 
     const rows = await this.dataSource.query<MyNodeOrderRow[]>(
       `SELECT o.id, o."trackingCode", o.status, o."originNodeId", o."destinationNodeId",
               o."parcelDescription", o."parcelSize", o."createdAt",
               origin.name AS "originNodeName", dest.name AS "destinationNodeName",
-              CASE WHEN o."originNodeId" = $1 THEN 'origin' ELSE 'destination' END AS "myRole"
+              CASE WHEN o."originNodeId" = ANY($1) THEN 'origin' ELSE 'destination' END AS "myRole"
          FROM orders o
          JOIN nodes origin ON origin.id = o."originNodeId"
          JOIN nodes dest ON dest.id = o."destinationNodeId"
-        WHERE o."originNodeId" = $1 OR o."destinationNodeId" = $1
+        WHERE o."originNodeId" = ANY($1) OR o."destinationNodeId" = ANY($1)
         ORDER BY o."createdAt" DESC
         LIMIT $2 OFFSET $3`,
-      [nodeId, query.limit, offset],
+      [nodeIds, query.limit, offset],
     );
 
     const [{ total }] = await this.dataSource.query<{ total: number }[]>(
       `SELECT COUNT(*)::int AS total FROM orders
-        WHERE "originNodeId" = $1 OR "destinationNodeId" = $1`,
-      [nodeId],
+        WHERE "originNodeId" = ANY($1) OR "destinationNodeId" = ANY($1)`,
+      [nodeIds],
     );
 
     const items = rows.map((row) => MyNodeOrderResponseDto.fromRow(row));
