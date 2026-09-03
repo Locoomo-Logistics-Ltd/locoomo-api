@@ -67,6 +67,14 @@ export class NodeEntity {
   @Column({ type: 'varchar', nullable: true })
   operatingHours!: string | null;
 
+  // Owner-toggled (NodeOperatorsModule's SetNodeVisibilityService) — false
+  // excludes the Node from GET /nodes and GET /nodes/nearby for non-Admin
+  // callers, and from being targeted by a Consumer-initiated PaymentIntent
+  // (CreatePaymentIntentService), for a Node that only wants to dispatch its
+  // own parcels through the network, not accept public drop-offs.
+  @Column({ type: 'boolean', default: true })
+  isPubliclyVisible!: boolean;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

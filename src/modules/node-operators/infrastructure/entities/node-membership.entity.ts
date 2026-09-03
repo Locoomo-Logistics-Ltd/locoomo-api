@@ -7,6 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { NodeMembershipRole } from '../../domain/node-membership-role.enum';
+import { NodeMembershipStatus } from '../../domain/node-membership-status.enum';
 
 // userId/nodeId are plain columns, not TypeORM relations — NodeEntity and
 // UserEntity belong to other modules, and a `@ManyToOne` relation would
@@ -40,6 +41,17 @@ export class NodeMembershipEntity {
     default: NodeMembershipRole.OWNER,
   })
   roleAtNode!: NodeMembershipRole;
+
+  // Soft-status, never a hard delete — RemoveNodeStaffService flips this to
+  // REMOVED rather than deleting the row. Every existing read of this table
+  // filters on ACTIVE; a removed row must stay inert everywhere, not just at
+  // the one new removal endpoint.
+  @Column({
+    type: 'enum',
+    enum: NodeMembershipStatus,
+    default: NodeMembershipStatus.ACTIVE,
+  })
+  status!: NodeMembershipStatus;
 
   // Payout bank account — deliberately kept per-membership-row rather than
   // extracted to an owner-level entity: a franchise-style owner may

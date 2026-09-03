@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { EntityNotFoundException } from '../../../common/exceptions';
 import { InviteUserService } from '../../identity/application/invite-user.service';
 import { UserResponseDto } from '../../identity/interface/dto/user-response.dto';
 import { NodeMembershipRole } from '../domain/node-membership-role.enum';
@@ -29,19 +28,13 @@ export class InviteNodeStaffService {
     nodeId: string,
     dto: InviteNodeStaffDto,
   ): Promise<UserResponseDto> {
-    // getForNode 404s if the caller has no membership at all for this
+    // assertOwner 404s if the caller has no OWNER membership for this
     // nodeId — hides whether the Node even exists, same as
-    // SetNodePayoutAccountService. A membership that exists but isn't
-    // OWNER (can't happen yet in practice — this route is
-    // @Roles(NODE_OPERATOR)-only, and staff can't reach it — but checked
-    // explicitly rather than assumed) gets the same hidden treatment.
-    const membership = await this.nodeOperatorQueryService.getForNode(
+    // SetNodePayoutAccountService.
+    const membership = await this.nodeOperatorQueryService.assertOwner(
       ownerUserId,
       nodeId,
     );
-    if (membership.roleAtNode !== (NodeMembershipRole.OWNER as string)) {
-      throw new EntityNotFoundException('NodeMembership', nodeId);
-    }
 
     // Unlike the ownership check above, the caller already knows this Node
     // exists and can see its status via GET /me/nodes — a clear error

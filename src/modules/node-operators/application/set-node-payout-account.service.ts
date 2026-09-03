@@ -5,6 +5,7 @@ import { SetPayoutAccountDto } from '../../../common/dto/set-payout-account.dto'
 import { EntityNotFoundException } from '../../../common/exceptions';
 import { PaystackBankService } from '../../payments/application/paystack-bank.service';
 import { NodeMembershipRole } from '../domain/node-membership-role.enum';
+import { NodeMembershipStatus } from '../domain/node-membership-status.enum';
 import { NodeMembershipEntity } from '../infrastructure/entities/node-membership.entity';
 import { NodeOperatorResponseDto } from '../interface/dto/node-operator-response.dto';
 import { NodeOperatorQueryService } from './node-operator-query.service';
@@ -31,7 +32,11 @@ export class SetNodePayoutAccountService {
     nodeId: string,
     dto: SetPayoutAccountDto,
   ): Promise<NodeOperatorResponseDto> {
-    const membership = await this.memberships.findOneBy({ userId, nodeId });
+    const membership = await this.memberships.findOneBy({
+      userId,
+      nodeId,
+      status: NodeMembershipStatus.ACTIVE,
+    });
     if (!membership || membership.roleAtNode !== NodeMembershipRole.OWNER) {
       throw new EntityNotFoundException('NodeMembership', nodeId);
     }

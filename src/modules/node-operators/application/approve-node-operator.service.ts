@@ -4,6 +4,7 @@ import { DataSource, Repository } from 'typeorm';
 import { EntityNotFoundException } from '../../../common/exceptions';
 import { ActivateUserService } from '../../identity/application/activate-user.service';
 import { NodesService } from '../../nodes/application/nodes.service';
+import { NodeMembershipStatus } from '../domain/node-membership-status.enum';
 import { NodeMembershipEntity } from '../infrastructure/entities/node-membership.entity';
 import { NodeOperatorResponseDto } from '../interface/dto/node-operator-response.dto';
 
@@ -19,7 +20,10 @@ export class ApproveNodeOperatorService {
   ) {}
 
   async approve(membershipId: string): Promise<NodeOperatorResponseDto> {
-    const membership = await this.memberships.findOneBy({ id: membershipId });
+    const membership = await this.memberships.findOneBy({
+      id: membershipId,
+      status: NodeMembershipStatus.ACTIVE,
+    });
     if (!membership) {
       throw new EntityNotFoundException('NodeMembership', membershipId);
     }

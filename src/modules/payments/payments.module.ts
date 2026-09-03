@@ -51,7 +51,11 @@ import { PricingController } from './interface/pricing.controller';
   ],
   // PaystackBankService: riders/node-operators inject this for their own
   // PATCH me/payout-account verification — narrow cross-module export, same
-  // template as NodesService.reserveCapacitySlot.
-  exports: [PaystackBankService],
+  // template as NodesService.reserveCapacitySlot. CreatePaymentIntentService:
+  // node-operators' DispatchParcelService calls .create() directly (with
+  // restrictToPublicNodes: false) so an operator dispatching their own
+  // parcels reuses the exact same checkout/capacity-reservation logic a
+  // Consumer booking uses — never duplicated.
+  exports: [PaystackBankService, CreatePaymentIntentService],
 })
 export class PaymentsModule {}

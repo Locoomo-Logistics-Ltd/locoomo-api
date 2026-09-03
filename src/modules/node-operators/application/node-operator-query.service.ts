@@ -4,7 +4,12 @@ import { DataSource } from 'typeorm';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { EntityNotFoundException } from '../../../common/exceptions';
+import { NodeMembershipRole } from '../domain/node-membership-role.enum';
 import { NodeOperatorResponseDto } from '../interface/dto/node-operator-response.dto';
+import {
+  NodeStaffResponseDto,
+  NodeStaffRow,
+} from '../interface/dto/node-staff-response.dto';
 import { PendingNodeOperatorResponseDto } from '../interface/dto/pending-node-operator-response.dto';
 
 // The node.* columns are selected unaliased so a row's shape matches
@@ -31,6 +36,7 @@ export interface NodeOperatorProfileRow {
   status: string;
   onboardingType: string;
   operatingHours: string | null;
+  isPubliclyVisible: boolean;
   createdAt: Date;
 }
 
@@ -47,7 +53,8 @@ const NODE_MEMBERSHIP_COLUMNS = `
   m."payoutBankCode", m."payoutBankName", m."payoutAccountNumber",
   m."payoutAccountName", m."payoutAccountVerifiedAt",
   n.id, n.name, n.address, n.city, n.state, n.country, n.latitude, n.longitude,
-  n.capacity, n.status, n."onboardingType", n."operatingHours", n."createdAt"`;
+  n.capacity, n.status, n."onboardingType", n."operatingHours",
+  n."isPubliclyVisible", n."createdAt"`;
 
 // `node-operators` has no TypeORM relation to UserEntity/NodeEntity (see the
 // entity comment — a cross-module `@ManyToOne` would need to import their
@@ -69,7 +76,7 @@ export class NodeOperatorQueryService {
       `SELECT${NODE_MEMBERSHIP_COLUMNS}
          FROM node_memberships m
          JOIN nodes n ON n.id = m."nodeId"
-        WHERE m."userId" = $1
+        WHERE m."userId" = $1 AND m.status = 'active'
         ORDER BY m."createdAt" ASC`,
       [userId],
     );
@@ -88,7 +95,7 @@ export class NodeOperatorQueryService {
       `SELECT${NODE_MEMBERSHIP_COLUMNS}
          FROM node_memberships m
          JOIN nodes n ON n.id = m."nodeId"
-        WHERE m."userId" = $1 AND m."nodeId" = $2`,
+        WHERE m."userId" = $1 AND m."nodeId" = $2 AND m.status = 'active'`,
       [userId, nodeId],
     );
 
@@ -99,13 +106,50 @@ export class NodeOperatorQueryService {
     return NodeOperatorResponseDto.fromRow(row);
   }
 
+  // Shared "does this caller own this Node" check — was copy-pasted across
+  // InviteNodeStaffService and SetNodeVisibilityService (getForNode + role
+  // check + hide-as-not-found throw); extracted once a 3rd/4th call site
+  // needed the exact same thing (ListStaffForNode below, RemoveNodeStaffService).
+  async assertOwner(
+    userId: string,
+    nodeId: string,
+  ): Promise<NodeOperatorResponseDto> {
+    const membership = await this.getForNode(userId, nodeId);
+    if (membership.roleAtNode !== (NodeMembershipRole.OWNER as string)) {
+      throw new EntityNotFoundException('NodeMembership', nodeId);
+    }
+    return membership;
+  }
+
+  // Every active staff member at a Node the caller owns — the read side of
+  // staff removal, since an owner has no other way to see a staff member's
+  // userId again after the initial invite response.
+  async listStaffForNode(
+    ownerUserId: string,
+    nodeId: string,
+  ): Promise<NodeStaffResponseDto[]> {
+    await this.assertOwner(ownerUserId, nodeId);
+
+    const rows = await this.dataSource.query<NodeStaffRow[]>(
+      `SELECT u.id AS "userId", u."firstName", u."lastName", u.email,
+              m."createdAt" AS "joinedAt"
+         FROM node_memberships m
+         JOIN users u ON u.id = m."userId"
+        WHERE m."nodeId" = $1 AND m."roleAtNode" = 'staff' AND m.status = 'active'
+        ORDER BY m."createdAt" ASC`,
+      [nodeId],
+    );
+
+    return rows.map((row) => NodeStaffResponseDto.fromRow(row));
+  }
+
   // Narrow export for handoffs/earnings — every Node-operator-facing
   // scan/confirm/earnings step needs "which Nodes can this authenticated
   // caller act on" to scope its own reads/writes. Owner and staff (Phase 2)
   // are both included — operating a Node's handoffs isn't owner-only.
   async getNodeIdsForUser(userId: string): Promise<string[]> {
     const rows = await this.dataSource.query<{ nodeId: string }[]>(
-      `SELECT "nodeId" FROM node_memberships WHERE "userId" = $1`,
+      `SELECT "nodeId" FROM node_memberships WHERE "userId" = $1 AND status = 'active'`,
       [userId],
     );
     return rows.map((row) => row.nodeId);
@@ -130,6 +174,7 @@ export class NodeOperatorQueryService {
          JOIN nodes n ON n.id = m."nodeId"
          JOIN users u ON u.id = m."userId"
         WHERE n.status = 'pending' AND m."roleAtNode" = 'owner'
+          AND m.status = 'active'
         ORDER BY m."createdAt" ASC
         LIMIT $1 OFFSET $2`,
       [query.limit, offset],
@@ -139,7 +184,8 @@ export class NodeOperatorQueryService {
       `SELECT COUNT(*)::int AS total
          FROM node_memberships m
          JOIN nodes n ON n.id = m."nodeId"
-        WHERE n.status = 'pending' AND m."roleAtNode" = 'owner'`,
+        WHERE n.status = 'pending' AND m."roleAtNode" = 'owner'
+          AND m.status = 'active'`,
     );
 
     const items = rows.map((row) =>

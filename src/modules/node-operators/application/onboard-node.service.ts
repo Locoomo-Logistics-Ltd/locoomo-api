@@ -5,6 +5,7 @@ import { isUniqueViolation } from '../../../common/database/is-unique-violation.
 import { UserLookupService } from '../../identity/application/user-lookup.service';
 import { NodesService } from '../../nodes/application/nodes.service';
 import { NodeMembershipRole } from '../domain/node-membership-role.enum';
+import { NodeMembershipStatus } from '../domain/node-membership-status.enum';
 import { NodeOperatorAlreadyOnboardedException } from '../domain/exceptions/node-operator-already-onboarded.exception';
 import { NodeOperatorNotOnboardedException } from '../domain/exceptions/node-operator-not-onboarded.exception';
 import { ProfileIncompleteException } from '../domain/exceptions/profile-incomplete.exception';
@@ -53,7 +54,11 @@ export class OnboardNodeService {
 
   private async hasOwnerMembership(userId: string): Promise<boolean> {
     return this.memberships.exists({
-      where: { userId, roleAtNode: NodeMembershipRole.OWNER },
+      where: {
+        userId,
+        roleAtNode: NodeMembershipRole.OWNER,
+        status: NodeMembershipStatus.ACTIVE,
+      },
     });
   }
 

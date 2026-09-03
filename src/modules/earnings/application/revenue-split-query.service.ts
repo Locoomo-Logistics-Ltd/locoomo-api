@@ -124,7 +124,7 @@ export class RevenueSplitQueryService {
          LEFT JOIN nodes n ON e."partyType" IN ('node', 'destination_node') AND n.id = e."partyId"
          LEFT JOIN users paidByAdmin ON paidByAdmin.id = e."paidByAdminId"
          LEFT JOIN rider_profiles rp ON e."partyType" = 'rider' AND rp."userId" = e."partyId"
-         LEFT JOIN node_memberships nop ON e."partyType" IN ('node', 'destination_node') AND nop."nodeId" = e."partyId" AND nop."roleAtNode" = 'owner'
+         LEFT JOIN node_memberships nop ON e."partyType" IN ('node', 'destination_node') AND nop."nodeId" = e."partyId" AND nop."roleAtNode" = 'owner' AND nop.status = 'active'
          ${where}
         ORDER BY e."createdAt" DESC
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,

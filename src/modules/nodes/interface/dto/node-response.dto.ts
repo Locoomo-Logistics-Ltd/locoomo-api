@@ -15,6 +15,7 @@ export class NodeResponseDto {
   status!: NodeStatus;
   onboardingType!: NodeOnboardingType;
   operatingHours!: string | null;
+  isPubliclyVisible!: boolean;
   createdAt!: Date;
 
   static fromEntity(node: NodeEntity): NodeResponseDto {
@@ -31,6 +32,7 @@ export class NodeResponseDto {
     dto.status = node.status;
     dto.onboardingType = node.onboardingType;
     dto.operatingHours = node.operatingHours;
+    dto.isPubliclyVisible = node.isPubliclyVisible;
     dto.createdAt = node.createdAt;
     return dto;
   }
