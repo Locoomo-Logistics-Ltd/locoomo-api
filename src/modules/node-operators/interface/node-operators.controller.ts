@@ -18,15 +18,20 @@ import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { SetPayoutAccountDto } from '../../../common/dto/set-payout-account.dto';
 import { ApproveNodeOperatorService } from '../application/approve-node-operator.service';
+import { DispatchParcelService } from '../application/dispatch-parcel.service';
 import { InviteNodeStaffService } from '../application/invite-node-staff.service';
 import { NodeOperatorQueryService } from '../application/node-operator-query.service';
 import { OnboardNodeService } from '../application/onboard-node.service';
 import { SetNodePayoutAccountService } from '../application/set-node-payout-account.service';
+import { SetNodeVisibilityService } from '../application/set-node-visibility.service';
 import { UserResponseDto } from '../../identity/interface/dto/user-response.dto';
+import { PaymentIntentResponseDto } from '../../payments/interface/dto/payment-intent-response.dto';
+import { DispatchParcelDto } from './dto/dispatch-parcel.dto';
 import { InviteNodeStaffDto } from './dto/invite-node-staff.dto';
 import { NodeOperatorResponseDto } from './dto/node-operator-response.dto';
 import { OnboardNodeDto } from './dto/onboard-node.dto';
 import { PendingNodeOperatorResponseDto } from './dto/pending-node-operator-response.dto';
+import { SetNodeVisibilityDto } from './dto/set-node-visibility.dto';
 
 @Controller('node-operators')
 export class NodeOperatorsController {
@@ -36,6 +41,8 @@ export class NodeOperatorsController {
     private readonly nodeOperatorQueryService: NodeOperatorQueryService,
     private readonly setNodePayoutAccountService: SetNodePayoutAccountService,
     private readonly inviteNodeStaffService: InviteNodeStaffService,
+    private readonly setNodeVisibilityService: SetNodeVisibilityService,
+    private readonly dispatchParcelService: DispatchParcelService,
   ) {}
 
   // First Node only — see OnboardNodeService.onboard.
@@ -92,6 +99,38 @@ export class NodeOperatorsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<UserResponseDto> {
     return this.inviteNodeStaffService.invite(user.id, nodeId, dto);
+  }
+
+  // Owner-only — business-configuration decision, same bucket as
+  // payout-account/staff-invite. Gated to an already-active :nodeId (see
+  // SetNodeVisibilityService) since a still-pending Node isn't in search
+  // either way.
+  @Roles(UserRole.NODE_OPERATOR)
+  @Patch('nodes/:nodeId/visibility')
+  setVisibility(
+    @Param('nodeId', ParseUUIDPipe) nodeId: string,
+    @Body() dto: SetNodeVisibilityDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<NodeOperatorResponseDto> {
+    return this.setNodeVisibilityService.set(user.id, nodeId, dto);
+  }
+
+  // Owner AND staff — operational work at a Node they're a member of, same
+  // treatment as handoff scan/confirm. originNodeId is implicit (:nodeId),
+  // never a free-typed body field. Reuses payments' own
+  // CreatePaymentIntentService/checkout flow end to end — see
+  // DispatchParcelService.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
+  @Post('nodes/:nodeId/dispatch')
+  @HttpCode(HttpStatus.CREATED)
+  async dispatch(
+    @Param('nodeId', ParseUUIDPipe) nodeId: string,
+    @Body() dto: DispatchParcelDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PaymentIntentResponseDto> {
+    const { intent, authorizationUrl } =
+      await this.dispatchParcelService.dispatch(user.id, nodeId, dto);
+    return PaymentIntentResponseDto.fromEntity(intent, authorizationUrl);
   }
 
   @Roles(UserRole.ADMIN)

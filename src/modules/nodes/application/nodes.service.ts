@@ -105,6 +105,20 @@ export class NodesService {
     return this.update(id, { status: NodeStatus.ACTIVE }, manager);
   }
 
+  // Narrow cross-module write for node-operators' SetNodeVisibilityService —
+  // a plain boolean, so unlike createPendingPortalNode/activate there's no
+  // enum to hide; still kept as its own method (not update()) so the caller
+  // never needs to reach for nodes' own UpdateNodeDto shape.
+  async setVisibility(
+    nodeId: string,
+    isPubliclyVisible: boolean,
+  ): Promise<void> {
+    const result = await this.nodes.update(nodeId, { isPubliclyVisible });
+    if (result.affected === 0) {
+      throw new EntityNotFoundException('Node', nodeId);
+    }
+  }
+
   // manager: passed by node-operators' Admin-approval flow so Node.status
   // flips to ACTIVE in the same transaction as User.status — same
   // manager-passing convention as create().
@@ -160,10 +174,17 @@ export class NodesService {
     query: NodeQueryDto,
     isAdmin: boolean,
   ): Promise<PaginatedResultDto<NodeEntity>> {
-    const status = isAdmin ? query.status : NodeStatus.ACTIVE;
+    // Admin sees every Node regardless of status/visibility (optionally
+    // filtered by query.status) — non-Admin is forced to active + publicly
+    // visible only, same reasoning as findNearby.
+    const where = isAdmin
+      ? query.status
+        ? { status: query.status }
+        : {}
+      : { status: NodeStatus.ACTIVE, isPubliclyVisible: true };
 
     const [items, total] = await this.nodes.findAndCount({
-      where: status ? { status } : {},
+      where,
       skip: (query.page - 1) * query.limit,
       take: query.limit,
       order: { createdAt: 'DESC' },
@@ -196,6 +217,7 @@ export class NodesService {
          FROM nodes
         WHERE status = $3
           AND "currentCount" < capacity
+          AND "isPubliclyVisible" = true
           AND ST_DWithin(location, ${origin}, $4)
         ORDER BY distance ASC
         LIMIT $5 OFFSET $6`,
@@ -214,6 +236,7 @@ export class NodesService {
          FROM nodes
         WHERE status = $3
           AND "currentCount" < capacity
+          AND "isPubliclyVisible" = true
           AND ST_DWithin(location, ${origin}, $4)`,
       [query.longitude, query.latitude, NodeStatus.ACTIVE, radiusMeters],
     );
