@@ -115,6 +115,7 @@ backend greps logs for.
 | 409 | `NODE_OPERATOR_ALREADY_ONBOARDED` | `POST /node-operators/onboarding` called by an account that's already completed onboarding — use `POST /node-operators/nodes` for another Node |
 | 400 | `NODE_OPERATOR_NOT_ONBOARDED` | `POST /node-operators/nodes` called by an account that hasn't completed `POST /node-operators/onboarding` yet |
 | 409 | `RIDER_ALREADY_ONBOARDED` | `POST /riders/onboarding` called by an account that already has a rider profile |
+| 400 | `CANNOT_REMOVE_OWNER_MEMBERSHIP` | `DELETE /node-operators/nodes/:nodeId/staff/:userId` — `:userId` refers to that Node's owner membership, not a staff one. Not reachable through the normal flow (`GET .../staff` only ever lists staff), rejected directly if attempted anyway |
 | 409 | `NODE_CAPACITY_UNAVAILABLE` | `POST /payments/intents` — the origin Node filled up between you seeing it in `/nodes/nearby` and this request landing. Show the consumer a "that drop-off point just filled up, try another" message, not a generic error |
 | 403 | `RIDER_NOT_ACTIVE` | `POST /handoffs/orders/:id/accept` — your rider role is valid but your `RiderProfile` isn't `active` yet (still `pending` Admin review, or `suspended`) |
 | 403 | `NODE_NOT_ACTIVE` | `POST /node-operators/nodes/:nodeId/staff/invite`, `PATCH /node-operators/nodes/:nodeId/visibility`, or `POST /node-operators/nodes/:nodeId/dispatch` — the target Node hasn't been Admin-approved yet |
@@ -788,6 +789,54 @@ Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator, or not this 
 owner), `400 VALIDATION_FAILED`, `403 NODE_NOT_ACTIVE`, `404 NOT_FOUND` (`:nodeId` doesn't
 exist, or you're not a member of it — same hide-as-not-found treatment as the
 payout-account route), `409 EMAIL_ALREADY_REGISTERED`.
+
+### `GET /api/v1/node-operators/nodes/:nodeId/staff`
+
+**Requires an authenticated NodeOperator session who owns `:nodeId`.** The currently
+active staff at this Node — there's no other way to see a staff member's `userId` again
+after the initial invite response above, which `DELETE .../staff/:userId` below needs.
+Removed staff don't appear here.
+
+Response `200`, `data`, an array:
+
+```json
+[
+  {
+    "userId": "uuid",
+    "firstName": "Chidi",
+    "lastName": "Okafor",
+    "email": "chidi@example.com",
+    "joinedAt": "2026-07-22T09:14:00.000Z"
+  }
+]
+```
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator), `404 NOT_FOUND`
+(`:nodeId` doesn't exist, or you don't have an owner membership there — same
+hide-as-not-found treatment as the payout-account route).
+
+### `DELETE /api/v1/node-operators/nodes/:nodeId/staff/:userId`
+
+**Requires an authenticated NodeOperator session who owns `:nodeId`.** Revokes that
+staff member's access to this Node — a soft removal (the membership row's `status`
+flips to `removed`), never a hard delete, so a Node's staffing history stays inspectable
+at the DB level. Doesn't touch the staff
+member's account or any other Node they're a member of — if they were invited to more
+than one Node, those memberships are unaffected. Takes effect on their very next
+request; there's no session/token to separately revoke.
+
+`:userId` is a User id, not a membership id — the same `userId` `GET .../staff` above
+returns.
+
+No request body.
+
+Response `204`, no body.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator), `404 NOT_FOUND`
+(`:nodeId` doesn't exist or you don't own it, or `:userId` has no active membership at
+this Node — including one already removed), `400 CANNOT_REMOVE_OWNER_MEMBERSHIP`
+(`:userId` refers to an owner membership, not staff — not reachable through the normal
+flow since `GET .../staff` only ever lists staff, but rejected directly if attempted).
 
 ### `PATCH /api/v1/node-operators/nodes/:nodeId/visibility`
 

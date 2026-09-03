@@ -8,6 +8,7 @@ import { DispatchParcelService } from './application/dispatch-parcel.service';
 import { InviteNodeStaffService } from './application/invite-node-staff.service';
 import { NodeOperatorQueryService } from './application/node-operator-query.service';
 import { OnboardNodeService } from './application/onboard-node.service';
+import { RemoveNodeStaffService } from './application/remove-node-staff.service';
 import { SetNodePayoutAccountService } from './application/set-node-payout-account.service';
 import { SetNodeVisibilityService } from './application/set-node-visibility.service';
 import { NodeMembershipEntity } from './infrastructure/entities/node-membership.entity';
@@ -36,6 +37,7 @@ import { NodeOperatorsController } from './interface/node-operators.controller';
     InviteNodeStaffService,
     SetNodeVisibilityService,
     DispatchParcelService,
+    RemoveNodeStaffService,
   ],
   // Exported so handoffs/earnings can resolve "which Nodes can this
   // operator act on" (NodeOperatorQueryService.getNodeIdsForUser) — never

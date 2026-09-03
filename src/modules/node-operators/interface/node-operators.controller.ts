@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -22,6 +23,7 @@ import { DispatchParcelService } from '../application/dispatch-parcel.service';
 import { InviteNodeStaffService } from '../application/invite-node-staff.service';
 import { NodeOperatorQueryService } from '../application/node-operator-query.service';
 import { OnboardNodeService } from '../application/onboard-node.service';
+import { RemoveNodeStaffService } from '../application/remove-node-staff.service';
 import { SetNodePayoutAccountService } from '../application/set-node-payout-account.service';
 import { SetNodeVisibilityService } from '../application/set-node-visibility.service';
 import { UserResponseDto } from '../../identity/interface/dto/user-response.dto';
@@ -29,6 +31,7 @@ import { PaymentIntentResponseDto } from '../../payments/interface/dto/payment-i
 import { DispatchParcelDto } from './dto/dispatch-parcel.dto';
 import { InviteNodeStaffDto } from './dto/invite-node-staff.dto';
 import { NodeOperatorResponseDto } from './dto/node-operator-response.dto';
+import { NodeStaffResponseDto } from './dto/node-staff-response.dto';
 import { OnboardNodeDto } from './dto/onboard-node.dto';
 import { PendingNodeOperatorResponseDto } from './dto/pending-node-operator-response.dto';
 import { SetNodeVisibilityDto } from './dto/set-node-visibility.dto';
@@ -43,6 +46,7 @@ export class NodeOperatorsController {
     private readonly inviteNodeStaffService: InviteNodeStaffService,
     private readonly setNodeVisibilityService: SetNodeVisibilityService,
     private readonly dispatchParcelService: DispatchParcelService,
+    private readonly removeNodeStaffService: RemoveNodeStaffService,
   ) {}
 
   // First Node only — see OnboardNodeService.onboard.
@@ -99,6 +103,32 @@ export class NodeOperatorsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<UserResponseDto> {
     return this.inviteNodeStaffService.invite(user.id, nodeId, dto);
+  }
+
+  // Owner-only — the currently-active staff at :nodeId, so the frontend has
+  // a userId to act on (there's no other way to see it again after the
+  // initial invite response).
+  @Roles(UserRole.NODE_OPERATOR)
+  @Get('nodes/:nodeId/staff')
+  listStaff(
+    @Param('nodeId', ParseUUIDPipe) nodeId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<NodeStaffResponseDto[]> {
+    return this.nodeOperatorQueryService.listStaffForNode(user.id, nodeId);
+  }
+
+  // Owner-only — soft-removes a staff membership at :nodeId (never a hard
+  // delete, see RemoveNodeStaffService/NodeMembershipEntity). Doesn't touch
+  // the staff member's account or any other Node they're a member of.
+  @Roles(UserRole.NODE_OPERATOR)
+  @Delete('nodes/:nodeId/staff/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  removeStaff(
+    @Param('nodeId', ParseUUIDPipe) nodeId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
+    return this.removeNodeStaffService.remove(user.id, nodeId, userId);
   }
 
   // Owner-only — business-configuration decision, same bucket as

@@ -1,8 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { EntityNotFoundException } from '../../../common/exceptions';
 import { NodesService } from '../../nodes/application/nodes.service';
 import { NodeNotActiveException } from '../domain/exceptions/node-not-active.exception';
-import { NodeMembershipRole } from '../domain/node-membership-role.enum';
 import { NodeOperatorResponseDto } from '../interface/dto/node-operator-response.dto';
 import { SetNodeVisibilityDto } from '../interface/dto/set-node-visibility.dto';
 import { NodeOperatorQueryService } from './node-operator-query.service';
@@ -24,13 +22,10 @@ export class SetNodeVisibilityService {
     nodeId: string,
     dto: SetNodeVisibilityDto,
   ): Promise<NodeOperatorResponseDto> {
-    const membership = await this.nodeOperatorQueryService.getForNode(
+    const membership = await this.nodeOperatorQueryService.assertOwner(
       userId,
       nodeId,
     );
-    if (membership.roleAtNode !== (NodeMembershipRole.OWNER as string)) {
-      throw new EntityNotFoundException('NodeMembership', nodeId);
-    }
     if ((membership.node.status as string) !== 'active') {
       throw new NodeNotActiveException();
     }
