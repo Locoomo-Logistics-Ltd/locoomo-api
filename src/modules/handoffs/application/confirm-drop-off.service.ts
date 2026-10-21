@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
+import { DeliveryDispatchService } from '../../logistics/application/delivery-dispatch.service';
 import { OrdersService } from '../../orders/application/orders.service';
 import { OrderTransitionResult } from '../domain/order-transition-result';
 import { OrderLookupService } from './order-lookup.service';
@@ -17,6 +18,7 @@ export class ConfirmDropOffService {
     private readonly ordersService: OrdersService,
     private readonly idempotencyService: IdempotencyService,
     private readonly receiverNotificationService: ReceiverNotificationService,
+    private readonly deliveryDispatchService: DeliveryDispatchService,
   ) {}
 
   async confirm(
@@ -46,6 +48,9 @@ export class ConfirmDropOffService {
               order,
               manager,
             );
+            // Hand the parcel to a courier straight away — whichever one
+            // routing picks (the in-house pool today).
+            await this.deliveryDispatchService.dispatch(orderId, manager);
             return order;
           },
         ),

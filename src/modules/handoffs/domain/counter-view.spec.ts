@@ -39,6 +39,27 @@ describe('nextActionFor', () => {
   });
 });
 
+describe('nextActionFor with an external courier', () => {
+  it("swaps code entry for reading out the courier's code", () => {
+    expect(
+      nextActionFor('rider_assigned', 'origin', 'give_code_to_courier'),
+    ).toBe('hand_to_courier');
+    expect(
+      nextActionFor('in_transit', 'destination', 'give_code_to_courier'),
+    ).toBe('receive_from_courier');
+  });
+
+  it('leaves actions that involve no courier alone', () => {
+    expect(
+      nextActionFor(
+        'arrived_at_destination',
+        'destination',
+        'give_code_to_courier',
+      ),
+    ).toBe('intake');
+  });
+});
+
 describe('maskReceiver', () => {
   it('shows initials and the last four digits only', () => {
     expect(maskReceiver('Chidinma Okafor', '+2348012345678')).toBe(

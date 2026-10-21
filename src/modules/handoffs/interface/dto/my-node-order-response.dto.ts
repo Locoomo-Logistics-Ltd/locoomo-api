@@ -1,4 +1,5 @@
 import { ParcelSize } from '../../../../common/parcel-size.enum';
+import type { DeliveryView } from '../../../logistics/application/delivery-query.service';
 import {
   maskReceiver,
   NextAction,
@@ -39,10 +40,13 @@ export class MyNodeOrderResponseDto {
   nextAction!: NextAction;
   shelfNumber!: number | null;
   receiverMasked!: string;
+  // The current (or latest) courier leg — null before drop-off.
+  delivery!: DeliveryView | null;
 
   static fromRow(
     row: MyNodeOrderRow,
     myNodeIds: readonly string[],
+    delivery: DeliveryView | null,
   ): MyNodeOrderResponseDto {
     const dto = new MyNodeOrderResponseDto();
     dto.id = row.id;
@@ -56,12 +60,13 @@ export class MyNodeOrderResponseDto {
     dto.parcelSize = row.parcelSize;
     dto.createdAt = row.createdAt;
     dto.myRole = nodeRoleFor(row, myNodeIds);
-    dto.nextAction = nextActionFor(row.status, dto.myRole);
+    dto.nextAction = nextActionFor(row.status, dto.myRole, delivery?.handover);
     dto.shelfNumber =
       row.shelfNodeId && myNodeIds.includes(row.shelfNodeId)
         ? row.shelfNumber
         : null;
     dto.receiverMasked = maskReceiver(row.receiverFullName, row.receiverPhone);
+    dto.delivery = delivery;
     return dto;
   }
 }

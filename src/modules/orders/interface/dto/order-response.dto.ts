@@ -1,4 +1,5 @@
 import { ParcelSize } from '../../../../common/parcel-size.enum';
+import type { DeliveryView } from '../../../logistics/application/delivery-query.service';
 import {
   LabelInstructions,
   labelInstructionsFor,
@@ -30,10 +31,14 @@ export class OrderResponseDto {
   trackingUrl!: string;
   // What to write on the parcel before drop-off (Nodes have no printers).
   labelInstructions!: LabelInstructions;
+  // Who's carrying it — current (or latest) courier leg, null before
+  // drop-off. Never includes the courier's phone for a Consumer.
+  delivery!: DeliveryView | null;
 
   static fromRow(
     order: OrderWithNodeNames,
     trackingUrl: string,
+    delivery: DeliveryView | null,
   ): OrderResponseDto {
     const dto = new OrderResponseDto();
     dto.id = order.id;
@@ -54,6 +59,7 @@ export class OrderResponseDto {
     dto.status = order.status;
     dto.createdAt = order.createdAt;
     dto.trackingUrl = trackingUrl;
+    dto.delivery = delivery;
     dto.labelInstructions = labelInstructionsFor(
       order.trackingCode,
       order.destinationNodeName,

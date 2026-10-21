@@ -9,6 +9,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { DeliveryQueryService } from '../../logistics/application/delivery-query.service';
 import { Throttle, seconds } from '@nestjs/throttler';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/decorators/current-user.decorator';
@@ -54,6 +55,7 @@ export class HandoffsController {
     private readonly confirmCollectionService: ConfirmCollectionService,
     private readonly listMyOrdersService: ListMyOrdersService,
     private readonly listMyNodeOrdersService: ListMyNodeOrdersService,
+    private readonly deliveryQueryService: DeliveryQueryService,
   ) {}
 
   @Roles(UserRole.RIDER)
@@ -116,7 +118,11 @@ export class HandoffsController {
   ): Promise<OrderPreviewResponseDto> {
     const { row, myNodeIds } =
       await this.orderLookupService.findByTrackingCodeForNode(code, user.id);
-    return OrderPreviewResponseDto.fromRow(row, myNodeIds);
+    return OrderPreviewResponseDto.fromRow(
+      row,
+      myNodeIds,
+      await this.deliveryQueryService.viewFor(row.id, 'node'),
+    );
   }
 
   // NODE_STAFF alongside NODE_OPERATOR — operating a Node's handoffs isn't

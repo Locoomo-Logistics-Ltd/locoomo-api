@@ -421,6 +421,13 @@ describe('Earnings (e2e)', () => {
           { pattern: nodeNamePattern },
         )
         .execute();
+      // delivery_legs reference orders too.
+      await orderEvents.query(
+        `DELETE FROM delivery_legs WHERE "orderId" IN (
+           SELECT id FROM orders WHERE "originNodeId" IN (
+             SELECT id FROM nodes WHERE name LIKE $1))`,
+        [nodeNamePattern],
+      );
       await orderEvents
         .createQueryBuilder()
         .delete()

@@ -1371,7 +1371,8 @@ Response `200`, `data`:
       "labelInstructions": {
         "lines": ["LCM-4F2K-9XPT", "TO: LEKKI NODE"],
         "note": "Write this clearly on the parcel with a marker before drop-off."
-      }
+      },
+      "delivery": null
     }
   ],
   "page": 1,
@@ -1384,6 +1385,9 @@ Response `200`, `data`:
   /track/:trackingCode`](#get-apiv1tracktrackingcode)). Offer a **"Share tracking link"**
   button (WhatsApp/SMS share sheet) so the sender can pass it to the receiver. It contains
   a signed token, so don't log it or send it to analytics.
+- `delivery` — who is carrying the parcel; see [Delivery object](#delivery-object).
+  `null` until the parcel is dropped off. Never includes the courier's phone for a
+  Consumer.
 - `labelInstructions` — Pickup Stations have no printers, so the sender labels the parcel
   by hand. While `status` is `awaiting_drop_off`, show `lines` large, one per line, exactly
   as they should be written, with `note` above them. The same instructions are in the
@@ -1413,7 +1417,9 @@ Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `404 NOT_FOUND`.
 **Requires an authenticated Rider session, and your `RiderProfile` must be `active`**
 (rejected `403 RIDER_NOT_ACTIVE` otherwise, even with a valid Rider role — see
 `POST /riders/onboarding` and Admin approval). Lists orders sitting unclaimed at their
-origin Node (`status: parcel_received_at_origin`, no rider assigned yet), sorted
+origin Node (`status: parcel_received_at_origin`, no rider assigned yet) that have been
+routed to Locoomo riders — orders being carried by an external courier never appear, and an
+order can appear some time after drop-off if a courier couldn't take it. Sorted
 nearest-first to the coordinates you supply. Nothing about your location is stored —
 `latitude`/`longitude` are used for this one request's sort only. Paginated (see
 [Pagination](#pagination-list-endpoints)).
@@ -1477,8 +1483,9 @@ Response `200`, `data`:
 Every handoff endpoint below that says "same shape as the accept response" includes it.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Rider), `403 RIDER_NOT_ACTIVE`,
-`409 ILLEGAL_ORDER_TRANSITION` (order already claimed, or not yet at
-`parcel_received_at_origin`), `409 RIDER_CAPACITY_UNAVAILABLE`.
+`409 ILLEGAL_ORDER_TRANSITION` (order already claimed, not yet at
+`parcel_received_at_origin`, or handed to an external courier since you listed it —
+refresh the list), `409 RIDER_CAPACITY_UNAVAILABLE`.
 
 ### `GET /api/v1/handoffs/my-orders`
 
@@ -1569,8 +1576,8 @@ Response `200`, `data`:
 }
 ```
 
-`myRole`, `nextAction`, `shelfNumber` and `receiverMasked` mean the same as in
-`by-tracking-code` below. Still no full receiver details — this is an overview, not the
+`myRole`, `nextAction`, `shelfNumber`, `receiverMasked` and `delivery` mean the same as
+in `by-tracking-code` below. Still no full receiver details — this is an overview, not the
 collection step.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator/NodeStaff).
@@ -1606,7 +1613,19 @@ Response `200`, `data`:
   "myRole": "origin",
   "nextAction": "hand_to_rider",
   "shelfNumber": 17,
-  "receiverMasked": "C. O. · ***5678"
+  "receiverMasked": "C. O. · ***5678",
+  "delivery": {
+    "provider": "in_house",
+    "providerLabel": "Locoomo rider",
+    "type": "forward",
+    "status": "assigned",
+    "vehicleClass": null,
+    "handover": "enter_rider_code",
+    "courier": { "name": "Tunde A.", "phone": "+2348031234567", "vehicle": null },
+    "etaMinutes": null,
+    "attemptNumber": 1,
+    "updatedAt": "2026-10-21T09:41:00.000Z"
+  }
 }
 ```
 
@@ -1616,20 +1635,44 @@ Response `200`, `data`:
 | `nextAction` | What staff at your Node should do now — drive the main button off this rather than re-deriving it from `status`. Values below |
 | `shelfNumber` | The number on the parcel at **your** Node, `null` if it isn't on one of your shelves |
 | `receiverMasked` | Initials and the last 4 phone digits — enough to match the parcel to the person at the counter. Full receiver details stay collection-only |
+| `delivery` | Who is carrying it — see [Delivery object](#delivery-object). The courier's `phone` is included here (staff may need to call them) |
 
 | `nextAction` | Show | Calls |
 |---|---|---|
 | `confirm_drop_off` | "Receive parcel" | `POST /handoffs/orders/:id/drop-off` |
 | `await_courier` | "Waiting for a rider" (no button) | — |
 | `hand_to_rider` | "Hand to rider — enter their code" | `POST /handoffs/orders/:id/confirm-handoff` (`rider_pickup`) |
+| `hand_to_courier` | "Hand to courier — give them the code" (external courier) | Courier handover screen — arrives with the first external courier (see LOGISTICS_API.md) |
 | `await_arrival` | "On the way to you" (no button) | — |
 | `receive_from_rider` | "Receive from rider — enter their code" | `POST /handoffs/orders/:id/confirm-handoff` (`rider_arrival`) |
+| `receive_from_courier` | "Receive from courier — give them the code" (external courier) | Courier handover screen, as above |
 | `intake` | "Shelve parcel" | `POST /handoffs/orders/:id/intake` |
 | `hand_to_receiver` | "Hand to receiver" | `POST /handoffs/orders/:id/collect` |
 | `none` | Read-only | — |
 
-More values will be added (external couriers, returns) — give unknown ones a read-only
-default rather than crashing.
+More values will be added (returns) — give unknown ones a read-only default rather than
+crashing.
+
+#### Delivery object
+
+Who is carrying the parcel between the two Nodes, in courier-neutral terms — the same
+shape whether it's a Locoomo rider or an external courier. It's the order's current
+delivery attempt, or the latest one once finished; `null` before drop-off. An order can
+go through several attempts (a courier couldn't find a rider and the parcel went to the
+Locoomo rider pool instead), which `attemptNumber` counts.
+
+| Field | Meaning |
+|---|---|
+| `provider` | Courier id, e.g. `in_house`. **Treat as opaque** — new couriers appear without a frontend release; only use it for optional branding |
+| `providerLabel` | Display name — show this |
+| `type` | `forward` (to the destination) or `return` |
+| `status` | `requested` (waiting for a rider), `assigned`, `picked_up`, `delivered`, `returning`, `returned`, `cancelled` (this attempt ended; another follows automatically) |
+| `vehicleClass` | `bicycle`, `motorbike`, `car`, `van`, `truck`, or `null` |
+| `handover` | How the next counter handover works: `enter_rider_code` (the rider shows a code, staff enter it) or `give_code_to_courier` (staff read the courier a code). `nextAction` already accounts for it |
+| `courier` | `{ name, phone, vehicle }` once someone is assigned, else `null`. `phone` only in the Node app responses |
+| `etaMinutes` | The courier's estimate, often `null` — not a promise |
+| `attemptNumber` | 1, 2, … across retries and fallbacks |
+| `updatedAt` | Last change |
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator/NodeStaff), `404 NOT_FOUND`.
 

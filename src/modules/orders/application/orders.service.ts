@@ -126,6 +126,24 @@ export class OrdersService {
   // (no second party's code needed here — see conversation on why this
   // step differs from the rider handoffs), so this is a plain wrapper
   // around transition() with no extra guard beyond the status check.
+  // An external courier (not a Locoomo rider) accepted the job — same
+  // transition as assignRider, but there's no rider user to record; who is
+  // carrying it lives on the logistics delivery leg instead.
+  async markCourierAssigned(
+    orderId: string,
+    providerKey: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    return this.transition(
+      orderId,
+      OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+      OrderStatus.RIDER_ASSIGNED,
+      manager,
+      OrderEventType.RIDER_ASSIGNED,
+      { providerKey },
+    );
+  }
+
   async markReceivedAtOrigin(
     orderId: string,
     manager: EntityManager,

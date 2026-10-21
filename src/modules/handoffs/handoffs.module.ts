@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { LogisticsModule } from '../logistics/logistics.module';
 import { TrackingModule } from '../tracking/tracking.module';
 import { IdempotencyModule } from '../../common/idempotency/idempotency.module';
 import { EarningsModule } from '../earnings/earnings.module';
@@ -16,6 +17,7 @@ import { ConfirmHandoffService } from './application/confirm-handoff.service';
 import { ConfirmIntakeService } from './application/confirm-intake.service';
 import { HandoffCodeIssuerService } from './application/handoff-code-issuer.service';
 import { HandoffCodeValidatorService } from './application/handoff-code-validator.service';
+import { DeliveryProgressListener } from './application/delivery-progress.listener';
 import { ReceiverNotificationService } from './application/receiver-notification.service';
 import { ListMyNodeOrdersService } from './application/list-my-node-orders.service';
 import { ListMyOrdersService } from './application/list-my-orders.service';
@@ -38,6 +40,8 @@ import { HandoffsController } from './interface/handoffs.controller';
     // NotificationsModule: OutboxService.enqueueEmail (collection code).
     // EarningsModule: RecordRevenueSplitService, on order completion.
     // TrackingModule: tracking code/QR/link block in receiver emails.
+    // LogisticsModule: delivery legs — dispatch at drop-off, in-house
+    // claims/handovers, and the delivery events that move the order.
     OrdersModule,
     RidersModule,
     NodeOperatorsModule,
@@ -46,6 +50,7 @@ import { HandoffsController } from './interface/handoffs.controller';
     NotificationsModule,
     EarningsModule,
     TrackingModule,
+    LogisticsModule,
   ],
   controllers: [HandoffsController],
   providers: [
@@ -63,6 +68,7 @@ import { HandoffsController } from './interface/handoffs.controller';
     ListMyOrdersService,
     ListMyNodeOrdersService,
     ReceiverNotificationService,
+    DeliveryProgressListener,
   ],
 })
 export class HandoffsModule {}

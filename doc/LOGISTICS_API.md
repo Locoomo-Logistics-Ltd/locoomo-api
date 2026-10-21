@@ -135,34 +135,11 @@ order. Drive the main button off this instead of re-deriving it from statuses.
 
 ## Shared objects
 
-### `delivery` *(phase 2/3)*
+### `delivery` — **live** (phase 2)
 
-Present on order responses once a delivery exists, otherwise `null`. Which fields are filled
-depends on who's asking (see each endpoint).
-
-```json
-{
-  "provider": "sendii",
-  "providerLabel": "Sendii",
-  "type": "forward",
-  "status": "assigned",
-  "vehicleClass": "motorbike",
-  "handover": "give_code_to_courier",
-  "courier": { "name": "Musa A.", "phone": "+2348031234567", "vehicle": "Motorbike" },
-  "etaMinutes": 32,
-  "attemptNumber": 1,
-  "updatedAt": "2026-10-21T10:02:00.000Z"
-}
-```
-
-| Field | Notes |
-|---|---|
-| `type` | `forward` or `return` |
-| `vehicleClass` | `bicycle`, `motorbike`, `car`, `van`, `truck` — not every courier offers every class |
-| `handover` | `enter_rider_code` (in-house) or `give_code_to_courier` (external) |
-| `courier` | `null` until assigned. `phone` is **only** returned to the Node app |
-| `etaMinutes` | Courier's estimate, may be `null`; don't present as a promise |
-| `attemptNumber` | Increments when a delivery is retried or falls back to another courier |
+Documented in [API.md › Delivery object](API.md#delivery-object); on consumer orders, the
+Node scan lookup and `my-node/orders`. Only `provider: "in_house"` occurs until the first
+external courier ships (phase 3) — but build the `give_code_to_courier` path now.
 
 ### `parcel` attributes *(phase 4)*
 
@@ -262,7 +239,6 @@ Still to come on each order:
 
 | Field | Phase | Notes |
 |---|---|---|
-| `delivery` | 2/3 | [Shared object](#delivery-phase-23); `courier.phone` is always omitted for consumers |
 | `parcel` | 4 | Attributes captured at checkout |
 
 Return statuses (phase 5) appear in `status`; when present, show the origin Node's
@@ -278,9 +254,9 @@ on drop-off/intake are documented in
 [API.md › by-tracking-code](API.md#get-apiv1handoffsordersby-tracking-codecode) and
 [Shelf numbers](API.md#shelf-numbers).
 
-Still to come: `delivery` on these responses (phase 2/3), the external-courier
-`nextAction` values `hand_to_courier` / `receive_from_courier` (phase 3) and the return
-ones (phase 5) — see [nextAction](#nextaction-node-app--what-the-operator-at-this-node-should-do-now).
+`delivery` and the external-courier `nextAction` values `hand_to_courier` /
+`receive_from_courier` are live (phase 2). Still to come: the courier handover screen
+they lead to (phase 3) and the return values (phase 5) — see [nextAction](#nextaction-node-app--what-the-operator-at-this-node-should-do-now).
 If the QR decodes to a full tracking URL, send it as-is — the server extracts the code.
 
 ### `GET /api/v1/handoffs/orders/:id/courier-handover` — new *(phase 3)*
@@ -395,7 +371,7 @@ Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) 
 |---|---|
 | 0 | ✅ Node `contactPhone`, `openingHours`, `PATCH …/contact`, location check (all live) |
 | 1 | ✅ Forgiving lookup at both Nodes, `nextAction`, `shelfNumber`, `receiverMasked`, queues, `trackingUrl`, `labelInstructions`, public tracking endpoint, email links + QR (all live) |
-| 2 | `delivery` object (in-house only at first — `provider: "in_house"`) |
+| 2 | ✅ `delivery` object, courier-aware `nextAction`, rider pool excludes courier orders (all live; only `in_house` until phase 3) |
 | 3 | External couriers: `courier-handover`, `handover: give_code_to_courier`, Sendii in `delivery` |
 | 4 | Parcel attributes, `delivery-quotes`, new `feeBreakdown`, `NO_DELIVERY_OPTION` |
 | 5 | Return statuses, `return-intake`, `return-collect` |

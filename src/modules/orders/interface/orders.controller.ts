@@ -5,6 +5,7 @@ import { Roles } from '../../../common/auth/decorators/roles.decorator';
 import { UserRole } from '../../../common/auth/user-role.enum';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import { DeliveryQueryService } from '../../logistics/application/delivery-query.service';
 import { TrackingLinkService } from '../../tracking/application/tracking-link.service';
 import { OrderQueryService } from '../application/order-query.service';
 import { OrderResponseDto } from './dto/order-response.dto';
@@ -15,6 +16,7 @@ export class OrdersController {
   constructor(
     private readonly orderQueryService: OrderQueryService,
     private readonly trackingLinkService: TrackingLinkService,
+    private readonly deliveryQueryService: DeliveryQueryService,
   ) {}
 
   @Get()
@@ -23,11 +25,16 @@ export class OrdersController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<PaginatedResultDto<OrderResponseDto>> {
     const result = await this.orderQueryService.findMine(user.id, query);
+    const deliveries = await this.deliveryQueryService.viewsFor(
+      result.items.map((order) => order.id),
+      'consumer',
+    );
     return new PaginatedResultDto(
       result.items.map((order) =>
         OrderResponseDto.fromRow(
           order,
           this.trackingLinkService.urlFor(order.trackingCode),
+          deliveries.get(order.id) ?? null,
         ),
       ),
       result.page,
@@ -45,6 +52,7 @@ export class OrdersController {
     return OrderResponseDto.fromRow(
       row,
       this.trackingLinkService.urlFor(row.trackingCode),
+      await this.deliveryQueryService.viewFor(row.id, 'consumer'),
     );
   }
 }

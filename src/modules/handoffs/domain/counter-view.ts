@@ -9,8 +9,10 @@ export type NextAction =
   | 'confirm_drop_off'
   | 'await_courier'
   | 'hand_to_rider'
+  | 'hand_to_courier'
   | 'await_arrival'
   | 'receive_from_rider'
+  | 'receive_from_courier'
   | 'intake'
   | 'hand_to_receiver'
   | 'none';
@@ -50,9 +52,26 @@ const DESTINATION_ACTIONS: Record<string, NextAction> = {
   ready_for_collection: 'hand_to_receiver',
 };
 
-export function nextActionFor(status: string, role: NodeRole): NextAction {
+// How the current courier proves a handover (from the delivery leg):
+// in-house riders show a code staff enter; external couriers are read a
+// code by staff and enter it in their own app.
+export type HandoverMode = 'enter_rider_code' | 'give_code_to_courier';
+
+const COURIER_VARIANTS: Partial<Record<NextAction, NextAction>> = {
+  hand_to_rider: 'hand_to_courier',
+  receive_from_rider: 'receive_from_courier',
+};
+
+export function nextActionFor(
+  status: string,
+  role: NodeRole,
+  handover: HandoverMode = 'enter_rider_code',
+): NextAction {
   const actions = role === 'origin' ? ORIGIN_ACTIONS : DESTINATION_ACTIONS;
-  return actions[status] ?? 'none';
+  const action = actions[status] ?? 'none';
+  return handover === 'give_code_to_courier'
+    ? (COURIER_VARIANTS[action] ?? action)
+    : action;
 }
 
 // "C. O. · ***5678" — enough for counter staff to match a parcel to the

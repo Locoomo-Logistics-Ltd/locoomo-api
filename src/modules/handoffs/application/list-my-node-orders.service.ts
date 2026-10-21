@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
+import { DeliveryQueryService } from '../../logistics/application/delivery-query.service';
 import { NodeOperatorQueryService } from '../../node-operators/application/node-operator-query.service';
 import {
   MyNodeOrderResponseDto,
@@ -40,6 +41,7 @@ export class ListMyNodeOrdersService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly nodeOperatorQueryService: NodeOperatorQueryService,
+    private readonly deliveryQueryService: DeliveryQueryService,
   ) {}
 
   async list(
@@ -70,8 +72,16 @@ export class ListMyNodeOrdersService {
       [nodeIds],
     );
 
+    const deliveries = await this.deliveryQueryService.viewsFor(
+      rows.map((row) => row.id),
+      'node',
+    );
     const items = rows.map((row) =>
-      MyNodeOrderResponseDto.fromRow(row, nodeIds),
+      MyNodeOrderResponseDto.fromRow(
+        row,
+        nodeIds,
+        deliveries.get(row.id) ?? null,
+      ),
     );
     return new PaginatedResultDto(items, query.page, query.limit, total);
   }
