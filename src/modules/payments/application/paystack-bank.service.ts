@@ -3,6 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { Env } from '../../../config/env.validation';
 import { BankAccountVerificationFailedException } from '../domain/exceptions/bank-account-verification-failed.exception';
 import { PaymentProviderException } from '../domain/exceptions/payment-provider.exception';
+import {
+  isPaystackOutage,
+  PAYSTACK_READ_POLICY,
+  paystackRequest,
+} from '../infrastructure/paystack-http';
 
 export interface BankOption {
   code: string;
@@ -38,8 +43,6 @@ interface PaystackResolveAccountResponse {
 // same pattern as PaystackPaymentProvider.
 @Injectable()
 export class PaystackBankService {
-  private readonly baseUrl = 'https://api.paystack.co';
-
   constructor(private readonly configService: ConfigService<Env, true>) {}
 
   private get secretKey(): string {
@@ -47,12 +50,12 @@ export class PaystackBankService {
   }
 
   async listBanks(): Promise<BankOption[]> {
-    const response = await fetch(
-      `${this.baseUrl}/bank?currency=NGN&country=nigeria`,
+    const { response, body } = await paystackRequest<PaystackListBanksResponse>(
+      'listBanks',
+      '/bank?currency=NGN&country=nigeria',
       { headers: { Authorization: `Bearer ${this.secretKey}` } },
+      PAYSTACK_READ_POLICY,
     );
-
-    const body = (await response.json()) as PaystackListBanksResponse;
     if (!response.ok || !body.status) {
       throw new PaymentProviderException(
         'paystack',
@@ -71,15 +74,27 @@ export class PaystackBankService {
     bankCode: string,
     accountNumber: string,
   ): Promise<ResolvedBankAccount> {
-    const response = await fetch(
-      `${this.baseUrl}/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`,
-      { headers: { Authorization: `Bearer ${this.secretKey}` } },
-    );
+    const { response, body } =
+      await paystackRequest<PaystackResolveAccountResponse>(
+        'resolveAccountNumber',
+        `/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`,
+        { headers: { Authorization: `Bearer ${this.secretKey}` } },
+        PAYSTACK_READ_POLICY,
+      );
 
-    const body = (await response.json()) as PaystackResolveAccountResponse;
+    // Checked before body.status: when Paystack itself is failing it also
+    // answers status:false, and reading that as "your account details are
+    // wrong" (400) would blame the user for a provider outage.
+    if (isPaystackOutage(response)) {
+      throw new PaymentProviderException(
+        'paystack',
+        'resolveAccountNumber',
+        `HTTP ${response.status}${body.message ? `: ${body.message}` : ''}`,
+      );
+    }
     if (!body.status) {
       // Paystack's own "could not resolve" business response — distinct
-      // from a transport/API failure below.
+      // from a transport/API failure.
       throw new BankAccountVerificationFailedException(
         body.message ?? 'account could not be resolved',
       );

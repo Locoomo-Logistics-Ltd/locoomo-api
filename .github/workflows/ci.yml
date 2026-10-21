@@ -11,7 +11,7 @@ jobs:
 
     services:
       postgres:
-        image: postgis/postgis:16-3.4-alpine
+        image: postgis/postgis:18-3.6-alpine
         env:
           POSTGRES_USER: locoomo
           POSTGRES_PASSWORD: locoomo

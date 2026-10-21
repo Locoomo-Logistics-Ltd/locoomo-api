@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { fetchWithPolicy } from '../../../common/http/fetch-with-policy';
 import { Env } from '../../../config/env.validation';
 import { EmailMessage } from '../domain/email-message';
 import { NotificationSender } from '../domain/notification-sender.port';
@@ -15,20 +16,26 @@ export class ResendApiEmailSender implements NotificationSender {
   constructor(private readonly configService: ConfigService<Env, true>) {}
 
   async sendEmail(message: EmailMessage): Promise<void> {
-    const response = await fetch(RESEND_API_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.configService.get('RESEND_API_KEY', { infer: true })}`,
-        'Content-Type': 'application/json',
+    // Timeout only — a retried POST could send the email twice, and the
+    // outbox already retries a failed send with backoff.
+    const response = await fetchWithPolicy(
+      RESEND_API_URL,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.configService.get('RESEND_API_KEY', { infer: true })}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: this.configService.get('SMTP_FROM', { infer: true }),
+          to: message.to,
+          subject: message.subject,
+          text: message.text,
+          html: message.html,
+        }),
       },
-      body: JSON.stringify({
-        from: this.configService.get('SMTP_FROM', { infer: true }),
-        to: message.to,
-        subject: message.subject,
-        text: message.text,
-        html: message.html,
-      }),
-    });
+      { timeoutMs: 15_000 },
+    );
 
     if (!response.ok) {
       const body = await response.text();
