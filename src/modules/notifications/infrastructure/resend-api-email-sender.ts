@@ -32,6 +32,14 @@ export class ResendApiEmailSender implements NotificationSender {
           subject: message.subject,
           text: message.text,
           html: message.html,
+          // Resend's REST field names; content_id makes it an inline (cid:)
+          // image.
+          attachments: message.attachments?.map((attachment) => ({
+            filename: attachment.filename,
+            content: attachment.contentBase64,
+            content_type: attachment.contentType,
+            content_id: attachment.contentId,
+          })),
         }),
       },
       { timeoutMs: 15_000 },

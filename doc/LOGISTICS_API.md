@@ -21,7 +21,7 @@ UTC.
 - [Consumer (sender) app](#consumer-sender-app)
 - [Node app (operators & staff)](#node-app-operators--staff)
 - [Rider app (in-house riders)](#rider-app-in-house-riders)
-- [Public tracking page](#public-tracking-page)
+- [Public tracking page](#public-tracking-page--live-phase-1)
 - [Admin app](#admin-app)
 - [New error codes](#new-error-codes)
 - [Rollout & phase map](#rollout--phase-map)
@@ -255,24 +255,13 @@ agreed and will change). New error: `422 NO_DELIVERY_OPTION`. Same changes apply
 
 ### `GET /api/v1/orders` and `GET /api/v1/orders/:id` — changed *(phases 1–5)*
 
-Each order gains:
+`trackingUrl` and `labelInstructions` are **live** (phase 1) — see
+[API.md › GET /orders](API.md#get-apiv1orders).
 
-```json
-{
-  "trackingUrl": "https://app.locoomo.com/track/LCM-4F2K-9XPT?t=Zk3q…",
-  "labelInstructions": {
-    "lines": ["LCM-4F2K-9XPT", "TO: LEKKI NODE"],
-    "note": "Write this clearly on the parcel with a marker before drop-off."
-  },
-  "delivery": { "provider": "sendii", "providerLabel": "Sendii", "status": "picked_up", "…": "…" },
-  "parcel": { "parcelSize": "medium", "weightKg": 3.5, "handling": [] }
-}
-```
+Still to come on each order:
 
 | Field | Phase | Notes |
 |---|---|---|
-| `trackingUrl` | 1 | Shareable public tracking link. Offer a "Share tracking link" button (WhatsApp/SMS share sheet) — this is how the receiver gets it besides email |
-| `labelInstructions` | 1 | Show prominently while `status` is `awaiting_drop_off`. Render `lines` large, one per line, as the sender should write them |
 | `delivery` | 2/3 | [Shared object](#delivery-phase-23); `courier.phone` is always omitted for consumers |
 | `parcel` | 4 | Attributes captured at checkout |
 
@@ -281,67 +270,18 @@ details (`originNodeName`, `originNodeAddress`) as the collection point.
 
 ## Node app (operators & staff)
 
-### `GET /api/v1/handoffs/orders/by-tracking-code/:code` — changed *(phase 1)*
+### Scan lookup, work queues, shelf numbers — **live** (phase 1)
 
-The one "scan" endpoint for every counter action. Changes:
+The forgiving `by-tracking-code` lookup at both Nodes (`myRole`, `nextAction`,
+`shelfNumber`, `receiverMasked`), the `queue` filter on `my-node/orders`, and `shelfNumber`
+on drop-off/intake are documented in
+[API.md › by-tracking-code](API.md#get-apiv1handoffsordersby-tracking-codecode) and
+[Shelf numbers](API.md#shelf-numbers).
 
-- **Works at origin *and* destination Nodes** (today: origin only). Still `404` for orders
-  that don't touch any Node you're a member of.
-- **Forgiving input** — handwritten labels get typed in. The server accepts lowercase, spaces,
-  missing dashes, a missing `LCM` prefix, `O` for `0` and `I`/`L` for `1`. Send whatever the
-  operator typed or the QR decoded; don't normalise client-side.
-- **Scanning**: if the QR decodes to a full tracking URL (`…/track/LCM-…?t=…`), extract the
-  path segment after `/track/` and send that.
-
-Response `200`, `data` — existing fields plus:
-
-```json
-{
-  "id": "uuid",
-  "trackingCode": "LCM-4F2K-9XPT",
-  "status": "rider_assigned",
-  "myRole": "origin",
-  "nextAction": "hand_to_courier",
-  "shelfNumber": 17,
-  "originNodeName": "Yaba Node",
-  "destinationNodeName": "Lekki Node",
-  "parcelDescription": "A small box of documents",
-  "parcel": { "parcelSize": "small", "weightKg": 1.2, "handling": ["fragile"] },
-  "receiverMasked": "C. O. · ***5678",
-  "delivery": { "provider": "sendii", "providerLabel": "Sendii", "status": "assigned",
-                "handover": "give_code_to_courier",
-                "courier": { "name": "Musa A.", "phone": "+2348031234567", "vehicle": "Motorbike" } },
-  "createdAt": "2026-10-21T09:29:00.000Z"
-}
-```
-
-| Field | Notes |
-|---|---|
-| `myRole` | `origin` or `destination` — which side *your* Node plays |
-| `nextAction` | See [nextAction](#nextaction-node-app--what-the-operator-at-this-node-should-do-now) |
-| `shelfNumber` | Shelf number at **your** Node, `null` if the parcel isn't currently on your shelf |
-| `receiverMasked` | Initials + last 4 digits — enough to match the parcel to the person at the counter. Full receiver details remain collection-only |
-
-Errors: unchanged.
-
-### `GET /api/v1/handoffs/my-node/orders` — changed *(phase 1)*
-
-Items gain `nextAction`, `shelfNumber`, `receiverMasked` and `delivery`. New optional query
-param for the work queues:
-
-| `queue` | Returns |
-|---|---|
-| `to_receive` | Awaiting drop-off at your Node (origin) |
-| `to_dispatch` | On your shelf, waiting for or handing to a courier (origin) |
-| `incoming` | On the way to your Node (destination or return) |
-| `to_collect` | On your shelf, waiting for receiver or sender collection |
-| *(omitted)* | Everything, as today |
-
-### `POST /api/v1/handoffs/orders/:id/drop-off` and `.../intake` — changed *(phase 1)*
-
-Responses gain `shelfNumber` — show it big with "Write **#17** on the parcel" and the
-tracking code, and a confirm checkbox "Label written/checked". If the sender's handwritten
-label is missing or wrong, the operator writes it then.
+Still to come: `delivery` on these responses (phase 2/3), the external-courier
+`nextAction` values `hand_to_courier` / `receive_from_courier` (phase 3) and the return
+ones (phase 5) — see [nextAction](#nextaction-node-app--what-the-operator-at-this-node-should-do-now).
+If the QR decodes to a full tracking URL, send it as-is — the server extracts the code.
 
 ### `GET /api/v1/handoffs/orders/:id/courier-handover` — new *(phase 3)*
 
@@ -415,92 +355,12 @@ No request/response changes. Behaviour changes to be aware of:
 - `POST /handoffs/orders/:id/accept` may return `409 ILLEGAL_ORDER_TRANSITION` if the
   order left the pool between listing and accepting — refresh the list.
 
-## Public tracking page
+## Public tracking page — **live** (phase 1)
 
-Lives in the **frontend app** at `/track/:trackingCode`. No login. Two ways in:
-
-1. **From an email link**: `/track/LCM-4F2K-9XPT?t=<token>` → call the API with `t`.
-2. **Typed**: a form with tracking code + "last 4 digits of the receiver's phone" → call
-   with `phoneLast4`.
-
-Page requirements:
-
-- `<meta name="robots" content="noindex">` and `Referrer-Policy: no-referrer` (the token must
-  not leak to other sites via the `Referer` header).
-- Don't store the token anywhere (no localStorage, no analytics URLs — strip `t` from
-  page-view events).
-- Re-fetch every 60 s while the page is visible and the status isn't final.
-
-### `GET /api/v1/track/:trackingCode` — new *(phase 1)*
-
-**Public — no session.** Query: exactly one of `t` (token from the link) or `phoneLast4`
-(4 digits). Rate-limited to 10/min per IP.
-
-Response `200`, `data`:
-
-```json
-{
-  "trackingCode": "LCM-4F2K-9XPT",
-  "status": "on_the_way",
-  "statusLabel": "On the way",
-  "isFinal": false,
-  "timeline": [
-    { "status": "order_placed",      "label": "Order placed",          "at": "2026-10-21T08:10:00.000Z" },
-    { "status": "at_origin_station", "label": "At Yaba Node",          "at": "2026-10-21T09:29:00.000Z" },
-    { "status": "on_the_way",        "label": "On the way",            "at": "2026-10-21T10:05:00.000Z" }
-  ],
-  "origin": { "name": "Yaba Node", "city": "Lagos" },
-  "destination": {
-    "name": "Lekki Node",
-    "address": "45 Admiralty Way, Lekki Phase 1",
-    "city": "Lagos",
-    "state": "Lagos",
-    "openingHours": { "mon": [{ "open": "08:00", "close": "18:00" }] }
-  },
-  "courierLabel": "Sendii courier",
-  "etaMinutes": 32,
-  "nextStep": "We'll email the receiver a collection code when it's ready at Lekki Node.",
-  "updatedAt": "2026-10-21T10:05:00.000Z"
-}
-```
-
-Public `status` values (deliberately simpler than order statuses):
-
-| `status` | `statusLabel` |
-|---|---|
-| `awaiting_drop_off` | Awaiting drop-off |
-| `at_origin_station` | At origin station |
-| `on_the_way` | On the way |
-| `arrived_at_destination` | Arrived at destination station |
-| `ready_for_collection` | Ready for collection |
-| `collected` | Collected |
-| `returning_to_sender` | Returning to sender |
-| `returned_to_sender` | Returned — ready for sender collection |
-| `return_completed` | Returned to sender |
-
-Render `statusLabel`, `nextStep` and timeline `label`s as given (copy is server-side so it can
-be changed without a release). When a return happens, `origin` gains `address` and
-`openingHours`.
-
-**Never returned:** names, phone numbers, emails, collection/handover codes, shelf numbers,
-prices, internal ids.
-
-Errors: `404 NOT_FOUND` for an unknown code, a wrong `t`, wrong `phoneLast4`, or a parcel
-completed/returned more than 30 days ago — all identical on purpose, show one "We couldn't
-find that parcel. Check the code and try again." message. `400 VALIDATION_FAILED` (neither
-or both of `t`/`phoneLast4`), `429 RATE_LIMITED`.
-
-### Emails that link here *(phase 1, returns phase 5)*
-
-For copy review — the frontend doesn't send these, but the links land on the page above.
-
-| Email | To | When |
-|---|---|---|
-| Order confirmed | Sender | Payment succeeds — adds tracking link + label instructions + QR |
-| **Your parcel is on its way** *(new)* | Receiver | Drop-off confirmed — first contact with the receiver |
-| Ready for collection | Receiver | Destination intake — collection code + link + QR |
-| Collection code resent | Receiver | Resend |
-| Return started / ready for collection | Sender (and receiver) | Phase 5 |
+Documented in [API.md › Public tracking](API.md#public-tracking), including the emails that
+link to it. Still to come: `courierLabel`/`etaMinutes` filled by external couriers (phase
+3) and return statuses (`returning_to_sender`, `returned_to_sender`, `return_completed`,
+phase 5).
 
 ## Admin app
 
@@ -534,7 +394,7 @@ Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) 
 | Phase | Frontend-visible scope |
 |---|---|
 | 0 | ✅ Node `contactPhone`, `openingHours`, `PATCH …/contact`, location check (all live) |
-| 1 | Forgiving lookup at both Nodes, `nextAction`, `shelfNumber`, `receiverMasked`, queues, `trackingUrl`, `labelInstructions`, public tracking endpoint + page, email links |
+| 1 | ✅ Forgiving lookup at both Nodes, `nextAction`, `shelfNumber`, `receiverMasked`, queues, `trackingUrl`, `labelInstructions`, public tracking endpoint, email links + QR (all live) |
 | 2 | `delivery` object (in-house only at first — `provider: "in_house"`) |
 | 3 | External couriers: `courier-handover`, `handover: give_code_to_courier`, Sendii in `delivery` |
 | 4 | Parcel attributes, `delivery-quotes`, new `feeBreakdown`, `NO_DELIVERY_OPTION` |

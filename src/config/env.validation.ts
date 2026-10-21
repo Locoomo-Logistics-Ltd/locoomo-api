@@ -47,6 +47,10 @@ export const envSchema = z
     // secret is needed since we only ever verify a client-obtained ID token
     // server-side, never do a server-side code exchange.
     GOOGLE_CLIENT_ID: z.string().min(1),
+    // Signs the public tracking links put in emails (tracking module) —
+    // knowing a tracking code alone isn't enough to view a parcel. Rotating
+    // it invalidates every link already sent. Generate like JWT_ACCESS_SECRET.
+    TRACKING_LINK_SECRET: z.string().min(32),
     // Google Maps Platform key with the Geocoding API enabled (and billing on
     // the project — Google rejects keys without it). Used to check a Node's
     // map pin against its address (nodes/infrastructure/google-geocoder.ts).

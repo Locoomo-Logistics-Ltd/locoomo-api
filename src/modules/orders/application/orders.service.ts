@@ -130,13 +130,14 @@ export class OrdersService {
     orderId: string,
     manager: EntityManager,
   ): Promise<OrderEntity> {
-    return this.transition(
+    const order = await this.transition(
       orderId,
       OrderStatus.AWAITING_DROP_OFF,
       OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
       manager,
       OrderEventType.PARCEL_RECEIVED_AT_ORIGIN,
     );
+    return this.placeOnShelf(order, order.originNodeId, manager);
   }
 
   // Narrow exports for handoffs' rider<->Node code confirmations. Both are
@@ -147,13 +148,14 @@ export class OrdersService {
     orderId: string,
     manager: EntityManager,
   ): Promise<OrderEntity> {
-    return this.transition(
+    const order = await this.transition(
       orderId,
       OrderStatus.RIDER_ASSIGNED,
       OrderStatus.IN_TRANSIT,
       manager,
       OrderEventType.PICKED_UP_BY_RIDER,
     );
+    return this.clearShelf(order, manager);
   }
 
   async markArrivedAtDestination(
@@ -177,13 +179,14 @@ export class OrdersService {
     orderId: string,
     manager: EntityManager,
   ): Promise<OrderEntity> {
-    return this.transition(
+    const order = await this.transition(
       orderId,
       OrderStatus.ARRIVED_AT_DESTINATION,
       OrderStatus.READY_FOR_COLLECTION,
       manager,
       OrderEventType.READY_FOR_COLLECTION,
     );
+    return this.placeOnShelf(order, order.destinationNodeId, manager);
   }
 
   // Narrow export for handoffs' final collection step. eventPayload carries
@@ -195,7 +198,7 @@ export class OrdersService {
     manager: EntityManager,
     eventPayload: Record<string, unknown> = {},
   ): Promise<OrderEntity> {
-    return this.transition(
+    const order = await this.transition(
       orderId,
       OrderStatus.READY_FOR_COLLECTION,
       OrderStatus.COMPLETED,
@@ -203,6 +206,53 @@ export class OrdersService {
       OrderEventType.COLLECTED_BY_RECEIVER,
       eventPayload,
     );
+    return this.clearShelf(order, manager);
+  }
+
+  // Gives the parcel the lowest shelf number not currently in use at
+  // `nodeId`. The transaction-scoped advisory lock serialises concurrent
+  // assignments at the same Node (two drop-offs at once would otherwise both
+  // pick the same "lowest free" number); the unique index on
+  // (shelfNodeId, shelfNumber) is the backstop. Numbers are reused as soon
+  // as a parcel leaves, so they stay short.
+  private async placeOnShelf(
+    order: OrderEntity,
+    nodeId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    await manager.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`,
+      [nodeId],
+    );
+    const [rows] = await manager.query<[{ shelfNumber: number }[], number]>(
+      `UPDATE orders
+          SET "shelfNodeId" = $1,
+              "shelfNumber" = (
+                SELECT MIN(n)
+                  FROM generate_series(
+                         1,
+                         (SELECT COUNT(*) + 1 FROM orders WHERE "shelfNodeId" = $1)::int
+                       ) AS n
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM orders WHERE "shelfNodeId" = $1 AND "shelfNumber" = n
+                 )
+              )
+        WHERE id = $2
+        RETURNING "shelfNumber"`,
+      [nodeId, order.id],
+    );
+    return { ...order, shelfNodeId: nodeId, shelfNumber: rows[0].shelfNumber };
+  }
+
+  private async clearShelf(
+    order: OrderEntity,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    await manager.query(
+      `UPDATE orders SET "shelfNodeId" = NULL, "shelfNumber" = NULL WHERE id = $1`,
+      [order.id],
+    );
+    return { ...order, shelfNodeId: null, shelfNumber: null };
   }
 
   private async appendEvent(

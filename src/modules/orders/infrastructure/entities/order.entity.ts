@@ -72,6 +72,16 @@ export class OrderEntity {
   })
   status!: OrderStatus;
 
+  // Where the parcel sits right now and the number written on it there —
+  // set when a Node takes it in (drop-off at origin, intake at
+  // destination), cleared when it leaves (rider pickup, collection). Both
+  // NULL while it's with a rider or gone. Managed only by OrdersService.
+  @Column({ type: 'uuid', nullable: true })
+  shelfNodeId!: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  shelfNumber!: number | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

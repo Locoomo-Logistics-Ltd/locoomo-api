@@ -5,6 +5,7 @@ import { IdempotencyService } from '../../../common/idempotency/idempotency.serv
 import { OrdersService } from '../../orders/application/orders.service';
 import { OrderTransitionResult } from '../domain/order-transition-result';
 import { OrderLookupService } from './order-lookup.service';
+import { ReceiverNotificationService } from './receiver-notification.service';
 
 const IDEMPOTENCY_SCOPE = 'handoffs.drop-off';
 
@@ -15,6 +16,7 @@ export class ConfirmDropOffService {
     private readonly orderLookupService: OrderLookupService,
     private readonly ordersService: OrdersService,
     private readonly idempotencyService: IdempotencyService,
+    private readonly receiverNotificationService: ReceiverNotificationService,
   ) {}
 
   async confirm(
@@ -35,7 +37,17 @@ export class ConfirmDropOffService {
           IDEMPOTENCY_SCOPE,
           orderId,
           manager,
-          () => this.ordersService.markReceivedAtOrigin(orderId, manager),
+          async () => {
+            const order = await this.ordersService.markReceivedAtOrigin(
+              orderId,
+              manager,
+            );
+            await this.receiverNotificationService.enqueueOnItsWay(
+              order,
+              manager,
+            );
+            return order;
+          },
         ),
     );
 
@@ -46,7 +58,8 @@ export class ConfirmDropOffService {
       // current state has to happen as its own fresh query, outside that
       // transaction, not chained onto it.
       const [row] = await this.dataSource.query<OrderTransitionResult[]>(
-        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId"
+        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId",
+                "shelfNumber"
            FROM orders WHERE id = $1`,
         [orderId],
       );

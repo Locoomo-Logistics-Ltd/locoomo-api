@@ -244,7 +244,7 @@ describe('Handoffs (e2e)', () => {
   // scan itself.
   async function createPaidOrder(
     consumerEmail: string,
-  ): Promise<{ id: string; trackingCode: string }> {
+  ): Promise<{ id: string; trackingCode: string; consumerCookie: string }> {
     const consumerCookie = await registerAndLogin(
       consumerEmail,
       UserRole.CONSUMER,
@@ -272,7 +272,11 @@ describe('Handoffs (e2e)', () => {
       .expect(200);
 
     const order = await orders.findOneByOrFail({ paymentIntentId: intentId });
-    return { id: order.id, trackingCode: order.trackingCode };
+    return {
+      id: order.id,
+      trackingCode: order.trackingCode,
+      consumerCookie,
+    };
   }
 
   // Skips straight to PARCEL_RECEIVED_AT_ORIGIN for suites (rider
@@ -1879,6 +1883,330 @@ describe('Handoffs (e2e)', () => {
         .post(`/api/v1/handoffs/orders/${orderId}/collect`)
         .send({ code: '000000', identityConfirmed: true })
         .expect(401);
+    });
+  });
+
+  describe('counter flow: shelf numbers, scan lookup, queues', () => {
+    function dropOff(orderId: string): request.Test {
+      return request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/drop-off`)
+        .set('Cookie', [originOperatorCookie])
+        .expect(200);
+    }
+
+    it('gives each parcel on a shelf its own number, frees it at pickup, and reuses it', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'shelf-rider@handoffs.e2e.test',
+      );
+      const a = await createPaidOrder('shelf-a@handoffs.e2e.test');
+      const b = await createPaidOrder('shelf-b@handoffs.e2e.test');
+
+      const shelfA = ((await dropOff(a.id)).body as SuccessBody).data
+        .shelfNumber as number;
+      const shelfB = ((await dropOff(b.id)).body as SuccessBody).data
+        .shelfNumber as number;
+      expect(shelfA).toBeGreaterThanOrEqual(1);
+      expect(shelfB).not.toBe(shelfA);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${a.id}/accept`)
+        .set('Cookie', [riderCookie])
+        .expect(200);
+      await pickUp(a.id, riderCookie);
+      const pickedUp = await orders.findOneByOrFail({ id: a.id });
+      expect(pickedUp.shelfNodeId).toBeNull();
+      expect(pickedUp.shelfNumber).toBeNull();
+
+      const c = await createPaidOrder('shelf-c@handoffs.e2e.test');
+      const shelfC = ((await dropOff(c.id)).body as SuccessBody).data
+        .shelfNumber as number;
+      expect(shelfC).toBe(shelfA);
+    });
+
+    it('shelves the parcel at the destination on intake and frees it on collection', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'shelf-dest-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'shelf-dest@handoffs.e2e.test',
+        riderCookie,
+      );
+      const shelved = await orders.findOneByOrFail({ id: orderId });
+      expect(shelved.shelfNodeId).toBe(destinationNodeId);
+      expect(shelved.shelfNumber).toBeGreaterThanOrEqual(1);
+
+      const code = await extractLatestCollectionCode(receiverEmail);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(200);
+
+      const collected = await orders.findOneByOrFail({ id: orderId });
+      expect(collected.shelfNodeId).toBeNull();
+      expect(collected.shelfNumber).toBeNull();
+    });
+
+    it('finds a sloppily typed code at either Node, with the next action for that side', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'scan-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'scan-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const { trackingCode } = await orders.findOneByOrFail({ id: orderId });
+      // "LCM-4F2K-9XPT" typed as "4f2k 9xpt".
+      const typed = trackingCode.slice(4).replace('-', ' ').toLowerCase();
+
+      const atDestination = (
+        (
+          await request(app.getHttpServer())
+            .get(
+              `/api/v1/handoffs/orders/by-tracking-code/${encodeURIComponent(typed)}`,
+            )
+            .set('Cookie', [destinationOperatorCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data;
+      expect(atDestination.trackingCode).toBe(trackingCode);
+      expect(atDestination.myRole).toBe('destination');
+      expect(atDestination.nextAction).toBe('await_arrival');
+      expect(atDestination.shelfNumber).toBeNull();
+      expect(atDestination.receiverMasked).toBe('R. T. · ***5678');
+      expect(JSON.stringify(atDestination)).not.toContain('Receiver Tester');
+
+      const atOrigin = (
+        (
+          await request(app.getHttpServer())
+            .get(
+              `/api/v1/handoffs/orders/by-tracking-code/${encodeURIComponent(typed)}`,
+            )
+            .set('Cookie', [originOperatorCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data;
+      expect(atOrigin.myRole).toBe('origin');
+      expect(atOrigin.nextAction).toBe('hand_to_rider');
+      expect(atOrigin.shelfNumber).toEqual(expect.any(Number));
+    });
+
+    it('404s for input that cannot be a tracking code', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/handoffs/orders/by-tracking-code/not-a-code')
+        .set('Cookie', [originOperatorCookie])
+        .expect(404);
+    });
+
+    it('filters to a work queue scoped to the side the Node plays', async () => {
+      const { id } = await createPaidOrder('queue-consumer@handoffs.e2e.test');
+      const ids = async (cookie: string, queue: string) =>
+        (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/handoffs/my-node/orders?queue=${queue}&limit=100`)
+              .set('Cookie', [cookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data.items as { id: string; nextAction: string }[];
+
+      const toReceive = await ids(originOperatorCookie, 'to_receive');
+      expect(toReceive.find((item) => item.id === id)?.nextAction).toBe(
+        'confirm_drop_off',
+      );
+      expect(
+        (await ids(destinationOperatorCookie, 'incoming')).map((i) => i.id),
+      ).not.toContain(id);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-node/orders?queue=everything')
+        .set('Cookie', [originOperatorCookie])
+        .expect(400);
+    });
+  });
+
+  describe('tracking emails and public tracking', () => {
+    async function latestEmail(to: string, subject: string) {
+      const event = await outboxEvents
+        .createQueryBuilder('o')
+        .where('o."eventType" = \'email\'')
+        .andWhere("o.payload ->> 'to' = :to", { to })
+        .andWhere("o.payload ->> 'subject' = :subject", { subject })
+        .orderBy('o."createdAt"', 'DESC')
+        .getOneOrFail();
+      return event.payload as {
+        text: string;
+        html: string;
+        attachments?: { contentId: string; contentType: string }[];
+      };
+    }
+
+    function tokenFrom(text: string): string {
+      const match = /\/track\/[^?\s]+\?t=([A-Za-z0-9_-]+)/.exec(text);
+      if (!match) {
+        throw new Error('No tracking link in email');
+      }
+      return match[1];
+    }
+
+    it('sends the sender their tracking code, label instructions, link and QR', async () => {
+      const consumerEmail = 'track-sender@handoffs.e2e.test';
+      const { trackingCode } = await createPaidOrder(consumerEmail);
+
+      const email = await latestEmail(
+        consumerEmail,
+        'Your Locoomo order is confirmed',
+      );
+      expect(email.text).toContain(`Tracking code: ${trackingCode}`);
+      expect(email.text).toContain('Write this clearly on the parcel');
+      expect(email.text).toContain(`/track/${trackingCode}?t=`);
+      expect(email.html).toContain('cid:tracking-qr');
+      expect(email.attachments?.[0]).toMatchObject({
+        contentId: 'tracking-qr',
+        contentType: 'image/png',
+      });
+    });
+
+    it('tells the receiver a parcel is on its way when it is dropped off', async () => {
+      const { id, trackingCode } = await createPaidOrder(
+        'track-dropoff@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${id}/drop-off`)
+        .set('Cookie', [originOperatorCookie])
+        .expect(200);
+
+      const email = await latestEmail(
+        receiverEmail,
+        'A parcel is on its way to you',
+      );
+      expect(email.text).toContain(trackingCode);
+      expect(email.text).toContain('ready for collection at');
+      expect(email.attachments).toHaveLength(1);
+    });
+
+    it("gives the sender's order a tracking link and label instructions", async () => {
+      const { id, trackingCode, consumerCookie } = await createPaidOrder(
+        'track-orders-api@handoffs.e2e.test',
+      );
+
+      const data = (
+        (
+          await request(app.getHttpServer())
+            .get(`/api/v1/orders/${id}`)
+            .set('Cookie', [consumerCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data as {
+        trackingUrl: string;
+        labelInstructions: { lines: string[] };
+      };
+      expect(data.trackingUrl).toContain(`/track/${trackingCode}?t=`);
+      expect(data.labelInstructions.lines[0]).toBe(trackingCode);
+      expect(data.labelInstructions.lines[1]).toMatch(/^TO: /);
+    });
+
+    describe('GET /track/:trackingCode', () => {
+      let trackingCode: string;
+      let token: string;
+
+      beforeAll(async () => {
+        const order = await createPaidOrder('track-public@handoffs.e2e.test');
+        trackingCode = order.trackingCode;
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${order.id}/drop-off`)
+          .set('Cookie', [originOperatorCookie])
+          .expect(200);
+        token = tokenFrom(
+          (await latestEmail(receiverEmail, 'A parcel is on its way to you'))
+            .text,
+        );
+      });
+
+      it('shows status, timeline and destination with the link token — and nothing personal', async () => {
+        const data = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/track/${trackingCode}?t=${token}`)
+              .expect(200)
+          ).body as SuccessBody
+        ).data as {
+          status: string;
+          isFinal: boolean;
+          timeline: { status: string; label: string }[];
+          destination: { name: string; openingHours: unknown };
+          nextStep: string;
+        };
+
+        expect(data.status).toBe('at_origin_station');
+        expect(data.isFinal).toBe(false);
+        expect(data.timeline.map((entry) => entry.status)).toEqual([
+          'order_placed',
+          'at_origin_station',
+        ]);
+        expect(data.destination.name).toContain('destination');
+        expect(data.destination.openingHours).toEqual(
+          NODE_CONTACT_FIELDS.openingHours,
+        );
+        expect(data.nextStep).toEqual(expect.any(String));
+
+        const body = JSON.stringify(data);
+        for (const secret of [
+          'Receiver Tester',
+          receiverEmail,
+          '8012345678',
+          'shelf',
+          'amountKobo',
+        ]) {
+          expect(body).not.toContain(secret);
+        }
+      });
+
+      it('accepts the last four digits of the receiver phone instead of a token', async () => {
+        await request(app.getHttpServer())
+          .get(`/api/v1/track/${trackingCode.toLowerCase()}?phoneLast4=5678`)
+          .expect(200);
+      });
+
+      it('answers every failure with the same 404', async () => {
+        const responses = await Promise.all(
+          [
+            `/api/v1/track/${trackingCode}?t=${token.slice(0, -1)}x`,
+            `/api/v1/track/${trackingCode}?phoneLast4=0000`,
+            `/api/v1/track/LCM-0000-0000?t=${token}`,
+            `/api/v1/track/garbage?phoneLast4=5678`,
+          ].map((url) => request(app.getHttpServer()).get(url).expect(404)),
+        );
+        const messages = new Set(
+          responses.map(
+            (response) =>
+              (response.body as { error: { code: string } }).error.code,
+          ),
+        );
+        expect([...messages]).toEqual(['NOT_FOUND']);
+      });
+
+      it('requires exactly one of t or phoneLast4', async () => {
+        await request(app.getHttpServer())
+          .get(`/api/v1/track/${trackingCode}`)
+          .expect(400);
+        await request(app.getHttpServer())
+          .get(`/api/v1/track/${trackingCode}?t=${token}&phoneLast4=5678`)
+          .expect(400);
+      });
+
+      it('stops working 30 days after the parcel is collected', async () => {
+        const order = await createPaidOrder('track-expired@handoffs.e2e.test');
+        await orders.query(
+          `UPDATE orders SET status = 'completed', "updatedAt" = now() - interval '31 days'
+            WHERE id = $1`,
+          [order.id],
+        );
+
+        await request(app.getHttpServer())
+          .get(`/api/v1/track/${order.trackingCode}?phoneLast4=5678`)
+          .expect(404);
+      });
     });
   });
 });

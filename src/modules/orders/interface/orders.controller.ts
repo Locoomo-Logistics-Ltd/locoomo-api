@@ -5,13 +5,17 @@ import { Roles } from '../../../common/auth/decorators/roles.decorator';
 import { UserRole } from '../../../common/auth/user-role.enum';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import { TrackingLinkService } from '../../tracking/application/tracking-link.service';
 import { OrderQueryService } from '../application/order-query.service';
 import { OrderResponseDto } from './dto/order-response.dto';
 
 @Controller('orders')
 @Roles(UserRole.CONSUMER)
 export class OrdersController {
-  constructor(private readonly orderQueryService: OrderQueryService) {}
+  constructor(
+    private readonly orderQueryService: OrderQueryService,
+    private readonly trackingLinkService: TrackingLinkService,
+  ) {}
 
   @Get()
   async findMine(
@@ -20,7 +24,12 @@ export class OrdersController {
   ): Promise<PaginatedResultDto<OrderResponseDto>> {
     const result = await this.orderQueryService.findMine(user.id, query);
     return new PaginatedResultDto(
-      result.items.map((order) => OrderResponseDto.fromRow(order)),
+      result.items.map((order) =>
+        OrderResponseDto.fromRow(
+          order,
+          this.trackingLinkService.urlFor(order.trackingCode),
+        ),
+      ),
       result.page,
       result.limit,
       result.total,
@@ -33,6 +42,9 @@ export class OrdersController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<OrderResponseDto> {
     const row = await this.orderQueryService.getMine(user.id, id);
-    return OrderResponseDto.fromRow(row);
+    return OrderResponseDto.fromRow(
+      row,
+      this.trackingLinkService.urlFor(row.trackingCode),
+    );
   }
 }

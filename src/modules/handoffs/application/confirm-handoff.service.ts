@@ -102,7 +102,8 @@ export class ConfirmHandoffService {
       // aborted even though we caught it, so the re-read has to be a fresh
       // query outside it, not chained onto the same manager.
       const [row] = await this.dataSource.query<OrderTransitionResult[]>(
-        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId"
+        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId",
+                "shelfNumber"
            FROM orders WHERE id = $1`,
         [orderId],
       );

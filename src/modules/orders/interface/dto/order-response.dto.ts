@@ -1,4 +1,8 @@
 import { ParcelSize } from '../../../../common/parcel-size.enum';
+import {
+  LabelInstructions,
+  labelInstructionsFor,
+} from '../../../tracking/application/label-instructions';
 import { OrderWithNodeNames } from '../../application/order-query.service';
 import { OrderStatus } from '../../domain/order-status.enum';
 
@@ -20,8 +24,17 @@ export class OrderResponseDto {
   amountKobo!: number;
   status!: OrderStatus;
   createdAt!: Date;
+  // Public tracking page link for the sender to share with the receiver
+  // (WhatsApp/SMS) — carries the signed token, so treat it like the order
+  // itself.
+  trackingUrl!: string;
+  // What to write on the parcel before drop-off (Nodes have no printers).
+  labelInstructions!: LabelInstructions;
 
-  static fromRow(order: OrderWithNodeNames): OrderResponseDto {
+  static fromRow(
+    order: OrderWithNodeNames,
+    trackingUrl: string,
+  ): OrderResponseDto {
     const dto = new OrderResponseDto();
     dto.id = order.id;
     dto.trackingCode = order.trackingCode;
@@ -40,6 +53,11 @@ export class OrderResponseDto {
     dto.amountKobo = order.amountKobo;
     dto.status = order.status;
     dto.createdAt = order.createdAt;
+    dto.trackingUrl = trackingUrl;
+    dto.labelInstructions = labelInstructionsFor(
+      order.trackingCode,
+      order.destinationNodeName,
+    );
     return dto;
   }
 }

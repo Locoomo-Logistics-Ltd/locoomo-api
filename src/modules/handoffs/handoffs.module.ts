@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { TrackingModule } from '../tracking/tracking.module';
 import { IdempotencyModule } from '../../common/idempotency/idempotency.module';
 import { EarningsModule } from '../earnings/earnings.module';
 import { NodeOperatorsModule } from '../node-operators/node-operators.module';
@@ -15,6 +16,7 @@ import { ConfirmHandoffService } from './application/confirm-handoff.service';
 import { ConfirmIntakeService } from './application/confirm-intake.service';
 import { HandoffCodeIssuerService } from './application/handoff-code-issuer.service';
 import { HandoffCodeValidatorService } from './application/handoff-code-validator.service';
+import { ReceiverNotificationService } from './application/receiver-notification.service';
 import { ListMyNodeOrdersService } from './application/list-my-node-orders.service';
 import { ListMyOrdersService } from './application/list-my-orders.service';
 import { OrderLookupService } from './application/order-lookup.service';
@@ -35,6 +37,7 @@ import { HandoffsController } from './interface/handoffs.controller';
     // IdempotencyModule: every scan/confirm endpoint (decision #5).
     // NotificationsModule: OutboxService.enqueueEmail (collection code).
     // EarningsModule: RecordRevenueSplitService, on order completion.
+    // TrackingModule: tracking code/QR/link block in receiver emails.
     OrdersModule,
     RidersModule,
     NodeOperatorsModule,
@@ -42,6 +45,7 @@ import { HandoffsController } from './interface/handoffs.controller';
     IdempotencyModule,
     NotificationsModule,
     EarningsModule,
+    TrackingModule,
   ],
   controllers: [HandoffsController],
   providers: [
@@ -58,6 +62,7 @@ import { HandoffsController } from './interface/handoffs.controller';
     ConfirmCollectionService,
     ListMyOrdersService,
     ListMyNodeOrdersService,
+    ReceiverNotificationService,
   ],
 })
 export class HandoffsModule {}

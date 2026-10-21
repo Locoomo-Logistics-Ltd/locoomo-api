@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { TrackingModule } from '../tracking/tracking.module';
 import { IdempotencyModule } from '../../common/idempotency/idempotency.module';
 import { IdentityModule } from '../identity/identity.module';
 import { NodesModule } from '../nodes/nodes.module';
@@ -30,6 +31,7 @@ import { PricingController } from './interface/pricing.controller';
     IdentityModule,
     NotificationsModule,
     OrdersModule,
+    TrackingModule,
   ],
   controllers: [
     PaymentIntentsController,

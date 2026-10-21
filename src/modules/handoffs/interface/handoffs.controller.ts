@@ -33,6 +33,7 @@ import { CollectionCodeResendResponseDto } from './dto/collection-code-resend-re
 import { ConfirmCollectionDto } from './dto/confirm-collection.dto';
 import { ConfirmHandoffDto } from './dto/confirm-handoff.dto';
 import { HandoffCodeResponseDto } from './dto/handoff-code-response.dto';
+import { MyNodeOrdersQueryDto } from './dto/my-node-orders-query.dto';
 import { MyNodeOrderResponseDto } from './dto/my-node-order-response.dto';
 import { MyOrderResponseDto } from './dto/my-order-response.dto';
 import { OrderPreviewResponseDto } from './dto/order-preview-response.dto';
@@ -97,7 +98,7 @@ export class HandoffsController {
   @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
   @Get('my-node/orders')
   myNodeOrders(
-    @Query() query: PaginationQueryDto,
+    @Query() query: MyNodeOrdersQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<PaginatedResultDto<MyNodeOrderResponseDto>> {
     return this.listMyNodeOrdersService.list(user.id, query);
@@ -113,11 +114,9 @@ export class HandoffsController {
     @Param('code') code: string,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<OrderPreviewResponseDto> {
-    const row = await this.orderLookupService.findByTrackingCodeForOrigin(
-      code,
-      user.id,
-    );
-    return OrderPreviewResponseDto.fromRow(row);
+    const { row, myNodeIds } =
+      await this.orderLookupService.findByTrackingCodeForNode(code, user.id);
+    return OrderPreviewResponseDto.fromRow(row, myNodeIds);
   }
 
   // NODE_STAFF alongside NODE_OPERATOR — operating a Node's handoffs isn't

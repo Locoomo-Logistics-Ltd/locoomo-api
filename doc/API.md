@@ -129,7 +129,7 @@ backend greps logs for.
 | 400 | `NODE_LOCATION_MISMATCH` | `POST /nodes`, `PATCH /nodes/:id`, `POST /node-operators/onboarding`, `POST /node-operators/nodes` — the map pin is clearly not where the address is. Show the message (it says where the address actually is) and let the user move the pin or fix the address |
 | 400 | `INVALID_REVENUE_SPLIT` | `POST /admin/revenue-split` — `riderPercent`/`nodePercent`/`platformPercent` didn't sum to 100 |
 | 400 | `BANK_ACCOUNT_VERIFICATION_FAILED` | `PATCH /riders/me/payout-account` or `PATCH /node-operators/nodes/:nodeId/payout-account` — Paystack couldn't resolve that `accountNumber` at that `bankCode`. Nothing is saved; a previously-verified payout account on file, if any, is untouched |
-| 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; everything else defaults to 100/min |
+| 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; `/track/:trackingCode` allows 10/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
 | 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed, timed out (15 s) or was unreachable — placing an order, listing banks, or resolving a payout account number. Safe to retry |
 | 503 | `PRICING_NOT_CONFIGURED` | No Admin-configured pricing rule exists yet — an ops/config gap, not something the consumer caused; surface as "orders temporarily unavailable" |
@@ -1366,7 +1366,12 @@ Response `200`, `data`:
       "parcelSize": "small",
       "amountKobo": 92000,
       "status": "awaiting_drop_off",
-      "createdAt": "2026-07-22T09:29:00.000Z"
+      "createdAt": "2026-07-22T09:29:00.000Z",
+      "trackingUrl": "https://app.locoomo.com/track/LCM-4F2K-9XPT?t=Zk3qW1…",
+      "labelInstructions": {
+        "lines": ["LCM-4F2K-9XPT", "TO: LEKKI NODE"],
+        "note": "Write this clearly on the parcel with a marker before drop-off."
+      }
     }
   ],
   "page": 1,
@@ -1374,6 +1379,15 @@ Response `200`, `data`:
   "total": 1
 }
 ```
+
+- `trackingUrl` — the public tracking page for this parcel (see [`GET
+  /track/:trackingCode`](#get-apiv1tracktrackingcode)). Offer a **"Share tracking link"**
+  button (WhatsApp/SMS share sheet) so the sender can pass it to the receiver. It contains
+  a signed token, so don't log it or send it to analytics.
+- `labelInstructions` — Pickup Stations have no printers, so the sender labels the parcel
+  by hand. While `status` is `awaiting_drop_off`, show `lines` large, one per line, exactly
+  as they should be written, with `note` above them. The same instructions are in the
+  order confirmation email.
 
 `trackingCode` is a human-friendly reference for the consumer to quote (support calls,
 order confirmation UI) — `LCM-` followed by 8 characters from a Crockford-Base32-style
@@ -1453,9 +1467,14 @@ Response `200`, `data`:
   "trackingCode": "LCM-4F2K-9XPT",
   "status": "rider_assigned",
   "originNodeId": "uuid",
-  "destinationNodeId": "uuid"
+  "destinationNodeId": "uuid",
+  "shelfNumber": 17
 }
 ```
+
+`shelfNumber` is the number written on the parcel at the Node it's sitting at right now
+(see [Shelf numbers](#shelf-numbers)) — `null` while it's with a rider or once collected.
+Every handoff endpoint below that says "same shape as the accept response" includes it.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Rider), `403 RIDER_NOT_ACTIVE`,
 `409 ILLEGAL_ORDER_TRANSITION` (order already claimed, or not yet at
@@ -1510,6 +1529,18 @@ destination, current and past, newest first. `myRole` on each item tells you whi
 that order's Node played (a Node is an origin for some orders and a destination for
 others). Paginated (see [Pagination](#pagination-list-endpoints)).
 
+Optional `queue` query param narrows this to one of the counter's work queues:
+
+| `queue` | Returns |
+|---|---|
+| `to_receive` | Paid orders waiting to be dropped off at your Node (`awaiting_drop_off`) |
+| `to_dispatch` | On your shelf, waiting for or being handed to a rider (`parcel_received_at_origin`, `rider_assigned`) |
+| `incoming` | On the way to your Node (`rider_assigned`, `in_transit`) |
+| `to_collect` | At your counter as the destination — to shelve, or waiting for the receiver (`arrived_at_destination`, `ready_for_collection`) |
+| *(omitted)* | Everything, as before |
+
+Any other value is `400 VALIDATION_FAILED`.
+
 Response `200`, `data`:
 
 ```json
@@ -1526,7 +1557,10 @@ Response `200`, `data`:
       "parcelDescription": "A small box of documents",
       "parcelSize": "small",
       "createdAt": "2026-07-22T09:14:00.000Z",
-      "myRole": "origin"
+      "myRole": "origin",
+      "nextAction": "await_courier",
+      "shelfNumber": 17,
+      "receiverMasked": "C. O. · ***5678"
     }
   ],
   "page": 1,
@@ -1535,18 +1569,25 @@ Response `200`, `data`:
 }
 ```
 
-No receiver details here either — same reasoning as `by-tracking-code` below, this is a
-history/overview view, not the collection step itself.
+`myRole`, `nextAction`, `shelfNumber` and `receiverMasked` mean the same as in
+`by-tracking-code` below. Still no full receiver details — this is an overview, not the
+collection step.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator/NodeStaff).
 
 ### `GET /api/v1/handoffs/orders/by-tracking-code/:code`
 
-**Requires an authenticated NodeOperator or NodeStaff session**, and only returns orders
-whose `originNodeId` is one of *your* Nodes (`404 NOT_FOUND` otherwise —
-not-found-not-forbidden, same pattern as everywhere else). This is what your app calls
-after scanning/typing a consumer's QR/tracking code at drop-off, to preview the parcel
-before confirming receipt.
+**Requires an authenticated NodeOperator or NodeStaff session.** The Node app's one "scan"
+lookup — call it with whatever the operator typed or scanned, at **either end** of the
+journey: it returns orders whose origin *or* destination is one of your Nodes (`404
+NOT_FOUND` otherwise — not-found-not-forbidden, same pattern as everywhere else).
+
+**Input is forgiving**, because codes are typed off handwritten labels. Send it exactly as
+entered — don't normalise client-side. The server ignores case, spaces and dashes, accepts
+the code with or without the `LCM` prefix, reads `O` as `0` and `I`/`L` as `1`, and accepts
+a whole pasted tracking URL (`…/track/LCM-4F2K-9XPT?t=…`). So `4f2k 9xpt` finds
+`LCM-4F2K-9XPT`. URL-encode it in the path. Anything that can't be a tracking code is a
+plain `404`.
 
 Response `200`, `data`:
 
@@ -1554,20 +1595,53 @@ Response `200`, `data`:
 {
   "id": "uuid",
   "trackingCode": "LCM-4F2K-9XPT",
-  "status": "awaiting_drop_off",
+  "status": "rider_assigned",
   "originNodeId": "uuid",
+  "originNodeName": "Yaba Node",
   "destinationNodeId": "uuid",
   "destinationNodeName": "Lekki Node",
   "parcelDescription": "A small box of documents",
   "parcelSize": "small",
-  "createdAt": "2026-07-22T09:29:00.000Z"
+  "createdAt": "2026-07-22T09:29:00.000Z",
+  "myRole": "origin",
+  "nextAction": "hand_to_rider",
+  "shelfNumber": 17,
+  "receiverMasked": "C. O. · ***5678"
 }
 ```
 
-No receiver PII here either — that's only relevant at the destination Node, at
-collection.
+| Field | Meaning |
+|---|---|
+| `myRole` | `origin` or `destination` — the side *your* Node plays in this order. If you're a member at both Nodes, it's whichever side the parcel's business is currently at |
+| `nextAction` | What staff at your Node should do now — drive the main button off this rather than re-deriving it from `status`. Values below |
+| `shelfNumber` | The number on the parcel at **your** Node, `null` if it isn't on one of your shelves |
+| `receiverMasked` | Initials and the last 4 phone digits — enough to match the parcel to the person at the counter. Full receiver details stay collection-only |
+
+| `nextAction` | Show | Calls |
+|---|---|---|
+| `confirm_drop_off` | "Receive parcel" | `POST /handoffs/orders/:id/drop-off` |
+| `await_courier` | "Waiting for a rider" (no button) | — |
+| `hand_to_rider` | "Hand to rider — enter their code" | `POST /handoffs/orders/:id/confirm-handoff` (`rider_pickup`) |
+| `await_arrival` | "On the way to you" (no button) | — |
+| `receive_from_rider` | "Receive from rider — enter their code" | `POST /handoffs/orders/:id/confirm-handoff` (`rider_arrival`) |
+| `intake` | "Shelve parcel" | `POST /handoffs/orders/:id/intake` |
+| `hand_to_receiver` | "Hand to receiver" | `POST /handoffs/orders/:id/collect` |
+| `none` | Read-only | — |
+
+More values will be added (external couriers, returns) — give unknown ones a read-only
+default rather than crashing.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator/NodeStaff), `404 NOT_FOUND`.
+
+#### Shelf numbers
+
+Pickup Stations have no printers, so parcels are identified by hand-written numbers. When a
+Node takes a parcel in — **drop-off** at the origin, **intake** at the destination — the
+API assigns it the lowest number not in use at that Node (`1`, `2`, `3`, …) and returns it
+as `shelfNumber`. Show it big with "Write **#17** on the parcel" next to the tracking code.
+Numbers are unique per Node (across parcels going out and coming in, since it's one shelf)
+and are freed when the parcel leaves — rider pickup at the origin, collection at the
+destination — so they stay short.
 
 ### `POST /api/v1/handoffs/orders/:id/drop-off`
 
@@ -1577,7 +1651,9 @@ way as the lookup above. Confirms the consumer has physically handed over the pa
 same order is a safe no-op the second time, same response either way.
 
 Response `200`, `data`: same shape as the accept response above, `status:
-"parcel_received_at_origin"`.
+"parcel_received_at_origin"`, with the parcel's new [`shelfNumber`](#shelf-numbers) at
+your Node. This step also emails the receiver for the first time — "a parcel is on its way
+to you", with the tracking code, a QR code and the tracking link.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator/NodeStaff), `404 NOT_FOUND` (not
 your Node), `409 ILLEGAL_ORDER_TRANSITION` (order isn't at `awaiting_drop_off`).
@@ -1648,7 +1724,8 @@ the receiver — you never see the code yourself, only the receiver does. Idempo
 calling this twice is a safe no-op the second time.
 
 Response `200`, `data`: same shape as the accept response above, `status:
-"ready_for_collection"`.
+"ready_for_collection"`, with the parcel's new [`shelfNumber`](#shelf-numbers) at your
+Node. The collection-code email also carries the tracking code, QR code and link.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator/NodeStaff), `404 NOT_FOUND` (not
 your Node), `409 ILLEGAL_ORDER_TRANSITION` (order isn't at `arrived_at_destination`).
@@ -1708,6 +1785,84 @@ reaches `completed`, its revenue is split and recorded — see the `earnings` en
 below, which is where that money is actually tracked. Payout itself is still manual (an
 Admin disburses off-system); these endpoints are the record of what's owed, not a payout
 flow.
+
+## Public tracking
+
+The receiver has no account, so parcels can be tracked without logging in — on a frontend
+page at `{FRONTEND_URL}/track/:trackingCode` that calls the endpoint below. People reach it
+two ways:
+
+1. **From an email link** (or one the sender shared from `trackingUrl`):
+   `/track/LCM-4F2K-9XPT?t=<token>` — pass `t` through to the API.
+2. **Typed**: a form asking for the tracking code and "last 4 digits of the receiver's
+   phone number" — pass those as `phoneLast4`.
+
+Page requirements: `<meta name="robots" content="noindex">` and `Referrer-Policy:
+no-referrer` (so the token never leaks to other sites); never store `t` (no localStorage,
+strip it from analytics page views); re-fetch every 60 s while visible and `isFinal` is
+false.
+
+Emails that link here: the sender's order confirmation, the receiver's "a parcel is on its
+way to you" (sent at drop-off), and the receiver's collection-code emails. Each also shows
+the tracking code and a QR code of it to present at the station counter.
+
+### `GET /api/v1/track/:trackingCode`
+
+**Public — no session.** Query: exactly one of `t` (token from the link) or `phoneLast4`
+(4 digits). The code is read as forgivingly as in the Node app's lookup. Rate-limited to
+10 requests/min per IP.
+
+Response `200`, `data`:
+
+```json
+{
+  "trackingCode": "LCM-4F2K-9XPT",
+  "status": "on_the_way",
+  "statusLabel": "On the way",
+  "isFinal": false,
+  "timeline": [
+    { "status": "order_placed", "label": "Order placed", "at": "2026-10-21T08:10:00.000Z" },
+    { "status": "at_origin_station", "label": "Dropped off at Yaba Node", "at": "2026-10-21T09:29:00.000Z" },
+    { "status": "at_origin_station", "label": "Rider assigned", "at": "2026-10-21T09:41:00.000Z" },
+    { "status": "on_the_way", "label": "On the way to Lekki Node", "at": "2026-10-21T10:05:00.000Z" }
+  ],
+  "origin": { "name": "Yaba Node", "city": "Lagos" },
+  "destination": {
+    "name": "Lekki Node",
+    "address": "45 Admiralty Way, Lekki Phase 1",
+    "city": "Lagos",
+    "state": "Lagos",
+    "openingHours": { "mon": [{ "open": "08:00", "close": "18:00" }] }
+  },
+  "courierLabel": "Locoomo rider",
+  "etaMinutes": null,
+  "nextStep": "The parcel is on its way to Lekki Node. We'll email the receiver a collection code when it's ready.",
+  "updatedAt": "2026-10-21T10:05:00.000Z"
+}
+```
+
+| `status` | `statusLabel` |
+|---|---|
+| `awaiting_drop_off` | Awaiting drop-off |
+| `at_origin_station` | At origin station (includes "rider assigned, not yet collected") |
+| `on_the_way` | On the way |
+| `arrived_at_destination` | Arrived at destination station |
+| `ready_for_collection` | Ready for collection |
+| `collected` | Collected (`isFinal: true`) |
+
+Render `statusLabel`, `nextStep` and the timeline `label`s as given — the copy is
+server-side so it can change without a release. `destination.openingHours` can be `null`
+(see [Opening hours](#opening-hours)); `courierLabel` is `null` when no one is carrying the
+parcel; `etaMinutes` is always `null` for now (external couriers will fill it). Expect more
+`status` values later (returns) — fall back to showing `statusLabel`.
+
+**Never returned:** names, phone numbers, emails, collection or handover codes, shelf
+numbers, prices, internal ids.
+
+Errors: `404 NOT_FOUND` for an unknown code, a wrong `t`, wrong `phoneLast4`, or a parcel
+collected more than 30 days ago — deliberately identical, so show one "We couldn't find
+that parcel. Check the code and try again." message. `400 VALIDATION_FAILED` (neither or
+both of `t`/`phoneLast4`, or `phoneLast4` not 4 digits), `429 RATE_LIMITED`.
 
 ## Earnings (revenue split)
 

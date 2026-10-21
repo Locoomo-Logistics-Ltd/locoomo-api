@@ -1,10 +1,12 @@
 import { ParcelSize } from '../../../../common/parcel-size.enum';
+import {
+  maskReceiver,
+  NextAction,
+  nextActionFor,
+  NodeRole,
+  nodeRoleFor,
+} from '../../domain/counter-view';
 
-// Deliberately no receiver PII — same reasoning as OrderPreviewResponseDto:
-// a general history view doesn't need it, only the actual collection step
-// does. myRole tells the operator which side of this order their own Node
-// played (a Node can be both an origin for some orders and a destination
-// for others), since a single joined Node name/address wouldn't say which.
 export interface MyNodeOrderRow {
   id: string;
   trackingCode: string;
@@ -16,7 +18,10 @@ export interface MyNodeOrderRow {
   parcelDescription: string;
   parcelSize: ParcelSize;
   createdAt: Date;
-  myRole: 'origin' | 'destination';
+  shelfNodeId: string | null;
+  shelfNumber: number | null;
+  receiverFullName: string;
+  receiverPhone: string;
 }
 
 export class MyNodeOrderResponseDto {
@@ -30,9 +35,15 @@ export class MyNodeOrderResponseDto {
   parcelDescription!: string;
   parcelSize!: ParcelSize;
   createdAt!: Date;
-  myRole!: 'origin' | 'destination';
+  myRole!: NodeRole;
+  nextAction!: NextAction;
+  shelfNumber!: number | null;
+  receiverMasked!: string;
 
-  static fromRow(row: MyNodeOrderRow): MyNodeOrderResponseDto {
+  static fromRow(
+    row: MyNodeOrderRow,
+    myNodeIds: readonly string[],
+  ): MyNodeOrderResponseDto {
     const dto = new MyNodeOrderResponseDto();
     dto.id = row.id;
     dto.trackingCode = row.trackingCode;
@@ -44,7 +55,13 @@ export class MyNodeOrderResponseDto {
     dto.parcelDescription = row.parcelDescription;
     dto.parcelSize = row.parcelSize;
     dto.createdAt = row.createdAt;
-    dto.myRole = row.myRole;
+    dto.myRole = nodeRoleFor(row, myNodeIds);
+    dto.nextAction = nextActionFor(row.status, dto.myRole);
+    dto.shelfNumber =
+      row.shelfNodeId && myNodeIds.includes(row.shelfNodeId)
+        ? row.shelfNumber
+        : null;
+    dto.receiverMasked = maskReceiver(row.receiverFullName, row.receiverPhone);
     return dto;
   }
 }

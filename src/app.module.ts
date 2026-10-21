@@ -15,6 +15,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { RidersModule } from './modules/riders/riders.module';
+import { TrackingModule } from './modules/tracking/tracking.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { RidersModule } from './modules/riders/riders.module';
     HandoffsModule,
     EarningsModule,
     AdminModule,
+    TrackingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

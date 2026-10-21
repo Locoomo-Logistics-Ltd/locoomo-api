@@ -81,7 +81,8 @@ export class ConfirmCollectionService {
 
     if (alreadyProcessed) {
       const [row] = await this.dataSource.query<OrderTransitionResult[]>(
-        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId"
+        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId",
+                "shelfNumber"
            FROM orders WHERE id = $1`,
         [orderId],
       );

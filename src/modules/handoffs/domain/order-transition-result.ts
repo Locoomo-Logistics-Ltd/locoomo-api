@@ -10,4 +10,7 @@ export interface OrderTransitionResult {
   status: string;
   originNodeId: string;
   destinationNodeId: string;
+  // Set after drop-off/intake (the number to write on the parcel), null
+  // once it has left the Node.
+  shelfNumber: number | null;
 }
