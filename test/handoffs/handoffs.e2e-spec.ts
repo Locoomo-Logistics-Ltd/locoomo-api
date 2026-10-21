@@ -35,6 +35,7 @@ import { PricingRuleEntity } from '../../src/modules/payments/infrastructure/ent
 import { PaystackPaymentProvider } from '../../src/modules/payments/infrastructure/paystack-payment-provider';
 import { RiderStatus } from '../../src/modules/riders/domain/rider-status.enum';
 import { RiderProfileEntity } from '../../src/modules/riders/infrastructure/entities/rider-profile.entity';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface ErrorBody {
   success: false;
@@ -232,6 +233,7 @@ describe('Handoffs (e2e)', () => {
         // without ever picking it up, so runtime consumption is much
         // higher than the test count naively suggests.
         capacity: 500,
+        ...NODE_CONTACT_FIELDS,
       })
       .expect(201);
     return (response.body as SuccessBody).data.id as string;

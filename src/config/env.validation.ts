@@ -47,6 +47,15 @@ export const envSchema = z
     // secret is needed since we only ever verify a client-obtained ID token
     // server-side, never do a server-side code exchange.
     GOOGLE_CLIENT_ID: z.string().min(1),
+    // Google Maps Platform key with the Geocoding API enabled (and billing on
+    // the project — Google rejects keys without it). Used to check a Node's
+    // map pin against its address (nodes/infrastructure/google-geocoder.ts).
+    // Optional: without it every check is recorded as "unverified" instead
+    // of blocking Node creation. An empty value counts as unset.
+    GOOGLE_MAPS_API_KEY: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().min(1).optional(),
+    ),
   })
   .refine(
     (config) =>

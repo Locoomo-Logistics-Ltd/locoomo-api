@@ -10,6 +10,7 @@ import { NodeOperatorQueryService } from './application/node-operator-query.serv
 import { OnboardNodeService } from './application/onboard-node.service';
 import { RemoveNodeStaffService } from './application/remove-node-staff.service';
 import { SetNodePayoutAccountService } from './application/set-node-payout-account.service';
+import { SetNodeContactService } from './application/set-node-contact.service';
 import { SetNodeVisibilityService } from './application/set-node-visibility.service';
 import { NodeMembershipEntity } from './infrastructure/entities/node-membership.entity';
 import { NodeOperatorsController } from './interface/node-operators.controller';
@@ -36,6 +37,7 @@ import { NodeOperatorsController } from './interface/node-operators.controller';
     SetNodePayoutAccountService,
     InviteNodeStaffService,
     SetNodeVisibilityService,
+    SetNodeContactService,
     DispatchParcelService,
     RemoveNodeStaffService,
   ],

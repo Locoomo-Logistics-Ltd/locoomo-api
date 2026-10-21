@@ -74,12 +74,18 @@ export class OnboardNodeService {
       throw new ProfileIncompleteException();
     }
 
+    // Outside the transaction — it's an HTTP call to the geocoder, and it
+    // can reject the request outright (NODE_LOCATION_MISMATCH) before
+    // anything is written.
+    const locationCheck = await this.nodesService.checkLocation(dto);
+
     try {
       const { node, membership } = await this.dataSource.transaction(
         async (manager: EntityManager) => {
           const node = await this.nodesService.createPendingPortalNode(
             dto,
             manager,
+            locationCheck,
           );
           const membership = await manager.save(
             manager.create(NodeMembershipEntity, {

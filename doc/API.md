@@ -2,7 +2,10 @@
 
 What the frontend needs to consume this API: base URL, auth flow, response shape, error
 codes, and endpoint-by-endpoint request/response contracts. Kept current as endpoints
-ship — if something you need isn't here, it isn't built yet
+ship — if something you need isn't here, it isn't built yet.
+
+Upcoming courier integration, Node-app scan flow and public tracking page: see the draft
+contract in [LOGISTICS_API.md](LOGISTICS_API.md) — not live yet, sections move here as they ship.
 
 ## Base URL and versioning
 
@@ -123,11 +126,12 @@ backend greps logs for.
 | 409 | `ILLEGAL_ORDER_TRANSITION` | A handoff scan/confirm endpoint was called while the order isn't in the state that step expects — either stale client state or someone else already advanced it. Re-fetch the order and refresh the UI rather than retrying blindly |
 | 401 | `INVALID_HANDOFF_CODE` | `POST /handoffs/orders/:id/confirm-handoff` and `POST /handoffs/orders/:id/collect` — the code was missing, expired, already used, locked out after too many wrong guesses, or just wrong. Deliberately identical for all of these, same enumeration-avoidance reasoning as other invalid-token errors; request/resend a fresh code either way |
 | 409 | `ORDER_NOT_READY_FOR_COLLECTION` | `POST /handoffs/orders/:id/collection-code/resend` — called before `POST /handoffs/orders/:id/intake` has run (or after the order's already `completed`). There's no collection code to resend yet |
+| 400 | `NODE_LOCATION_MISMATCH` | `POST /nodes`, `PATCH /nodes/:id`, `POST /node-operators/onboarding`, `POST /node-operators/nodes` — the map pin is clearly not where the address is. Show the message (it says where the address actually is) and let the user move the pin or fix the address |
 | 400 | `INVALID_REVENUE_SPLIT` | `POST /admin/revenue-split` — `riderPercent`/`nodePercent`/`platformPercent` didn't sum to 100 |
 | 400 | `BANK_ACCOUNT_VERIFICATION_FAILED` | `PATCH /riders/me/payout-account` or `PATCH /node-operators/nodes/:nodeId/payout-account` — Paystack couldn't resolve that `accountNumber` at that `bankCode`. Nothing is saved; a previously-verified payout account on file, if any, is untouched |
 | 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
-| 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed or was unreachable — placing an order, listing banks, or resolving a payout account number. Safe to retry |
+| 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed, timed out (15 s) or was unreachable — placing an order, listing banks, or resolving a payout account number. Safe to retry |
 | 503 | `PRICING_NOT_CONFIGURED` | No Admin-configured pricing rule exists yet — an ops/config gap, not something the consumer caused; surface as "orders temporarily unavailable" |
 | 503 | `REVENUE_SPLIT_NOT_CONFIGURED` | `POST /handoffs/orders/:id/collect` — no Admin-configured revenue-split rule exists yet, so the order can't complete without its earnings going untracked. Same ops/config gap as `PRICING_NOT_CONFIGURED`, not something the operator or receiver caused |
 
@@ -493,7 +497,15 @@ Request:
   "latitude": 6.4500,
   "longitude": 3.4700,
   "capacity": 100,
-  "operatingHours": "Mon-Sat 8am-7pm",
+  "contactPhone": "0803 123 4567",
+  "openingHours": {
+    "mon": [{ "open": "08:00", "close": "19:00" }],
+    "tue": [{ "open": "08:00", "close": "19:00" }],
+    "wed": [{ "open": "08:00", "close": "19:00" }],
+    "thu": [{ "open": "08:00", "close": "19:00" }],
+    "fri": [{ "open": "08:00", "close": "19:00" }],
+    "sat": [{ "open": "09:00", "close": "14:00" }]
+  },
   "onboardingType": "field_recruited"
 }
 ```
@@ -506,13 +518,56 @@ Request:
 | `country` | optional, defaults to `"Nigeria"` |
 | `latitude`, `longitude` | valid coordinates |
 | `capacity` | integer, 1–100000 — self-reported max parcels this Node can hold; there's no capacity-reservation/locking logic yet, that lands with `orders`/`payments` |
-| `operatingHours` | optional free text, max 255 chars |
+| `contactPhone` | **required** — the counter phone couriers and riders call on arrival. Any common Nigerian format (`0803…`, `234803…`, `+234 803 …`) or an international number with its `+` country code. Always returned normalised to E.164 (`"+2348031234567"`) |
+| `openingHours` | **required** — weekly hours, see [Opening hours](#opening-hours) below |
+| `operatingHours` | optional free text, max 255 chars. **Deprecated** — superseded by `openingHours`, still accepted and returned until all clients have moved over |
+| `forceLocation` | optional boolean, **Admin only** — keep this pin even if it disagrees with where the address geocodes (see [Location check](#location-check)). Recorded as `locationCheck: "admin_override"` |
 | `onboardingType` | optional, defaults to `field_recruited`. One of `field_recruited`, `warm_lead`, `chain_partner`, `franchise` — `portal` is rejected here (`400 VALIDATION_FAILED`), it's set only by the future self-registration flow |
 
 Response `201`, `data`: same shape as the Node objects in the list/get responses below,
-with `"status": "active"`.
+with `"status": "active"`. Every Node object (here, in `GET /nodes`, `/nodes/nearby`,
+`/nodes/:id` and inside `GET /node-operators/me/nodes`) carries `contactPhone` and
+`openingHours` — both can be `null` on Nodes created before they existed (the owner fills
+them in with `PATCH /node-operators/nodes/:nodeId/contact`).
 
-Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `400 VALIDATION_FAILED`.
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `400 VALIDATION_FAILED`,
+`400 NODE_LOCATION_MISMATCH`.
+
+#### Location check
+
+Every new Node — and any update that changes `address`, `city`, `state`, `country`,
+`latitude` or `longitude` — has its map pin checked against the typed address using
+Google's geocoder. Couriers navigate by the pin, so a pin dropped in the wrong place means
+failed pickups.
+
+- **Pin clearly in the wrong place** → `400 NODE_LOCATION_MISMATCH`, nothing saved. The
+  message says how far off it is and where the address actually is, e.g. *"The map pin is
+  37.4 km from "Admiralty Way, Lekki Phase 1, Lagos, Nigeria". Move the pin to the Node's
+  real location, or correct the address."* "Clearly" means more than 2 km away, or further
+  than the address's own fuzziness when Google can only place it at neighbourhood level.
+  Use a map-pin picker for `latitude`/`longitude`, never hand-typed numbers.
+- **Address can't be checked** (Google doesn't know it, or is unavailable) → the Node is
+  saved anyway with `locationCheck: "unverified"`. Creation never blocks on Google.
+
+Node objects carry the outcome as `locationCheck`: `verified`, `unverified`,
+`admin_override`, or `null` for Nodes created before the check existed.
+
+
+An object keyed by day — `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun` — each an
+array of `{ "open": "HH:mm", "close": "HH:mm" }` intervals in **Nigerian local time**
+(24-hour clock). A day that's missing or `[]` is closed. A day can have up to 4
+intervals (e.g. a lunch break), in order and not overlapping. `close` must be later
+than `open` on the same day — overnight hours aren't supported, and `24:00` isn't
+valid (use `23:59`). A bad value fails with `400 VALIDATION_FAILED` and a `details`
+message saying what's wrong (e.g. `"openingHours mon closes before it opens"`).
+
+```json
+{
+  "mon": [{ "open": "08:00", "close": "13:00" }, { "open": "14:00", "close": "18:00" }],
+  "sat": [{ "open": "09:00", "close": "14:00" }],
+  "sun": []
+}
+```
 
 ### `GET /api/v1/nodes`
 
@@ -594,7 +649,10 @@ or retires one (`{ "status": "inactive" }` / `"suspended"`) — there is no dele
 endpoint, a Node is never removed, only status-transitioned.
 
 Request (all optional): `name`, `address`, `city`, `state`, `country`, `latitude`,
-`longitude`, `capacity`, `operatingHours`, `status`. `onboardingType` is immutable after
+`longitude`, `capacity`, `contactPhone`, `openingHours`, `operatingHours`, `status`,
+`forceLocation`. Changing any address field or the coordinates re-runs the
+[location check](#location-check) (`forceLocation: true` skips it — use this to correct a
+pin for an address Google doesn't know). `onboardingType` is immutable after
 creation and isn't accepted here. `isPubliclyVisible` also isn't accepted here — that's
 owner-toggled via `PATCH /node-operators/nodes/:nodeId/visibility` below, not
 Admin-set (Admin still sees the current value through this endpoint's response either
@@ -603,7 +661,7 @@ way).
 Response `200`, `data`: the updated Node, same shape as one list item.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `400 VALIDATION_FAILED`,
-`404 NOT_FOUND`.
+`400 NODE_LOCATION_MISMATCH`, `404 NOT_FOUND`.
 
 ### `POST /api/v1/node-operators/onboarding`
 
@@ -632,9 +690,19 @@ server-side, not client-settable):
   "latitude": 6.4500,
   "longitude": 3.4700,
   "capacity": 50,
-  "operatingHours": "Mon-Sat 8am-7pm"
+  "contactPhone": "0803 123 4567",
+  "openingHours": {
+    "mon": [{ "open": "08:00", "close": "19:00" }],
+    "sat": [{ "open": "09:00", "close": "14:00" }]
+  }
 }
 ```
+
+`contactPhone` and `openingHours` are required, same rules as `POST /nodes`. The pin
+goes through the same [location check](#location-check) — show `400
+NODE_LOCATION_MISMATCH`'s message next to the map so the operator can move the pin.
+`forceLocation` isn't accepted here (`400 VALIDATION_FAILED`); if Google genuinely doesn't
+know the address the Node is simply saved as `unverified` for an Admin to review.
 
 Response `201`, `data`:
 
@@ -865,6 +933,33 @@ Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator), `400
 VALIDATION_FAILED`, `403 NODE_NOT_ACTIVE`, `404 NOT_FOUND` (`:nodeId` doesn't exist, or
 you don't have an owner membership there — same hide-as-not-found treatment as the
 payout-account route).
+
+### `PATCH /api/v1/node-operators/nodes/:nodeId/contact`
+
+**Requires an authenticated NodeOperator session who owns `:nodeId`** (owner
+membership — staff get the same hide-as-not-found rejection as non-members). Unlike
+visibility, the Node does **not** need to be `active` — an owner can fill these in while
+still pending approval, and this is how Nodes created before these fields existed get
+them.
+
+Sets the Node's counter phone (`contactPhone`) and/or weekly `openingHours`. Send either
+or both; an omitted field is left unchanged. Same validation as `POST /nodes` (phone
+normalised to E.164; see [Opening hours](#opening-hours)).
+
+Request:
+
+```json
+{
+  "contactPhone": "0902 555 1234",
+  "openingHours": { "sat": [{ "open": "10:00", "close": "15:00" }] }
+}
+```
+
+Response `200`, `data`: same shape as one `GET /node-operators/me/nodes` item, with
+`node.contactPhone` / `node.openingHours` updated.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator), `400
+VALIDATION_FAILED`, `404 NOT_FOUND` (`:nodeId` doesn't exist, or you don't own it).
 
 ### `POST /api/v1/node-operators/nodes/:nodeId/dispatch`
 

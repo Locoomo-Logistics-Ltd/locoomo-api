@@ -25,6 +25,7 @@ import { NodeOperatorQueryService } from '../application/node-operator-query.ser
 import { OnboardNodeService } from '../application/onboard-node.service';
 import { RemoveNodeStaffService } from '../application/remove-node-staff.service';
 import { SetNodePayoutAccountService } from '../application/set-node-payout-account.service';
+import { SetNodeContactService } from '../application/set-node-contact.service';
 import { SetNodeVisibilityService } from '../application/set-node-visibility.service';
 import { UserResponseDto } from '../../identity/interface/dto/user-response.dto';
 import { PaymentIntentResponseDto } from '../../payments/interface/dto/payment-intent-response.dto';
@@ -34,6 +35,7 @@ import { NodeOperatorResponseDto } from './dto/node-operator-response.dto';
 import { NodeStaffResponseDto } from './dto/node-staff-response.dto';
 import { OnboardNodeDto } from './dto/onboard-node.dto';
 import { PendingNodeOperatorResponseDto } from './dto/pending-node-operator-response.dto';
+import { SetNodeContactDto } from './dto/set-node-contact.dto';
 import { SetNodeVisibilityDto } from './dto/set-node-visibility.dto';
 
 @Controller('node-operators')
@@ -45,6 +47,7 @@ export class NodeOperatorsController {
     private readonly setNodePayoutAccountService: SetNodePayoutAccountService,
     private readonly inviteNodeStaffService: InviteNodeStaffService,
     private readonly setNodeVisibilityService: SetNodeVisibilityService,
+    private readonly setNodeContactService: SetNodeContactService,
     private readonly dispatchParcelService: DispatchParcelService,
     private readonly removeNodeStaffService: RemoveNodeStaffService,
   ) {}
@@ -143,6 +146,18 @@ export class NodeOperatorsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<NodeOperatorResponseDto> {
     return this.setNodeVisibilityService.set(user.id, nodeId, dto);
+  }
+
+  // Owner-only — the counter phone couriers call and the Node's structured
+  // opening hours. Allowed on pending Nodes too (see SetNodeContactService).
+  @Roles(UserRole.NODE_OPERATOR)
+  @Patch('nodes/:nodeId/contact')
+  setContact(
+    @Param('nodeId', ParseUUIDPipe) nodeId: string,
+    @Body() dto: SetNodeContactDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<NodeOperatorResponseDto> {
+    return this.setNodeContactService.set(user.id, nodeId, dto);
   }
 
   // Owner AND staff — operational work at a Node they're a member of, same

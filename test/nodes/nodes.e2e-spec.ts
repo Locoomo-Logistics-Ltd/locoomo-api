@@ -9,6 +9,7 @@ import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
 import { UserRole } from '../../src/common/auth/user-role.enum';
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface ErrorBody {
   success: false;
@@ -41,6 +42,7 @@ describe('Nodes (e2e)', () => {
       latitude: 6.45,
       longitude: 3.47,
       capacity: 50,
+      ...NODE_CONTACT_FIELDS,
       ...overrides,
     };
   }
@@ -118,6 +120,56 @@ describe('Nodes (e2e)', () => {
         .expect(400);
 
       expect((response.body as ErrorBody).error.code).toBe('VALIDATION_FAILED');
+    });
+
+    it('rejects a create without contactPhone or openingHours', async () => {
+      const withoutPhone: Record<string, unknown> = baseNodePayload('no-phone');
+      delete withoutPhone.contactPhone;
+      const withoutHours: Record<string, unknown> = baseNodePayload('no-hours');
+      delete withoutHours.openingHours;
+
+      for (const payload of [withoutPhone, withoutHours]) {
+        const response = await asAdmin(
+          request(app.getHttpServer()).post('/api/v1/nodes'),
+        )
+          .send(payload)
+          .expect(400);
+        expect((response.body as ErrorBody).error.code).toBe(
+          'VALIDATION_FAILED',
+        );
+      }
+    });
+
+    it('rejects an invalid contactPhone', async () => {
+      await asAdmin(request(app.getHttpServer()).post('/api/v1/nodes'))
+        .send(baseNodePayload('bad-phone', { contactPhone: '12345' }))
+        .expect(400);
+    });
+
+    it('rejects malformed openingHours with a readable reason', async () => {
+      const response = await asAdmin(
+        request(app.getHttpServer()).post('/api/v1/nodes'),
+      )
+        .send(
+          baseNodePayload('bad-hours', {
+            openingHours: { mon: [{ open: '18:00', close: '08:00' }] },
+          }),
+        )
+        .expect(400);
+
+      expect(JSON.stringify(response.body)).toContain('closes before it opens');
+    });
+
+    it('stores a local-format contactPhone as E.164 and returns openingHours', async () => {
+      const response = await asAdmin(
+        request(app.getHttpServer()).post('/api/v1/nodes'),
+      )
+        .send(baseNodePayload('contact', { contactPhone: '0803 123 4567' }))
+        .expect(201);
+
+      const data = (response.body as SuccessBody).data;
+      expect(data.contactPhone).toBe('+2348031234567');
+      expect(data.openingHours).toEqual(NODE_CONTACT_FIELDS.openingHours);
     });
 
     it('rejects an out-of-range latitude', async () => {

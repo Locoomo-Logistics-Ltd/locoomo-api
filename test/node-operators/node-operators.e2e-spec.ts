@@ -15,6 +15,7 @@ import { NodeMembershipEntity } from '../../src/modules/node-operators/infrastru
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
 import { BankAccountVerificationFailedException } from '../../src/modules/payments/domain/exceptions/bank-account-verification-failed.exception';
 import { PaystackBankService } from '../../src/modules/payments/application/paystack-bank.service';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface ErrorBody {
   success: false;
@@ -75,6 +76,7 @@ describe('Node-operators (e2e)', () => {
       latitude: 6.45,
       longitude: 3.47,
       capacity: 30,
+      ...NODE_CONTACT_FIELDS,
       ...overrides,
     };
   }
@@ -510,6 +512,107 @@ describe('Node-operators (e2e)', () => {
       expect(items.items.some((i) => i.profileId === secondProfileId)).toBe(
         true,
       );
+    });
+  });
+
+  describe('PATCH /node-operators/nodes/:nodeId/contact', () => {
+    const ownerEmail = 'contact-owner@node-operators.e2e.test';
+    const otherEmail = 'contact-other@node-operators.e2e.test';
+    let ownerCookie: string;
+    let otherCookie: string;
+    let nodeId: string;
+
+    beforeAll(async () => {
+      await registerNodeOperator(ownerEmail);
+      ownerCookie = await loginCookie(ownerEmail);
+      await completeProfile(ownerCookie);
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/node-operators/onboarding')
+        .set('Cookie', [ownerCookie])
+        .send(onboardPayload('contact'))
+        .expect(201);
+      nodeId = ((response.body as SuccessBody).data as { node: { id: string } })
+        .node.id;
+
+      await registerNodeOperator(otherEmail);
+      otherCookie = await loginCookie(otherEmail);
+    });
+
+    it('rejects onboarding without contactPhone/openingHours', async () => {
+      const email = 'contact-missing@node-operators.e2e.test';
+      await registerNodeOperator(email);
+      const cookie = await loginCookie(email);
+      await completeProfile(cookie);
+      const payload: Record<string, unknown> =
+        onboardPayload('contact-missing');
+      delete payload.contactPhone;
+
+      await request(app.getHttpServer())
+        .post('/api/v1/node-operators/onboarding')
+        .set('Cookie', [cookie])
+        .send(payload)
+        .expect(400);
+    });
+
+    it('lets the owner of a still-pending Node update its counter phone and hours', async () => {
+      const response = await request(app.getHttpServer())
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/contact`)
+        .set('Cookie', [ownerCookie])
+        .send({
+          contactPhone: '0902 555 1234',
+          openingHours: { sat: [{ open: '10:00', close: '15:00' }] },
+        })
+        .expect(200);
+
+      const node = (
+        (response.body as SuccessBody).data as {
+          node: Record<string, unknown>;
+        }
+      ).node;
+      expect(node.status).toBe('pending');
+      expect(node.contactPhone).toBe('+2349025551234');
+      expect(node.openingHours).toEqual({
+        sat: [{ open: '10:00', close: '15:00' }],
+      });
+    });
+
+    it('leaves an omitted field unchanged', async () => {
+      const response = await request(app.getHttpServer())
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/contact`)
+        .set('Cookie', [ownerCookie])
+        .send({ contactPhone: '+2348039998888' })
+        .expect(200);
+
+      const node = (
+        (response.body as SuccessBody).data as {
+          node: Record<string, unknown>;
+        }
+      ).node;
+      expect(node.contactPhone).toBe('+2348039998888');
+      expect(node.openingHours).toEqual({
+        sat: [{ open: '10:00', close: '15:00' }],
+      });
+    });
+
+    it('404s for a Node the caller does not own', async () => {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/contact`)
+        .set('Cookie', [otherCookie])
+        .send({ contactPhone: '+2348039998888' })
+        .expect(404);
+    });
+
+    it('rejects invalid values', async () => {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/contact`)
+        .set('Cookie', [ownerCookie])
+        .send({ contactPhone: 'call me' })
+        .expect(400);
+      await request(app.getHttpServer())
+        .patch(`/api/v1/node-operators/nodes/${nodeId}/contact`)
+        .set('Cookie', [ownerCookie])
+        .send({ openingHours: { monday: [] } })
+        .expect(400);
     });
   });
 
