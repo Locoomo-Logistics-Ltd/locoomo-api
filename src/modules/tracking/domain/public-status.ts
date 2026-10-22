@@ -9,7 +9,10 @@ export type PublicStatus =
   | 'on_the_way'
   | 'arrived_at_destination'
   | 'ready_for_collection'
-  | 'collected';
+  | 'collected'
+  | 'returning_to_sender'
+  | 'returned_to_sender'
+  | 'return_completed';
 
 export const PUBLIC_STATUS_LABELS: Record<PublicStatus, string> = {
   awaiting_drop_off: 'Awaiting drop-off',
@@ -18,6 +21,9 @@ export const PUBLIC_STATUS_LABELS: Record<PublicStatus, string> = {
   arrived_at_destination: 'Arrived at destination station',
   ready_for_collection: 'Ready for collection',
   collected: 'Collected',
+  returning_to_sender: 'Returning to sender',
+  returned_to_sender: 'Returned — ready for sender collection',
+  return_completed: 'Returned to sender',
 };
 
 const ORDER_STATUS_TO_PUBLIC: Record<string, PublicStatus> = {
@@ -29,7 +35,21 @@ const ORDER_STATUS_TO_PUBLIC: Record<string, PublicStatus> = {
   arrived_at_destination: 'arrived_at_destination',
   ready_for_collection: 'ready_for_collection',
   completed: 'collected',
+  return_initiated: 'returning_to_sender',
+  return_in_transit: 'returning_to_sender',
+  // Back at the origin; being checked in, then waiting for the sender.
+  returned_to_origin: 'returned_to_sender',
+  ready_for_sender_collection: 'returned_to_sender',
+  return_completed: 'return_completed',
 };
+
+// While a parcel is coming back (or waiting there), the origin station is
+// where it's headed — the page shows its address and hours.
+export const RETURN_PUBLIC_STATUSES: ReadonlySet<PublicStatus> = new Set([
+  'returning_to_sender',
+  'returned_to_sender',
+  'return_completed',
+]);
 
 // null for statuses with no public meaning (cancelled/disputed today) —
 // the page then treats the parcel as not found rather than inventing copy.
@@ -39,6 +59,7 @@ export function toPublicStatus(orderStatus: string): PublicStatus | null {
 
 export const FINAL_PUBLIC_STATUSES: ReadonlySet<PublicStatus> = new Set([
   'collected',
+  'return_completed',
 ]);
 
 export interface StationNames {
@@ -81,6 +102,28 @@ export function timelineEntryFor(
       return { status: 'ready_for_collection', label: 'Ready for collection' };
     case 'collected_by_receiver':
       return { status: 'collected', label: 'Collected' };
+    case 'return_initiated':
+      return {
+        status: 'returning_to_sender',
+        label: "Delivery couldn't be completed",
+      };
+    case 'return_in_transit':
+      return {
+        status: 'returning_to_sender',
+        label: `Returning to ${names.origin}`,
+      };
+    case 'returned_to_origin':
+      return {
+        status: 'returned_to_sender',
+        label: `Back at ${names.origin}`,
+      };
+    case 'ready_for_sender_collection':
+      return {
+        status: 'returned_to_sender',
+        label: 'Ready for the sender to collect',
+      };
+    case 'collected_by_sender':
+      return { status: 'return_completed', label: 'Collected by the sender' };
     default:
       return null;
   }
@@ -100,5 +143,11 @@ export function nextStepFor(status: PublicStatus, names: StationNames): string {
       return `Ready at ${names.destination}. Bring the collection code from the email and a form of ID.`;
     case 'collected':
       return 'The parcel has been collected.';
+    case 'returning_to_sender':
+      return `The delivery couldn't be completed, so the parcel is going back to ${names.origin}. We'll email the sender when it's ready to collect.`;
+    case 'returned_to_sender':
+      return `The parcel is back at ${names.origin}. The sender has been emailed a collection code.`;
+    case 'return_completed':
+      return 'The sender has collected the parcel.';
   }
 }

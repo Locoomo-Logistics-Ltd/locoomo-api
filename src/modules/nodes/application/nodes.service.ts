@@ -363,6 +363,20 @@ export class NodesService {
     return true;
   }
 
+  // A returned parcel coming back onto the origin Node's shelf. Unlike
+  // reserveCapacitySlot this never refuses: the parcel is physically back
+  // whether or not the Node is full, so the count may exceed capacity (the
+  // Node simply stops being offered for new drop-offs until it frees up).
+  async holdReturnedParcel(
+    nodeId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE nodes SET "currentCount" = "currentCount" + 1 WHERE id = $1`,
+      [nodeId],
+    );
+  }
+
   // Releases a hold taken by reserveCapacitySlot — payment failure, DRAFT
   // expiry, or (later) order cancellation. A single atomic UPDATE is already
   // race-safe without FOR UPDATE; `manager` is optional so the expiry

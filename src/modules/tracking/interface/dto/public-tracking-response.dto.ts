@@ -10,7 +10,14 @@ export class PublicTrackingResponseDto {
   statusLabel!: string;
   isFinal!: boolean;
   timeline!: (TimelineEntry & { at: Date })[];
-  origin!: { name: string; city: string };
+  // address/state/openingHours only while the parcel is being returned.
+  origin!: {
+    name: string;
+    city: string;
+    address?: string;
+    state?: string;
+    openingHours?: OpeningHours | null;
+  };
   destination!: {
     name: string;
     address: string;

@@ -41,8 +41,9 @@ UTC.
 **Order vs delivery.** An *order* is what the customer sees — custody of the parcel from
 drop-off to collection (`status`, below). A *delivery* is one courier's attempt at moving it
 between Nodes. An order normally has one delivery, but can have several over its life (e.g.
-Sendii found no rider → retried → fell back to an in-house rider), and gets a separate
-`return` delivery if it has to go back. You only ever see the **current** delivery, as the
+Sendii found no rider → retried → fell back to an in-house rider). If it has to go back,
+the same courier brings it back on that delivery (its `status` becomes `returning`, then
+`returned`). You only ever see the **current** delivery, as the
 `delivery` object on order responses.
 
 **Providers.** Who physically moves the parcel. Treat `delivery.provider` as an **opaque
@@ -263,25 +264,10 @@ If the QR decodes to a full tracking URL, send it as-is — the server extracts 
 
 Documented in [API.md](API.md#get-apiv1handoffsordersidcourier-handover).
 
-### `POST /api/v1/handoffs/orders/:id/return-intake` — new *(phase 5)*
+### Returns — **live** (phase 5)
 
-Origin Node, when a returned parcel is back on the counter (`returned_to_origin →
-ready_for_sender_collection`). Mints a collection code and emails it to the **sender**.
-Same shape and behaviour as `intake`, including `shelfNumber`. Idempotent.
-
-Errors: as `intake`, with `409 ILLEGAL_ORDER_TRANSITION` if not `returned_to_origin`.
-
-### `POST /api/v1/handoffs/orders/:id/return-collect` — new *(phase 5)*
-
-Origin Node, sender collecting the returned parcel (`ready_for_sender_collection →
-return_completed`). Same request, rules and errors as `collect`:
-
-```json
-{ "code": "738204", "identityConfirmed": true }
-```
-
-`POST /handoffs/orders/:id/collection-code/resend` also works in
-`ready_for_sender_collection` (re-sends to the sender).
+`return-intake`, `return-collect`, the return statuses, `nextAction` values and emails are
+documented in [API.md › Returns](API.md#returns).
 
 ### Node profile fields — **live**
 
@@ -342,7 +328,7 @@ Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) 
 | 2 | ✅ `delivery` object, courier-aware `nextAction`, rider pool excludes courier orders (all live; only `in_house` until phase 3) |
 | 3 | ✅ Sendii adapter (behind a switch, off by default), `courier-handover`, webhooks, courier allocation in earnings (live) |
 | 4 | Parcel attributes, `delivery-quotes`, new `feeBreakdown`, `NO_DELIVERY_OPTION` |
-| 5 | Return statuses, `return-intake`, `return-collect` |
+| 5 | ✅ Return statuses, `return-intake`, `return-collect`, sender emails, public return statuses (all live) |
 | 6 | Admin logistics screens |
 
 Sendii is rolled out gradually: first in **shadow mode** (no visible change — the system only

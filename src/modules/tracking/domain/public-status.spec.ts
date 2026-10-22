@@ -9,6 +9,9 @@ describe('toPublicStatus', () => {
     ['arrived_at_destination', 'arrived_at_destination'],
     ['ready_for_collection', 'ready_for_collection'],
     ['completed', 'collected'],
+    ['return_in_transit', 'returning_to_sender'],
+    ['ready_for_sender_collection', 'returned_to_sender'],
+    ['return_completed', 'return_completed'],
   ])('%s → %s', (orderStatus, expected) => {
     expect(toPublicStatus(orderStatus)).toBe(expected);
   });

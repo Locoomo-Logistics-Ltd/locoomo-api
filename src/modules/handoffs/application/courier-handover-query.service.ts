@@ -52,7 +52,9 @@ export class CourierHandoverQueryService {
         ? 'pickup'
         : role === 'destination' && order.status === 'in_transit'
           ? 'delivery'
-          : null;
+          : role === 'origin' && order.status === 'return_in_transit'
+            ? 'return_delivery'
+            : null;
     if (!kind) {
       throw new CourierHandoverNotAvailableException(
         orderId,
@@ -61,6 +63,8 @@ export class CourierHandoverQueryService {
     }
 
     const handover = await this.courierHandoverService.handoverFor(orderId);
+    // A returning courier hands back with the same delivery code it would
+    // have used at the destination.
     const code =
       kind === 'pickup' ? handover?.pickupCode : handover?.deliveryCode;
     if (!handover || !code) {

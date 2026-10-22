@@ -11,6 +11,7 @@ import {
 } from '../../logistics/application/delivery-vocabulary';
 import { NodesService } from '../../nodes/application/nodes.service';
 import { OrdersService } from '../../orders/application/orders.service';
+import { ReturnNotificationService } from './return-notification.service';
 import { RiderCapacityService } from '../../riders/application/rider-capacity.service';
 
 // Moves the order (and the capacity counters around it) whenever a
@@ -28,6 +29,7 @@ export class DeliveryProgressListener
     private readonly ordersService: OrdersService,
     private readonly nodesService: NodesService,
     private readonly riderCapacityService: RiderCapacityService,
+    private readonly returnNotificationService: ReturnNotificationService,
   ) {}
 
   onModuleInit(): void {
@@ -38,9 +40,12 @@ export class DeliveryProgressListener
     notice: DeliveryEventNotice,
     manager: EntityManager,
   ): Promise<void> {
+    // A return travels on the same leg as the delivery (the courier brings
+    // its own job back: returning → returned). Separately booked return
+    // legs aren't used yet.
     if (notice.legType !== DeliveryLegType.FORWARD) {
       this.logger.warn(
-        `Ignoring ${notice.event} on ${notice.legType} leg ${notice.legId} — returns arrive in phase 5`,
+        `Ignoring ${notice.event} on ${notice.legType} leg ${notice.legId} — separate return legs aren't supported`,
       );
       return;
     }
@@ -119,10 +124,43 @@ export class DeliveryProgressListener
         return;
       }
 
+      case DeliveryEventType.RETURNING: {
+        // The courier couldn't complete the delivery and is bringing the
+        // parcel back to the origin Node; sender and receiver are told.
+        const order = await this.ordersService.markReturning(
+          notice.orderId,
+          manager,
+          { providerKey: notice.providerKey, reason: notice.reason },
+        );
+        await this.returnNotificationService.enqueueReturnStarted(
+          order,
+          manager,
+        );
+        return;
+      }
+
+      case DeliveryEventType.RETURNED: {
+        // Back on the origin counter — it occupies a slot there again until
+        // the sender collects it.
+        const order = await this.ordersService.markReturnedToOrigin(
+          notice.orderId,
+          manager,
+        );
+        await this.nodesService.holdReturnedParcel(order.originNodeId, manager);
+        if (notice.courierUserId) {
+          await this.riderCapacityService.releaseDeliverySlot(
+            notice.courierUserId,
+            manager,
+          );
+        }
+        return;
+      }
+
       default:
-        // returning / returned arrive with returns (phase 5).
+        // Every event type is handled above; this only guards against a new
+        // one being added to the vocabulary without a case here.
         this.logger.warn(
-          `Unhandled delivery event ${notice.event} for order ${notice.orderId}`,
+          `Unhandled delivery event ${String(notice.event)} for order ${notice.orderId}`,
         );
     }
   }

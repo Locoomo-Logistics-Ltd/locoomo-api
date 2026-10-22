@@ -9,4 +9,9 @@ export enum OrderEventType {
   ARRIVED_AT_DESTINATION = 'arrived_at_destination',
   READY_FOR_COLLECTION = 'ready_for_collection',
   COLLECTED_BY_RECEIVER = 'collected_by_receiver',
+  RETURN_INITIATED = 'return_initiated',
+  RETURN_IN_TRANSIT = 'return_in_transit',
+  RETURNED_TO_ORIGIN = 'returned_to_origin',
+  READY_FOR_SENDER_COLLECTION = 'ready_for_sender_collection',
+  COLLECTED_BY_SENDER = 'collected_by_sender',
 }

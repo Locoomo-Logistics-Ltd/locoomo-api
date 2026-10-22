@@ -19,6 +19,9 @@ import { HandoffCodeIssuerService } from './application/handoff-code-issuer.serv
 import { HandoffCodeValidatorService } from './application/handoff-code-validator.service';
 import { CourierHandoverQueryService } from './application/courier-handover-query.service';
 import { DeliveryProgressListener } from './application/delivery-progress.listener';
+import { ReturnCollectionService } from './application/return-collection.service';
+import { ReturnIntakeService } from './application/return-intake.service';
+import { ReturnNotificationService } from './application/return-notification.service';
 import { ReceiverNotificationService } from './application/receiver-notification.service';
 import { ListMyNodeOrdersService } from './application/list-my-node-orders.service';
 import { ListMyOrdersService } from './application/list-my-orders.service';
@@ -69,6 +72,9 @@ import { HandoffsController } from './interface/handoffs.controller';
     ListMyOrdersService,
     ListMyNodeOrdersService,
     ReceiverNotificationService,
+    ReturnNotificationService,
+    ReturnIntakeService,
+    ReturnCollectionService,
     DeliveryProgressListener,
     CourierHandoverQueryService,
   ],

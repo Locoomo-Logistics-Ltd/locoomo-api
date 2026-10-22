@@ -9,9 +9,17 @@ export const ORDER_TRANSITIONS: Partial<Record<OrderStatus, OrderStatus[]>> = {
     OrderStatus.IN_TRANSIT,
     OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
   ],
-  [OrderStatus.IN_TRANSIT]: [OrderStatus.ARRIVED_AT_DESTINATION],
+  // Or, if the courier can't complete the delivery, back to origin.
+  [OrderStatus.IN_TRANSIT]: [
+    OrderStatus.ARRIVED_AT_DESTINATION,
+    OrderStatus.RETURN_INITIATED,
+  ],
   [OrderStatus.ARRIVED_AT_DESTINATION]: [OrderStatus.READY_FOR_COLLECTION],
   [OrderStatus.READY_FOR_COLLECTION]: [OrderStatus.COMPLETED],
+  [OrderStatus.RETURN_INITIATED]: [OrderStatus.RETURN_IN_TRANSIT],
+  [OrderStatus.RETURN_IN_TRANSIT]: [OrderStatus.RETURNED_TO_ORIGIN],
+  [OrderStatus.RETURNED_TO_ORIGIN]: [OrderStatus.READY_FOR_SENDER_COLLECTION],
+  [OrderStatus.READY_FOR_SENDER_COLLECTION]: [OrderStatus.RETURN_COMPLETED],
 };
 
 export function assertLegalTransition(

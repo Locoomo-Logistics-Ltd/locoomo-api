@@ -16,6 +16,7 @@ describe('nodeRoleFor', () => {
 
   it('follows the parcel when the caller is a member at both Nodes', () => {
     const both = ['origin', 'destination'];
+    expect(nodeRoleFor(order('return_in_transit'), both)).toBe('origin');
     expect(nodeRoleFor(order('rider_assigned'), both)).toBe('origin');
     expect(nodeRoleFor(order('in_transit'), both)).toBe('destination');
   });
@@ -34,6 +35,11 @@ describe('nextActionFor', () => {
     ['ready_for_collection', 'destination', 'hand_to_receiver'],
     ['completed', 'destination', 'none'],
     ['some_future_status', 'origin', 'none'],
+    ['return_initiated', 'origin', 'await_arrival'],
+    ['return_in_transit', 'origin', 'receive_from_rider'],
+    ['returned_to_origin', 'origin', 'return_intake'],
+    ['ready_for_sender_collection', 'origin', 'hand_to_sender'],
+    ['return_in_transit', 'destination', 'none'],
   ] as const)('%s at %s → %s', (status, role, expected) => {
     expect(nextActionFor(status, role)).toBe(expected);
   });
@@ -46,6 +52,12 @@ describe('nextActionFor with an external courier', () => {
     ).toBe('hand_to_courier');
     expect(
       nextActionFor('in_transit', 'destination', 'give_code_to_courier'),
+    ).toBe('receive_from_courier');
+  });
+
+  it('has the origin read the courier a code when a return arrives', () => {
+    expect(
+      nextActionFor('return_in_transit', 'origin', 'give_code_to_courier'),
     ).toBe('receive_from_courier');
   });
 

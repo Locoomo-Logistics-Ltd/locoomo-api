@@ -70,6 +70,7 @@ destination) and correct coordinates.
 | Sendii cancels (`no_rider_found`, `dispatch_failed`, …) | Order goes back to "waiting for a rider", then the same retry/fallback |
 | Rider drops the job before pickup | Order goes back to waiting; Sendii looks for another rider |
 | Failed drop-off attempt | Sendii retries (up to 2 redeliveries); surcharge recorded on the delivery leg |
+| Delivery fails for good | Sendii brings it back to the origin station (`return_in_transit`; sender and receiver emailed). Origin staff read the returning rider the code, then shelve it (`return-intake`) — the sender gets a collection code and collects it (`return-collect`). Sendii charges the fee plus a 20% return surcharge; no fee is charged to the sender |
 | Webhook lost or out of order | The reconciler polls quiet deliveries every few minutes; Sendii's current state is applied, stale updates ignored |
 | Sendii API down | Bookings retry through the outbox; the station screen shows "couldn't load the code, try again" |
 

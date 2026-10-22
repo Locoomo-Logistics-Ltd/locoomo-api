@@ -1,4 +1,4 @@
-export type CourierHandoverKind = 'pickup' | 'delivery';
+export type CourierHandoverKind = 'pickup' | 'delivery' | 'return_delivery';
 
 // The code staff read out to an external courier. Contains a credential —
 // clients must not store, log or cache it.

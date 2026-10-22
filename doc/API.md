@@ -1551,8 +1551,8 @@ Optional `queue` query param narrows this to one of the counter's work queues:
 |---|---|
 | `to_receive` | Paid orders waiting to be dropped off at your Node (`awaiting_drop_off`) |
 | `to_dispatch` | On your shelf, waiting for or being handed to a rider (`parcel_received_at_origin`, `rider_assigned`) |
-| `incoming` | On the way to your Node (`rider_assigned`, `in_transit`) |
-| `to_collect` | At your counter as the destination — to shelve, or waiting for the receiver (`arrived_at_destination`, `ready_for_collection`) |
+| `incoming` | On the way to your Node: a delivery (`rider_assigned`, `in_transit`), or a return coming back to you as the origin (`return_initiated`, `return_in_transit`) |
+| `to_collect` | At your counter to shelve or hand over: a delivery for its receiver (`arrived_at_destination`, `ready_for_collection`), or a returned parcel for its sender (`returned_to_origin`, `ready_for_sender_collection`) |
 | *(omitted)* | Everything, as before |
 
 Any other value is `400 VALIDATION_FAILED`.
@@ -1654,13 +1654,14 @@ Response `200`, `data`:
 | `hand_to_courier` | "Hand to courier — give them the code" (external courier) | [`GET /handoffs/orders/:id/courier-handover`](#get-apiv1handoffsordersidcourier-handover) |
 | `await_arrival` | "On the way to you" (no button) | — |
 | `receive_from_rider` | "Receive from rider — enter their code" | `POST /handoffs/orders/:id/confirm-handoff` (`rider_arrival`) |
-| `receive_from_courier` | "Receive from courier — give them the code" (external courier) | [`GET /handoffs/orders/:id/courier-handover`](#get-apiv1handoffsordersidcourier-handover) |
+| `receive_from_courier` | "Receive from courier — give them the code" (external courier; also a returning courier at the origin) | [`GET /handoffs/orders/:id/courier-handover`](#get-apiv1handoffsordersidcourier-handover) |
 | `intake` | "Shelve parcel" | `POST /handoffs/orders/:id/intake` |
 | `hand_to_receiver` | "Hand to receiver" | `POST /handoffs/orders/:id/collect` |
+| `return_intake` | "Returned parcel — shelve it" (origin) | `POST /handoffs/orders/:id/return-intake` |
+| `hand_to_sender` | "Hand back to sender" (origin) | `POST /handoffs/orders/:id/return-collect` |
 | `none` | Read-only | — |
 
-More values will be added (returns) — give unknown ones a read-only default rather than
-crashing.
+Give any value you don't recognise a read-only default rather than crashing.
 
 #### Delivery object
 
@@ -1763,8 +1764,9 @@ Response `200`, `data`:
 }
 ```
 
-- `kind`: `pickup` (origin Node, courier assigned) or `delivery` (destination Node, parcel
-  in transit).
+- `kind`: `pickup` (origin Node, courier assigned), `delivery` (destination Node, parcel
+  in transit) or `return_delivery` (origin Node, a failed delivery coming back — see
+  [Returns](#returns)).
 - Flow: scan the parcel → check the courier's name against `courier.name` → **read out
   `code`** → the courier enters it.
 - **The code is a credential** — whoever holds it can take the parcel. Don't store, log,
@@ -1827,6 +1829,9 @@ destination Node. Use this when the receiver is standing at the counter but says
 email, or their original code expired (1 hour TTL) — mints a fresh code, superseding the
 prior one, and re-emails it. Rate-limited (5/min) since it sends a real email each time.
 
+For a **returned** parcel (`status: ready_for_sender_collection`) it's the origin Node that
+calls this, and the fresh code goes to the **sender** — see [Returns](#returns).
+
 No request body. Response `200`, `data`:
 
 ```json
@@ -1875,6 +1880,58 @@ reaches `completed`, its revenue is split and recorded — see the `earnings` en
 below, which is where that money is actually tracked. Payout itself is still manual (an
 Admin disburses off-system); these endpoints are the record of what's owed, not a payout
 flow.
+
+## Returns
+
+When a courier can't complete a delivery (e.g. the destination station was closed for every
+attempt) it brings the parcel **back to the origin Pickup Station**, where the **sender**
+collects it. No return fee is charged. Today only external couriers (Sendii) return
+parcels this way.
+
+| Order `status` | Meaning | Who's notified |
+|---|---|---|
+| `return_initiated` | The delivery couldn't be completed (usually passes straight on to the next status) | — |
+| `return_in_transit` | Courier is bringing it back to the origin station | Sender ("Your parcel is being returned") and receiver ("could not be delivered") by email |
+| `returned_to_origin` | Courier handed it back at the origin counter | — |
+| `ready_for_sender_collection` | Origin staff shelved it; the sender has a collection code | Sender, with the code |
+| `return_completed` | The sender collected it — final | — |
+
+Show these on the sender's order screen with the origin station (`originNodeName`,
+`originNodeAddress`) as the collection point. For the Node app, the origin station's
+`nextAction` walks through the return: `receive_from_courier` (read the returning courier
+the code from `courier-handover`, `kind: "return_delivery"`), then `return_intake`, then
+`hand_to_sender`. Returned parcels show in the origin's `incoming` and `to_collect`
+queues.
+
+### `POST /api/v1/handoffs/orders/:id/return-intake`
+
+**Requires an authenticated NodeOperator or NodeStaff session** at the **origin** Node
+(`404 NOT_FOUND` otherwise). The returned parcel is on your counter: `returned_to_origin →
+ready_for_sender_collection`. Assigns it a [shelf number](#shelf-numbers) and emails the
+**sender** a 6-digit collection code (1 hour TTL; resend with
+`POST /handoffs/orders/:id/collection-code/resend`). Idempotent.
+
+Response `200`, `data`: same shape as the accept response, with `shelfNumber`.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator/NodeStaff), `404 NOT_FOUND`,
+`409 ILLEGAL_ORDER_TRANSITION` (not at `returned_to_origin`).
+
+### `POST /api/v1/handoffs/orders/:id/return-collect`
+
+**Requires an authenticated NodeOperator or NodeStaff session** at the **origin** Node. The
+sender reads you the code from their email: `ready_for_sender_collection →
+return_completed`. Same request, rules, rate limit and lockout as
+[`collect`](#post-apiv1handoffsordersidcollect):
+
+```json
+{ "code": "738204", "identityConfirmed": true }
+```
+
+Response `200`, `data`: same shape as the accept response, `status: "return_completed"`,
+`shelfNumber: null`. No revenue split is recorded — the parcel was never delivered.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND` (not your origin Node), `401
+INVALID_HANDOFF_CODE`, `429 RATE_LIMITED`, `400 VALIDATION_FAILED`.
 
 ## Public tracking
 
@@ -1939,18 +1996,23 @@ Response `200`, `data`:
 | `arrived_at_destination` | Arrived at destination station |
 | `ready_for_collection` | Ready for collection |
 | `collected` | Collected (`isFinal: true`) |
+| `returning_to_sender` | Returning to sender |
+| `returned_to_sender` | Returned — ready for sender collection |
+| `return_completed` | Returned to sender (`isFinal: true`) |
 
 Render `statusLabel`, `nextStep` and the timeline `label`s as given — the copy is
 server-side so it can change without a release. `destination.openingHours` can be `null`
-(see [Opening hours](#opening-hours)); `courierLabel` is `null` when no one is carrying the
-parcel; `etaMinutes` is always `null` for now (external couriers will fill it). Expect more
-`status` values later (returns) — fall back to showing `statusLabel`.
+(see [Opening hours](#opening-hours)); `courierLabel` is the carrying courier's display
+name (e.g. "Locoomo rider", "Sendii"), `null` when no one is carrying the parcel;
+`etaMinutes` is always `null` for now. During a return, `origin` also carries `address`,
+`state` and `openingHours` — it's where the parcel is going. For any `status` you don't
+recognise, fall back to showing `statusLabel`.
 
 **Never returned:** names, phone numbers, emails, collection or handover codes, shelf
 numbers, prices, internal ids.
 
 Errors: `404 NOT_FOUND` for an unknown code, a wrong `t`, wrong `phoneLast4`, or a parcel
-collected more than 30 days ago — deliberately identical, so show one "We couldn't find
+collected (or collected back by its sender) more than 30 days ago — deliberately identical, so show one "We couldn't find
 that parcel. Check the code and try again." message. `400 VALIDATION_FAILED` (neither or
 both of `t`/`phoneLast4`, or `phoneLast4` not 4 digits), `429 RATE_LIMITED`.
 

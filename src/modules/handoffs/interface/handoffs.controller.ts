@@ -10,6 +10,8 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { ReturnCollectionService } from '../application/return-collection.service';
+import { ReturnIntakeService } from '../application/return-intake.service';
 import { CourierHandoverQueryService } from '../application/courier-handover-query.service';
 import { CourierHandoverResponseDto } from './dto/courier-handover-response.dto';
 import { DeliveryQueryService } from '../../logistics/application/delivery-query.service';
@@ -60,6 +62,8 @@ export class HandoffsController {
     private readonly listMyNodeOrdersService: ListMyNodeOrdersService,
     private readonly deliveryQueryService: DeliveryQueryService,
     private readonly courierHandoverQueryService: CourierHandoverQueryService,
+    private readonly returnIntakeService: ReturnIntakeService,
+    private readonly returnCollectionService: ReturnCollectionService,
   ) {}
 
   @Roles(UserRole.RIDER)
@@ -212,6 +216,39 @@ export class HandoffsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<OrderTransitionResponseDto> {
     const order = await this.confirmIntakeService.confirm(id, user.id);
+    return OrderTransitionResponseDto.fromResult(order);
+  }
+
+  // Origin side of a return: the courier has brought the parcel back;
+  // staff shelve it and the sender is emailed a collection code.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
+  @Post('orders/:id/return-intake')
+  @HttpCode(HttpStatus.OK)
+  async returnIntake(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderTransitionResponseDto> {
+    const order = await this.returnIntakeService.confirm(id, user.id);
+    return OrderTransitionResponseDto.fromResult(order);
+  }
+
+  // The sender collects a returned parcel at the origin Node — same code and
+  // identity rules as the receiver's collect.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
+  @Throttle({ default: { limit: 10, ttl: seconds(60) } })
+  @Post('orders/:id/return-collect')
+  @HttpCode(HttpStatus.OK)
+  async returnCollect(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ConfirmCollectionDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderTransitionResponseDto> {
+    const order = await this.returnCollectionService.confirm(
+      id,
+      user.id,
+      dto.code,
+      dto.identityConfirmed,
+    );
     return OrderTransitionResponseDto.fromResult(order);
   }
 

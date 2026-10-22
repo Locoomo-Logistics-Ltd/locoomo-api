@@ -7,4 +7,6 @@ export enum HandoffCodeType {
   RIDER_PICKUP = 'rider_pickup',
   RIDER_ARRIVAL = 'rider_arrival',
   RECEIVER_COLLECTION = 'receiver_collection',
+  // A returned parcel, collected by its sender at the origin Node.
+  SENDER_COLLECTION = 'sender_collection',
 }

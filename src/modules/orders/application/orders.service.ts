@@ -266,6 +266,77 @@ export class OrdersService {
     return this.clearShelf(order, manager);
   }
 
+  // The courier couldn't complete the delivery and is bringing the parcel
+  // back to the origin Node. Recorded as both steps of the return (decided,
+  // then under way) — for an external courier they happen together.
+  async markReturning(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown> = {},
+  ): Promise<OrderEntity> {
+    await this.transition(
+      orderId,
+      OrderStatus.IN_TRANSIT,
+      OrderStatus.RETURN_INITIATED,
+      manager,
+      OrderEventType.RETURN_INITIATED,
+      eventPayload,
+    );
+    return this.transition(
+      orderId,
+      OrderStatus.RETURN_INITIATED,
+      OrderStatus.RETURN_IN_TRANSIT,
+      manager,
+      OrderEventType.RETURN_IN_TRANSIT,
+    );
+  }
+
+  // The courier handed the parcel back at the origin Node's counter.
+  async markReturnedToOrigin(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    return this.transition(
+      orderId,
+      OrderStatus.RETURN_IN_TRANSIT,
+      OrderStatus.RETURNED_TO_ORIGIN,
+      manager,
+      OrderEventType.RETURNED_TO_ORIGIN,
+    );
+  }
+
+  // Origin staff shelved the returned parcel — it gets a shelf number there
+  // again, and the sender is sent a collection code.
+  async markReadyForSenderCollection(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    const order = await this.transition(
+      orderId,
+      OrderStatus.RETURNED_TO_ORIGIN,
+      OrderStatus.READY_FOR_SENDER_COLLECTION,
+      manager,
+      OrderEventType.READY_FOR_SENDER_COLLECTION,
+    );
+    return this.placeOnShelf(order, order.originNodeId, manager);
+  }
+
+  async markCollectedBySender(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown> = {},
+  ): Promise<OrderEntity> {
+    const order = await this.transition(
+      orderId,
+      OrderStatus.READY_FOR_SENDER_COLLECTION,
+      OrderStatus.RETURN_COMPLETED,
+      manager,
+      OrderEventType.COLLECTED_BY_SENDER,
+      eventPayload,
+    );
+    return this.clearShelf(order, manager);
+  }
+
   // Gives the parcel the lowest shelf number not currently in use at
   // `nodeId`. The transaction-scoped advisory lock serialises concurrent
   // assignments at the same Node (two drop-offs at once would otherwise both

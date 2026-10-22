@@ -22,12 +22,17 @@ const QUEUE_FILTERS: Record<NodeQueue, string> = {
   // On the origin shelf, waiting for or being handed to a rider.
   to_dispatch: `o."originNodeId" = ANY($1)
                 AND o.status IN ('parcel_received_at_origin', 'rider_assigned')`,
-  // Heading to the caller's Node.
-  incoming: `o."destinationNodeId" = ANY($1)
-             AND o.status IN ('rider_assigned', 'in_transit')`,
-  // At the destination counter: to shelve, or waiting for the receiver.
-  to_collect: `o."destinationNodeId" = ANY($1)
-               AND o.status IN ('arrived_at_destination', 'ready_for_collection')`,
+  // Heading to the caller's Node — a delivery, or a return coming back.
+  incoming: `(o."destinationNodeId" = ANY($1)
+              AND o.status IN ('rider_assigned', 'in_transit'))
+             OR (o."originNodeId" = ANY($1)
+              AND o.status IN ('return_initiated', 'return_in_transit'))`,
+  // At the counter to shelve or hand over: a delivery for its receiver, or
+  // a returned parcel for its sender.
+  to_collect: `(o."destinationNodeId" = ANY($1)
+                AND o.status IN ('arrived_at_destination', 'ready_for_collection'))
+               OR (o."originNodeId" = ANY($1)
+                AND o.status IN ('returned_to_origin', 'ready_for_sender_collection'))`,
 };
 
 const ALL_ORDERS_FILTER = `o."originNodeId" = ANY($1) OR o."destinationNodeId" = ANY($1)`;
@@ -61,14 +66,14 @@ export class ListMyNodeOrdersService {
          FROM orders o
          JOIN nodes origin ON origin.id = o."originNodeId"
          JOIN nodes dest ON dest.id = o."destinationNodeId"
-        WHERE ${filter}
+        WHERE (${filter})
         ORDER BY o."createdAt" DESC
         LIMIT $2 OFFSET $3`,
       [nodeIds, query.limit, offset],
     );
 
     const [{ total }] = await this.dataSource.query<{ total: number }[]>(
-      `SELECT COUNT(*)::int AS total FROM orders o WHERE ${filter}`,
+      `SELECT COUNT(*)::int AS total FROM orders o WHERE (${filter})`,
       [nodeIds],
     );
 

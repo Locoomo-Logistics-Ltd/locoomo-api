@@ -225,7 +225,11 @@ class FakeCourierProvider implements LogisticsProvider {
     const { status } = this.deliveries.get(externalId)!;
     return Promise.resolve({
       pickupCode: status === DeliveryLegStatus.ASSIGNED ? '111111' : null,
-      deliveryCode: status === DeliveryLegStatus.PICKED_UP ? '222222' : null,
+      deliveryCode:
+        status === DeliveryLegStatus.PICKED_UP ||
+        status === DeliveryLegStatus.RETURNING
+          ? '222222'
+          : null,
     });
   }
 
@@ -2882,6 +2886,169 @@ describe('Handoffs (e2e)', () => {
           'REVENUE_SPLIT_NOT_PAYABLE',
         );
       });
+
+      it('brings a failed delivery back to the origin station for the sender to collect', async () => {
+        const senderEmail = 'courier-return@handoffs.e2e.test';
+        const { id, trackingCode, externalId, leg } =
+          await submittedCourierOrder(senderEmail);
+        await courierReports(externalId, DeliveryLegStatus.PICKED_UP, {
+          sequence: 2,
+        });
+        const slotsAfterPickup = (
+          await nodes.findOneByOrFail({ id: courierOriginNodeId })
+        ).currentCount;
+
+        // The courier gives up on the destination and heads back.
+        courier.advance(externalId, DeliveryLegStatus.RETURNING);
+        await courierReports(externalId, DeliveryLegStatus.RETURNING, {
+          sequence: 3,
+        });
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'return_in_transit',
+        );
+        expect(
+          (await orderEvents.findBy({ orderId: id })).map((e) => e.type),
+        ).toEqual(
+          expect.arrayContaining(['return_initiated', 'return_in_transit']),
+        );
+        const emails = await outboxEvents
+          .createQueryBuilder('o')
+          .where("o.payload ->> 'subject' IN (:...subjects)", {
+            subjects: [
+              'Your parcel is being returned',
+              'Your parcel could not be delivered',
+            ],
+          })
+          .andWhere("o.payload ->> 'text' LIKE :code", {
+            code: `%${trackingCode}%`,
+          })
+          .getMany();
+        expect(emails.map((e) => e.payload.to).sort()).toEqual(
+          [receiverEmail, senderEmail].sort(),
+        );
+
+        // The origin station reads the returning courier its code.
+        const scan = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/handoffs/orders/by-tracking-code/${trackingCode}`)
+              .set('Cookie', [courierOperatorCookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(scan).toMatchObject({
+          myRole: 'origin',
+          nextAction: 'receive_from_courier',
+        });
+        const handover = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/handoffs/orders/${id}/courier-handover`)
+              .set('Cookie', [courierOperatorCookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(handover).toMatchObject({
+          kind: 'return_delivery',
+          code: '222222',
+        });
+
+        const publicView = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/track/${trackingCode}?phoneLast4=5678`)
+              .expect(200)
+          ).body as SuccessBody
+        ).data as {
+          status: string;
+          courierLabel: string;
+          origin: { address?: string };
+        };
+        expect(publicView.status).toBe('returning_to_sender');
+        expect(publicView.courierLabel).toBe('Fake Courier');
+        expect(publicView.origin.address).toBeDefined();
+
+        // Back at the origin counter: it takes a slot again.
+        courier.advance(externalId, DeliveryLegStatus.RETURNED);
+        await courierReports(externalId, DeliveryLegStatus.RETURNED, {
+          sequence: 4,
+        });
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'returned_to_origin',
+        );
+        expect((await legs.findOneByOrFail({ id: leg.id })).status).toBe(
+          'returned',
+        );
+        expect(
+          (await nodes.findOneByOrFail({ id: courierOriginNodeId }))
+            .currentCount,
+        ).toBe(slotsAfterPickup + 1);
+
+        // Only the origin may shelve it; the destination gets a 404.
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/return-intake`)
+          .set('Cookie', [destinationOperatorCookie])
+          .expect(404);
+        const intake = (
+          (
+            await request(app.getHttpServer())
+              .post(`/api/v1/handoffs/orders/${id}/return-intake`)
+              .set('Cookie', [courierOperatorCookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(intake).toMatchObject({
+          status: 'ready_for_sender_collection',
+          shelfNumber: expect.any(Number) as number,
+        });
+
+        // The sender's code is emailed to the sender; a resend replaces it.
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/collection-code/resend`)
+          .set('Cookie', [courierOperatorCookie])
+          .expect(200);
+        const code = await extractLatestCollectionCode(senderEmail);
+
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/return-collect`)
+          .set('Cookie', [courierOperatorCookie])
+          .send({
+            code: code === '000000' ? '111111' : '000000',
+            identityConfirmed: true,
+          })
+          .expect(401);
+        const collected = (
+          (
+            await request(app.getHttpServer())
+              .post(`/api/v1/handoffs/orders/${id}/return-collect`)
+              .set('Cookie', [courierOperatorCookie])
+              .send({ code, identityConfirmed: true })
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(collected).toMatchObject({
+          status: 'return_completed',
+          shelfNumber: null,
+        });
+        expect(
+          (await nodes.findOneByOrFail({ id: courierOriginNodeId }))
+            .currentCount,
+        ).toBe(slotsAfterPickup);
+        // Never delivered, so nothing to split.
+        expect(await revenueSplitEntries.countBy({ orderId: id })).toBe(0);
+
+        const finalView = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/track/${trackingCode}?phoneLast4=5678`)
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(finalView).toMatchObject({
+          status: 'return_completed',
+          isFinal: true,
+        });
+      }, 20_000);
     });
   });
 });

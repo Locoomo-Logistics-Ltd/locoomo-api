@@ -15,13 +15,20 @@ export type NextAction =
   | 'receive_from_courier'
   | 'intake'
   | 'hand_to_receiver'
+  | 'return_intake'
+  | 'hand_to_sender'
   | 'none';
 
-// Statuses during which the parcel's business is still at the origin Node.
+// Statuses during which the parcel's business is at the origin Node —
+// before it leaves, and again once a failed delivery is coming back.
 const ORIGIN_PHASE = new Set([
   'awaiting_drop_off',
   'parcel_received_at_origin',
   'rider_assigned',
+  'return_initiated',
+  'return_in_transit',
+  'returned_to_origin',
+  'ready_for_sender_collection',
 ]);
 
 // Usually one side is the caller's. When an operator is a member at both
@@ -43,6 +50,11 @@ const ORIGIN_ACTIONS: Record<string, NextAction> = {
   awaiting_drop_off: 'confirm_drop_off',
   parcel_received_at_origin: 'await_courier',
   rider_assigned: 'hand_to_rider',
+  // Returns come back to the origin counter.
+  return_initiated: 'await_arrival',
+  return_in_transit: 'receive_from_rider',
+  returned_to_origin: 'return_intake',
+  ready_for_sender_collection: 'hand_to_sender',
 };
 
 const DESTINATION_ACTIONS: Record<string, NextAction> = {

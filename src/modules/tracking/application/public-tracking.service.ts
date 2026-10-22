@@ -7,6 +7,7 @@ import type { OpeningHours } from '../../../common/opening-hours/opening-hours';
 import { normalizeTrackingCode } from '../../orders/application/tracking-code-input';
 import {
   FINAL_PUBLIC_STATUSES,
+  RETURN_PUBLIC_STATUSES,
   nextStepFor,
   PUBLIC_STATUS_LABELS,
   timelineEntryFor,
@@ -26,7 +27,10 @@ interface TrackedOrderRow {
   receiverPhone: string;
   updatedAt: Date;
   originName: string;
+  originAddress: string;
   originCity: string;
+  originState: string;
+  originOpeningHours: OpeningHours | null;
   destinationName: string;
   destinationAddress: string;
   destinationCity: string;
@@ -99,7 +103,17 @@ export class PublicTrackingService {
       const entry = timelineEntryFor(event.type, names);
       return entry ? [{ ...entry, at: event.createdAt }] : [];
     });
-    dto.origin = { name: order.originName, city: order.originCity };
+    // During a return the origin is where the parcel is going (and where the
+    // sender collects it), so it gets the same detail as the destination.
+    dto.origin = RETURN_PUBLIC_STATUSES.has(status)
+      ? {
+          name: order.originName,
+          city: order.originCity,
+          address: order.originAddress,
+          state: order.originState,
+          openingHours: order.originOpeningHours,
+        }
+      : { name: order.originName, city: order.originCity };
     dto.destination = {
       name: order.destinationName,
       address: order.destinationAddress,
@@ -107,8 +121,13 @@ export class PublicTrackingService {
       state: order.destinationState,
       openingHours: order.destinationOpeningHours,
     };
-    dto.courierLabel = ['rider_assigned', 'in_transit'].includes(order.status)
-      ? 'Locoomo rider'
+    dto.courierLabel = [
+      'rider_assigned',
+      'in_transit',
+      'return_initiated',
+      'return_in_transit',
+    ].includes(order.status)
+      ? await this.courierLabelFor(order.id)
       : null;
     dto.etaMinutes = null;
     dto.nextStep = nextStepFor(status, names);
@@ -116,12 +135,29 @@ export class PublicTrackingService {
     return dto;
   }
 
+  // Who is carrying it, by the courier's display name ("Locoomo rider",
+  // "Sendii") — from the order's current delivery leg.
+  private async courierLabelFor(orderId: string): Promise<string | null> {
+    const [row] = await this.dataSource.query<{ label: string }[]>(
+      `SELECT p.label FROM delivery_legs l
+         JOIN logistics_providers p ON p.key = l."providerKey"
+        WHERE l."orderId" = $1
+        ORDER BY (l.status IN ('requested', 'assigned', 'picked_up', 'returning')) DESC,
+                 l."createdAt" DESC
+        LIMIT 1`,
+      [orderId],
+    );
+    return row?.label ?? null;
+  }
+
   private async findOrder(
     trackingCode: string,
   ): Promise<TrackedOrderRow | undefined> {
     const rows = await this.dataSource.query<TrackedOrderRow[]>(
       `SELECT o.id, o."trackingCode", o.status, o."receiverPhone", o."updatedAt",
-              origin.name AS "originName", origin.city AS "originCity",
+              origin.name AS "originName", origin.address AS "originAddress",
+              origin.city AS "originCity", origin.state AS "originState",
+              origin."openingHours" AS "originOpeningHours",
               dest.name AS "destinationName", dest.address AS "destinationAddress",
               dest.city AS "destinationCity", dest.state AS "destinationState",
               dest."openingHours" AS "destinationOpeningHours"
