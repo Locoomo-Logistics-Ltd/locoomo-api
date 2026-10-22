@@ -5,6 +5,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Env } from '../../../config/env.validation';
 import { LogisticsProviderError } from '../domain/ports/logistics-provider.port';
+import { CourierWalletService } from './courier-wallet.service';
 import { DeliveryEventsService } from './delivery-events.service';
 import { LogisticsProviderRegistry } from './logistics-provider.registry';
 
@@ -12,6 +13,7 @@ const RECONCILE_INTERVAL_MS = 3 * 60_000;
 // A remote leg nobody has heard about for this long gets polled.
 const STALE_AFTER_MINUTES = 5;
 const BATCH_SIZE = 50;
+const WALLET_ALERT_EVERY_MS = 60 * 60_000;
 
 interface LegToCheck {
   id: string;
@@ -29,12 +31,14 @@ interface LegToCheck {
 export class DeliveryReconcilerService {
   private readonly logger = new Logger(DeliveryReconcilerService.name);
   private isRunning = false;
+  private readonly lastWalletAlertAt = new Map<string, number>();
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly registry: LogisticsProviderRegistry,
     private readonly deliveryEventsService: DeliveryEventsService,
     private readonly configService: ConfigService<Env, true>,
+    private readonly walletService: CourierWalletService,
   ) {}
 
   // Skipped under NODE_ENV=test like the outbox poller; tests call runOnce().
@@ -54,6 +58,7 @@ export class DeliveryReconcilerService {
     try {
       await this.expireUnassigned();
       await this.pollStale();
+      await this.checkWallets();
     } finally {
       this.isRunning = false;
     }
@@ -115,7 +120,50 @@ export class DeliveryReconcilerService {
     }
   }
 
-  private async syncLeg(leg: LegToCheck): Promise<void> {
+  // Admin "check now": pull this leg's state from its courier immediately.
+  async reconcileNow(legId: string): Promise<void> {
+    const [leg] = await this.dataSource.query<LegToCheck[]>(
+      `SELECT id, "providerKey", "externalId" FROM delivery_legs WHERE id = $1`,
+      [legId],
+    );
+    if (leg) {
+      await this.syncLeg(leg, { rethrow: true });
+    }
+  }
+
+  // Logs an error (once an hour per provider) while an enabled prepaid
+  // courier's wallet is below its alert threshold — the same figure the
+  // admin wallet view reports as lowBalance.
+  private async checkWallets(): Promise<void> {
+    const providers = await this.dataSource.query<{ key: string }[]>(
+      `SELECT key FROM logistics_providers
+        WHERE enabled AND "lowBalanceAlertKobo" IS NOT NULL`,
+    );
+    for (const { key } of providers) {
+      try {
+        const wallet = await this.walletService.walletFor(key);
+        if (!wallet?.lowBalance) {
+          continue;
+        }
+        const last = this.lastWalletAlertAt.get(key) ?? 0;
+        if (Date.now() - last < WALLET_ALERT_EVERY_MS) {
+          continue;
+        }
+        this.lastWalletAlertAt.set(key, Date.now());
+        this.logger.error(
+          `${key} wallet low: ₦${wallet.freeKobo / 100} free after surcharge headroom ` +
+            `(alert below ₦${wallet.lowBalanceAlertKobo! / 100}) — top it up or orders will fall back`,
+        );
+      } catch (error) {
+        this.logger.warn(`Checking ${key} wallet failed: ${String(error)}`);
+      }
+    }
+  }
+
+  private async syncLeg(
+    leg: LegToCheck,
+    options: { rethrow?: boolean } = {},
+  ): Promise<void> {
     const provider = this.registry.get(leg.providerKey);
     if (!provider?.getDelivery || !leg.externalId) {
       return;
@@ -137,6 +185,9 @@ export class DeliveryReconcilerService {
         }
       });
     } catch (error) {
+      if (options.rethrow) {
+        throw error;
+      }
       this.logger.warn(`Reconciling leg ${leg.id} failed: ${String(error)}`);
     }
   }

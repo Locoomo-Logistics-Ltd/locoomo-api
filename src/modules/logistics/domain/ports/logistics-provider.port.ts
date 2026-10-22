@@ -114,6 +114,9 @@ export interface ProviderCapabilities {
   cancellableUntil: DeliveryLegStatus.REQUESTED | DeliveryLegStatus.ASSIGNED;
   // Prepaid wallet that must cover the fee before dispatch.
   prepaidWallet: boolean;
+  // Prepaid wallets only: the most surcharges can add to a delivery, as a
+  // share of its fee — the headroom kept for in-flight deliveries.
+  surchargeHeadroomFactor?: number;
 }
 
 export interface LogisticsProvider {
@@ -133,7 +136,14 @@ export interface LogisticsProvider {
     headers: Record<string, string | undefined>,
   ): boolean;
   parseWebhook?(rawBody: Buffer): ProviderWebhookEvent;
-  getBalanceKobo?(): Promise<{ availableKobo: number }>;
+  getBalanceKobo?(): Promise<WalletBalance>;
+}
+
+export interface WalletBalance {
+  // What new deliveries can use (balance minus held fees).
+  availableKobo: number;
+  balanceKobo: number;
+  heldKobo: number;
 }
 
 export class LogisticsProviderError extends Error {

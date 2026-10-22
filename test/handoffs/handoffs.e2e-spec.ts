@@ -53,6 +53,7 @@ import {
   ProviderCapabilities,
   ProviderDeliverySnapshot,
   ProviderWebhookEvent,
+  WalletBalance,
 } from '../../src/modules/logistics/domain/ports/logistics-provider.port';
 import { DeliveryLegEntity } from '../../src/modules/logistics/infrastructure/entities/delivery-leg.entity';
 import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
@@ -147,9 +148,11 @@ class FakeCourierProvider implements LogisticsProvider {
     updates: 'webhook',
     remoteSubmission: true,
     cancellableUntil: DeliveryLegStatus.ASSIGNED,
-    prepaidWallet: false,
+    prepaidWallet: true,
+    surchargeHeadroomFactor: 0.6,
   };
   requests: CreateDeliveryRequest[] = [];
+  availableKobo = 10_000_000;
   cancelled: string[] = [];
   failNext: Error | null = null;
   failCodes = false;
@@ -214,6 +217,14 @@ class FakeCourierProvider implements LogisticsProvider {
       actualKobo: null,
       surchargeKobo: 0,
       failureReason: null,
+    });
+  }
+
+  getBalanceKobo(): Promise<WalletBalance> {
+    return Promise.resolve({
+      availableKobo: this.availableKobo,
+      balanceKobo: this.availableKobo + 50_000,
+      heldKobo: 50_000,
     });
   }
 
@@ -3088,6 +3099,316 @@ describe('Handoffs (e2e)', () => {
           isFinal: true,
         });
       }, 20_000);
+
+      describe('admin logistics', () => {
+        const admin = (req: request.Test) => req.set('Cookie', [adminCookie]);
+        const api = '/api/v1/admin/logistics';
+
+        it('lists couriers with routing settings and whether their adapter is running', async () => {
+          const providers = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(`${api}/providers`),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as unknown as {
+            key: string;
+            registered: boolean;
+            activeDeliveries: number;
+          }[];
+          expect(providers.find((p) => p.key === 'in_house')).toMatchObject({
+            registered: true,
+          });
+          expect(providers.find((p) => p.key === 'fake_courier')).toMatchObject(
+            {
+              registered: true,
+            },
+          );
+          // No SENDII_API_KEY adapter under NODE_ENV=test.
+          expect(providers.find((p) => p.key === 'sendii')).toMatchObject({
+            registered: false,
+          });
+
+          await request(app.getHttpServer())
+            .get(`${api}/providers`)
+            .set('Cookie', [courierOperatorCookie])
+            .expect(403);
+        });
+
+        it('updates routing settings, validating them, and refuses to switch off in-house riders', async () => {
+          const updated = (
+            (
+              await admin(
+                request(app.getHttpServer()).patch(
+                  `${api}/providers/fake_courier`,
+                ),
+              )
+                .send({
+                  maxAttempts: 2,
+                  lowBalanceAlertNaira: 20000,
+                  maxCostShare: null,
+                })
+                .expect(200)
+            ).body as SuccessBody
+          ).data;
+          expect(updated).toMatchObject({
+            maxAttempts: 2,
+            lowBalanceAlertKobo: 2_000_000,
+            maxCostShare: null,
+            // untouched
+            pilotNodeIds: [courierOriginNodeId],
+          });
+
+          await admin(
+            request(app.getHttpServer()).patch(`${api}/providers/fake_courier`),
+          )
+            .send({ minDistanceKm: 50, maxDistanceKm: 10 })
+            .expect(400);
+          await admin(
+            request(app.getHttpServer()).patch(`${api}/providers/fake_courier`),
+          )
+            .send({ pilotNodeIds: ['00000000-0000-0000-0000-000000000000'] })
+            .expect(400);
+          const refused = await admin(
+            request(app.getHttpServer()).patch(`${api}/providers/in_house`),
+          )
+            .send({ enabled: false })
+            .expect(409);
+          expect((refused.body as { error: { code: string } }).error.code).toBe(
+            'ILLEGAL_DELIVERY_ACTION',
+          );
+
+          await admin(
+            request(app.getHttpServer()).patch(`${api}/providers/fake_courier`),
+          )
+            .send({ maxAttempts: 1, lowBalanceAlertNaira: null })
+            .expect(200);
+        });
+
+        it('reads and edits vehicle rules', async () => {
+          const rules = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(`${api}/vehicle-rules`),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as unknown as { vehicleClass: string; maxWeightKg: number }[];
+          expect(rules.map((r) => r.vehicleClass)).toEqual([
+            'bicycle',
+            'motorbike',
+            'car',
+            'van',
+          ]);
+          expect(rules.find((r) => r.vehicleClass === 'car')?.maxWeightKg).toBe(
+            50,
+          );
+
+          const edited = (
+            (
+              await admin(
+                request(app.getHttpServer()).patch(`${api}/vehicle-rules/car`),
+              )
+                .send({ maxWeightKg: 60 })
+                .expect(200)
+            ).body as SuccessBody
+          ).data;
+          expect(edited).toMatchObject({
+            vehicleClass: 'car',
+            maxWeightKg: 60,
+          });
+          await admin(
+            request(app.getHttpServer()).patch(`${api}/vehicle-rules/car`),
+          )
+            .send({ maxWeightKg: 50 })
+            .expect(200);
+          await admin(
+            request(app.getHttpServer()).patch(
+              `${api}/vehicle-rules/hovercraft`,
+            ),
+          )
+            .send({ enabled: true })
+            .expect(404);
+        });
+
+        it('lists deliveries with filters, and retries one the courier never received', async () => {
+          const { leg } = await dropOffWithCourier(
+            'admin-retry@handoffs.e2e.test',
+          );
+
+          const listed = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(
+                  `${api}/deliveries?provider=fake_courier&status=requested&limit=100`,
+                ),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as { items: { id: string; orderTrackingCode: string }[] };
+          expect(listed.items.map((i) => i.id)).toContain(leg.id);
+
+          await admin(
+            request(app.getHttpServer()).post(
+              `${api}/deliveries/${leg.id}/retry`,
+            ),
+          ).expect(200);
+          const queued = await outboxEvents
+            .createQueryBuilder('o')
+            .where(`o."eventType" = 'logistics.submit'`)
+            .andWhere(`o.payload ->> 'legId' = :legId`, { legId: leg.id })
+            .getCount();
+          expect(queued).toBe(2); // the original submission + the retry
+
+          await submit(leg.id);
+          await admin(
+            request(app.getHttpServer()).post(
+              `${api}/deliveries/${leg.id}/retry`,
+            ),
+          ).expect(409); // the courier has it now
+        });
+
+        it('moves a delivery from the courier to Locoomo riders on demand', async () => {
+          const { id, externalId, leg } = await submittedCourierOrder(
+            'admin-fallback@handoffs.e2e.test',
+          );
+          await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+            sequence: 2,
+          });
+
+          await admin(
+            request(app.getHttpServer()).post(
+              `${api}/deliveries/${leg.id}/fallback`,
+            ),
+          ).expect(200);
+
+          expect(courier.cancelled).toContain(externalId);
+          expect(await legs.findOneByOrFail({ id: leg.id })).toMatchObject({
+            status: 'cancelled',
+            failureReason: 'admin_fallback',
+          });
+          expect(
+            await legs.findOneByOrFail({
+              orderId: id,
+              status: DeliveryLegStatus.REQUESTED,
+            }),
+          ).toMatchObject({ providerKey: 'in_house' });
+          expect((await orders.findOneByOrFail({ id })).status).toBe(
+            'parcel_received_at_origin',
+          );
+        });
+
+        it('refuses to take a delivery back after pickup', async () => {
+          const { externalId, leg } = await submittedCourierOrder(
+            'admin-fallback-late@handoffs.e2e.test',
+          );
+          await courierReports(externalId, DeliveryLegStatus.PICKED_UP, {
+            sequence: 2,
+          });
+          await admin(
+            request(app.getHttpServer()).post(
+              `${api}/deliveries/${leg.id}/fallback`,
+            ),
+          ).expect(409);
+        });
+
+        it('reconciles a delivery with its courier on demand', async () => {
+          const { id, externalId, leg } = await submittedCourierOrder(
+            'admin-reconcile@handoffs.e2e.test',
+          );
+          courier.advance(externalId, DeliveryLegStatus.ASSIGNED);
+
+          const row = (
+            (
+              await admin(
+                request(app.getHttpServer()).post(
+                  `${api}/deliveries/${leg.id}/reconcile`,
+                ),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data;
+          expect(row).toMatchObject({
+            status: 'assigned',
+            orderStatus: 'rider_assigned',
+          });
+          expect((await orders.findOneByOrFail({ id })).status).toBe(
+            'rider_assigned',
+          );
+        });
+
+        it("shows a prepaid courier's wallet, with headroom for in-flight surcharges", async () => {
+          await dataSource.query(
+            `UPDATE logistics_providers SET "lowBalanceAlertKobo" = 1000000 WHERE key = 'fake_courier'`,
+          );
+          courier.availableKobo = 1_200_000;
+
+          const wallet = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(
+                  `${api}/providers/fake_courier/wallet`,
+                ),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as {
+            availableKobo: number;
+            reservedForSurchargesKobo: number;
+            freeKobo: number;
+            lowBalance: boolean;
+          };
+          expect(wallet.availableKobo).toBe(1_200_000);
+          expect(wallet.reservedForSurchargesKobo).toBeGreaterThan(0);
+          expect(wallet.freeKobo).toBe(
+            wallet.availableKobo - wallet.reservedForSurchargesKobo,
+          );
+          expect(wallet.lowBalance).toBe(wallet.freeKobo < 1_000_000);
+
+          courier.availableKobo = 10_000_000;
+          await dataSource.query(
+            `UPDATE logistics_providers SET "lowBalanceAlertKobo" = NULL WHERE key = 'fake_courier'`,
+          );
+          // In-house riders have no wallet.
+          await admin(
+            request(app.getHttpServer()).get(
+              `${api}/providers/in_house/wallet`,
+            ),
+          ).expect(404);
+        });
+
+        it('reports courier economics per order with totals', async () => {
+          const report = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(
+                  `${api}/economics?provider=fake_courier&limit=100`,
+                ),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as {
+            items: {
+              orderTrackingCode: string;
+              courierCostKobo: number;
+              courierAllocationKobo: number;
+              marginKobo: number;
+              allocationEstimated: boolean;
+              orderStatus: string;
+            }[];
+            totals: { orders: number; marginKobo: number };
+          };
+          expect(report.totals.orders).toBe(report.items.length);
+          expect(report.items.length).toBeGreaterThan(0);
+          for (const row of report.items) {
+            expect(row.marginKobo).toBe(
+              row.courierAllocationKobo - row.courierCostKobo,
+            );
+          }
+          // The order settled earlier in this suite has its allocation recorded.
+          expect(
+            report.items.some(
+              (row) =>
+                row.orderStatus === 'completed' && !row.allocationEstimated,
+            ),
+          ).toBe(true);
+        });
+      });
     });
   });
 });

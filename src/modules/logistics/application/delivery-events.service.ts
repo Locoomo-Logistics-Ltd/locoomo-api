@@ -168,6 +168,7 @@ export class DeliveryEventsService {
     legId: string,
     reason: string,
     manager: EntityManager,
+    options: { thenRouteTo?: string } = {},
   ): Promise<boolean> {
     const leg = await manager
       .getRepository(DeliveryLegEntity)
@@ -179,13 +180,16 @@ export class DeliveryEventsService {
       return false;
     }
     leg.failureReason = reason;
-    return this.apply(leg, DeliveryEventType.CANCELLED, manager);
+    return this.apply(leg, DeliveryEventType.CANCELLED, manager, {
+      routeTo: options.thenRouteTo,
+    });
   }
 
   private async apply(
     leg: DeliveryLegEntity,
     event: DeliveryEventType,
     manager: EntityManager,
+    options: { routeTo?: string } = {},
   ): Promise<boolean> {
     const next = nextLegStatus(leg.status, event);
     if (!next) {
@@ -224,6 +228,7 @@ export class DeliveryEventsService {
         leg.orderId,
         manager,
         leg.legType,
+        { providerKey: options.routeTo },
       );
     }
     return true;

@@ -42,22 +42,18 @@ endpoints — is separate per environment.
    balance covers the fee plus 60% (worst-case surcharges) and the same headroom for
    deliveries already in progress; otherwise the order goes to Locoomo riders and an error
    is logged (`Sendii wallet too low`).
-4. **Routing** — the `logistics_providers` row `sendii` ships **disabled**. Start with a
-   pilot (admin screens for this arrive in phase 6; until then, SQL):
-   ```sql
-   -- Pilot at specific origin stations only
-   UPDATE logistics_providers
-      SET enabled = true, "pilotNodeIds" = ARRAY['<origin-node-uuid>']::uuid[]
-    WHERE key = 'sendii';
-
-   -- Everywhere (Sendii becomes the default; Locoomo riders the fallback)
-   UPDATE logistics_providers SET enabled = true, "pilotNodeIds" = NULL WHERE key = 'sendii';
-
-   -- Off again (orders in flight finish normally)
-   UPDATE logistics_providers SET enabled = false WHERE key = 'sendii';
+4. **Routing** — the `sendii` courier ships **disabled**. Turn it on from the admin API
+   (see API.md › Admin: couriers and deliveries), starting with a pilot:
    ```
-   Other settings on that row: `maxAttempts` (2), `assignTimeoutMinutes` (20),
-   `minDistanceKm`/`maxDistanceKm` (0.1 / 80 — Sendii's service limits).
+   PATCH /api/v1/admin/logistics/providers/sendii
+   { "enabled": true, "pilotNodeIds": ["<origin-node-uuid>"] }   # pilot stations only
+   { "pilotNodeIds": null }                                       # everywhere — Sendii becomes the default
+   { "enabled": false }                                           # off again (in-flight deliveries finish)
+   ```
+   `GET /api/v1/admin/logistics/providers` shows `registered: true` once the adapter is
+   running (needs `SENDII_API_KEY`). Other settings on the same endpoint: `maxAttempts` (2),
+   `assignTimeoutMinutes` (20), `minDistanceKm`/`maxDistanceKm` (0.1 / 80 — Sendii's
+   limits), `maxCostShare` (0.75), `lowBalanceAlertNaira` (₦50,000).
 
 Before enabling a station, check it has a `contactPhone` (Sendii requires one for the
 destination) and correct coordinates.
@@ -83,7 +79,10 @@ make later prices more accurate.
 | Webhook lost or out of order | The reconciler polls quiet deliveries every few minutes; Sendii's current state is applied, stale updates ignored |
 | Sendii API down | Bookings retry through the outbox; the station screen shows "couldn't load the code, try again" |
 
-Where to look:
+Where to look: the admin API — `GET /admin/logistics/deliveries?provider=sendii&stuck=true`
+for anything stuck, `/providers/sendii/wallet` for the balance, `/economics?provider=sendii`
+for cost vs allocation per order, and `POST /deliveries/:id/fallback` / `/reconcile` /
+`/retry` to intervene. The equivalent SQL, if needed:
 
 ```sql
 -- Deliveries in progress with Sendii

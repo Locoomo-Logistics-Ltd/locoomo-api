@@ -134,6 +134,7 @@ backend greps logs for.
 | 409 | `COURIER_HANDOVER_NOT_AVAILABLE` | `GET /handoffs/orders/:id/courier-handover` — nothing to hand an external courier at your Node right now. Refresh the order and follow `nextAction` |
 | 422 | `NO_DELIVERY_OPTION` | `POST /delivery-quotes`, `POST /payments/intents`, `POST /node-operators/nodes/:nodeId/dispatch` — no vehicle we run can carry this parcel, or no courier serves that vehicle between these Nodes. Ask for different parcel details or Nodes; retrying unchanged won't help |
 | 409 | `REVENUE_SPLIT_NOT_PAYABLE` | `PATCH /admin/revenue-split/entries/:id/mark-paid` on a `courier_allocation` row — recorded for reporting only, never paid |
+| 409 | `ILLEGAL_DELIVERY_ACTION` | `/admin/logistics/...` — the action doesn't apply to the delivery or courier in its current state (e.g. fallback after pickup, switching off in-house riders); the message says why |
 | 502 | `LOGISTICS_PROVIDER_ERROR` | A courier's API failed or timed out while you waited (e.g. loading a handover code). Safe to retry |
 | 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed, timed out (15 s) or was unreachable — placing an order, listing banks, or resolving a payout account number. Safe to retry |
 | 503 | `PRICING_NOT_CONFIGURED` | No Admin-configured pricing rule exists yet — an ops/config gap, not something the consumer caused; surface as "orders temporarily unavailable" |
@@ -2307,6 +2308,139 @@ the corresponding `partyType` and none of the other. Same response shape as
 `GET /earnings/mine` (each item's `partyType` tells you which role it was). Paginated.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator).
+
+## Admin: couriers and deliveries
+
+All **Admin only**, under `/api/v1/admin/logistics`. These control live routing — every
+change takes effect for the next order.
+
+### `GET /api/v1/admin/logistics/providers`
+
+Every courier, in routing order (lowest `priority` first):
+
+```json
+[
+  {
+    "key": "sendii",
+    "label": "Sendii",
+    "enabled": false,
+    "registered": true,
+    "priority": 10,
+    "maxAttempts": 2,
+    "assignTimeoutMinutes": 20,
+    "minDistanceKm": 0.1,
+    "maxDistanceKm": 80,
+    "pilotNodeIds": null,
+    "maxCostShare": 0.75,
+    "lowBalanceAlertKobo": 5000000,
+    "capabilities": {
+      "vehicleClasses": ["bicycle", "motorbike", "car"],
+      "handover": "provider_code",
+      "updates": "webhook",
+      "prepaidWallet": true
+    },
+    "activeDeliveries": 0
+  }
+]
+```
+
+`registered: false` means this deployment isn't running that courier's adapter (e.g. no
+`SENDII_API_KEY`) — it's never routed to, whatever `enabled` says.
+
+### `PATCH /api/v1/admin/logistics/providers/:key`
+
+Any of: `enabled`, `priority` (1–10000), `maxAttempts` (1–10 per order),
+`assignTimeoutMinutes` (1–1440, give up when no rider takes it), `minDistanceKm` /
+`maxDistanceKm`, `pilotNodeIds` (only orders from these origin Nodes; `null` or `[]` = all),
+`maxCostShare` (0.1–2: the most of an order's delivery fee this courier may cost before the
+order goes elsewhere), `lowBalanceAlertNaira`. Omitted fields are unchanged; `null` clears
+the nullable ones (no limit / no timeout / no cap / no alert). Returns the provider as above.
+
+Typical rollout: pilot (`{ "enabled": true, "pilotNodeIds": ["<origin-node-id>"] }`), then
+everywhere (`{ "pilotNodeIds": null }`), and off again (`{ "enabled": false }` — deliveries
+already with the courier finish normally).
+
+Errors: `400 VALIDATION_FAILED` (incl. min > max distance, unknown pilot Nodes), `404
+NOT_FOUND`, `409 ILLEGAL_DELIVERY_ACTION` (switching off `in_house` — Locoomo riders are every
+order's fallback).
+
+### `GET /api/v1/admin/logistics/providers/:key/wallet`
+
+Prepaid couriers only (`404` otherwise):
+
+```json
+{
+  "providerKey": "sendii",
+  "balanceKobo": 5000000,
+  "heldKobo": 380000,
+  "availableKobo": 4620000,
+  "reservedForSurchargesKobo": 228000,
+  "freeKobo": 4392000,
+  "lowBalanceAlertKobo": 5000000,
+  "lowBalance": true
+}
+```
+
+`reservedForSurchargesKobo` is kept back for surcharges the courier's deliveries in
+progress may still add (failed attempts, returns); `freeKobo` is what new bookings can
+really use. When it drops below `lowBalanceAlertKobo` the API logs an error hourly, and
+bookings start falling back to Locoomo riders once the wallet can't cover a delivery.
+`502 LOGISTICS_PROVIDER_ERROR` if the courier can't be reached.
+
+### `GET /api/v1/admin/logistics/vehicle-rules` · `PATCH …/vehicle-rules/:vehicleClass`
+
+The rules that decide which vehicle a parcel needs (see [Pricing](#pricing)): per class
+`rank` (smallest first), `enabled`, `parcelSizes`, `maxWeightKg`, `maxLongestSideCm`. PATCH
+any of those. `404` for an unknown class.
+
+### `GET /api/v1/admin/logistics/deliveries`
+
+Every courier attempt, newest first, paginated. Filters: `status` (`requested`, `assigned`,
+`picked_up`, `delivered`, `returning`, `returned`, `cancelled`), `provider`, `stuck=true` (in
+progress but nothing heard for 30+ minutes), `from` / `to` (ISO dates). Each row: `id`,
+`orderId`, `orderTrackingCode`, `orderStatus`, `provider`, `providerLabel`, `legType`,
+`status`, `providerStatus`, `externalId`, `attemptNumber`, `vehicleClass`, `courierName`,
+`courierPhone`, `quotedKobo`, `actualKobo`, `surchargeKobo`, `failureReason` (e.g.
+`no_rider_found`, `assign_timeout`, `admin_fallback`, `QUOTE_ABOVE_LIMIT: …`), timestamps.
+
+### `POST /api/v1/admin/logistics/deliveries/:id/retry` · `/fallback` · `/reconcile`
+
+- **retry** — send a delivery to its courier again when it never got there (`status:
+  requested`, no `externalId` — submission kept failing).
+- **fallback** — take it from an external courier and give it to Locoomo riders: cancels with
+  the courier (if they still allow it) and puts the order in the rider pool. Only before
+  pickup (`requested` / `assigned`).
+- **reconcile** — fetch the courier's current state now and apply it (normally done every
+  few minutes automatically).
+
+Each returns the delivery row. Errors: `404`, `409 ILLEGAL_DELIVERY_ACTION` (not applicable
+in the delivery's state — the message says why), `502 LOGISTICS_PROVIDER_ERROR`.
+
+### `GET /api/v1/admin/logistics/economics`
+
+Per order that used an external courier: what the customer paid, the delivery fee, the
+courier's cost (charged amount when settled, quote while in progress, surcharges included,
+cancelled attempts free), the courier allocation it's measured against (the
+`courier_allocation` earnings row once collected, else estimated from the current split
+rule — `allocationEstimated`), and `marginKobo` = allocation − cost. Filters `provider`,
+`from`, `to`; paginated, with `totals` across all matching orders:
+
+```json
+{
+  "items": [
+    {
+      "orderId": "uuid", "orderTrackingCode": "LCM-4F2K-9XPT", "orderStatus": "completed",
+      "providers": ["sendii"], "customerPaidKobo": 434400, "deliveryFeeKobo": 404400,
+      "courierCostKobo": 240000, "courierAllocationKobo": 242640,
+      "allocationEstimated": false, "marginKobo": 2640, "settled": true,
+      "createdAt": "2026-10-22T09:00:00.000Z"
+    }
+  ],
+  "page": 1, "limit": 20, "total": 1,
+  "totals": { "orders": 1, "customerPaidKobo": 434400, "courierCostKobo": 240000,
+              "courierAllocationKobo": 242640, "marginKobo": 2640 }
+}
+```
 
 ## Admin diagnostics
 

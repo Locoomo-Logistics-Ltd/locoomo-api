@@ -16,7 +16,10 @@ import {
 } from '../domain/ports/logistics-provider.port';
 import { DeliveryLegEntity } from '../infrastructure/entities/delivery-leg.entity';
 import { LogisticsProviderRegistry } from './logistics-provider.registry';
-import { LogisticsRouterService } from './logistics-router.service';
+import {
+  LogisticsRouterService,
+  RoutingChoice,
+} from './logistics-router.service';
 import { RouteDistanceService } from './route-distance.service';
 
 export const SUBMIT_DELIVERY_EVENT_TYPE = 'logistics.submit';
@@ -59,10 +62,13 @@ export class DeliveryDispatchService implements OnModuleInit {
   // Idempotent: an order that already has a leg in progress keeps it.
   // Returns null only if no provider at all can take the order (in-house
   // disabled) — the order then simply waits, unassigned.
+  // `options.providerKey` skips routing and sends the order to that
+  // provider (an Admin forcing the in-house fallback).
   async dispatch(
     orderId: string,
     manager: EntityManager,
     legType: DeliveryLegType = DeliveryLegType.FORWARD,
+    options: { providerKey?: string } = {},
   ): Promise<DeliveryLegEntity | null> {
     // Same reasoning as DeliveryEventsService.lockOrder: the check-then-
     // insert below must not interleave with another leg being created.
@@ -79,7 +85,9 @@ export class DeliveryDispatchService implements OnModuleInit {
       return active;
     }
 
-    const choice = await this.router.choose(orderId, legType, manager);
+    const choice = options.providerKey
+      ? await this.forcedChoice(orderId, legType, options.providerKey, manager)
+      : await this.router.choose(orderId, legType, manager);
     if (!choice) {
       this.logger.error(
         `No logistics provider can take order ${orderId} — it will wait unassigned`,
@@ -172,6 +180,24 @@ export class DeliveryDispatchService implements OnModuleInit {
         await this.dispatch(leg.orderId, manager, leg.legType);
       });
     }
+  }
+
+  private async forcedChoice(
+    orderId: string,
+    legType: DeliveryLegType,
+    providerKey: string,
+    manager: EntityManager,
+  ): Promise<RoutingChoice | null> {
+    const provider = this.registry.get(providerKey);
+    if (!provider) {
+      return null;
+    }
+    const [{ count }] = await manager.query<{ count: number }[]>(
+      `SELECT COUNT(*)::int AS count FROM delivery_legs
+        WHERE "orderId" = $1 AND "legType" = $2`,
+      [orderId, legType],
+    );
+    return { provider, attemptNumber: count + 1, maxCostShare: null };
   }
 
   private async otherActiveQuotedKobo(leg: DeliveryLegEntity): Promise<number> {

@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AdminLogisticsService } from './application/admin-logistics.service';
+import { CourierWalletService } from './application/courier-wallet.service';
 import { CourierHandoverService } from './application/courier-handover.service';
 import { CourierWebhookService } from './application/courier-webhook.service';
 import { DeliveryReconcilerService } from './application/delivery-reconciler.service';
@@ -17,6 +19,7 @@ import { LogisticsInboundEventEntity } from './infrastructure/entities/logistics
 import { LogisticsProviderConfigEntity } from './infrastructure/entities/logistics-provider-config.entity';
 import { InHouseRidersProvider } from './infrastructure/in-house-riders.provider';
 import { SendiiProvider } from './infrastructure/sendii/sendii.provider';
+import { AdminLogisticsController } from './interface/admin-logistics.controller';
 import { CourierWebhooksController } from './interface/courier-webhooks.controller';
 
 // Couriers as a pluggable layer: who carries each parcel between Nodes
@@ -49,8 +52,10 @@ import { CourierWebhooksController } from './interface/courier-webhooks.controll
     CourierHandoverService,
     VehicleSelectionService,
     RouteDistanceService,
+    CourierWalletService,
+    AdminLogisticsService,
   ],
-  controllers: [CourierWebhooksController],
+  controllers: [CourierWebhooksController, AdminLogisticsController],
   exports: [
     LogisticsProviderRegistry,
     DeliveryEventBus,

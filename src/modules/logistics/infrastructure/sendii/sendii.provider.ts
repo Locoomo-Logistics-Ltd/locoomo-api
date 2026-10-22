@@ -17,6 +17,7 @@ import {
   ProviderCapabilities,
   ProviderDeliverySnapshot,
   ProviderWebhookEvent,
+  WalletBalance,
 } from '../../domain/ports/logistics-provider.port';
 import type {
   SendiiDelivery,
@@ -87,6 +88,7 @@ export class SendiiProvider implements LogisticsProvider, OnModuleInit {
     remoteSubmission: true,
     cancellableUntil: DeliveryLegStatus.REQUESTED,
     prepaidWallet: true,
+    surchargeHeadroomFactor: MAX_SURCHARGE_FACTOR,
   };
   private readonly logger = new Logger(SendiiProvider.name);
 
@@ -251,11 +253,15 @@ export class SendiiProvider implements LogisticsProvider, OnModuleInit {
     };
   }
 
-  async getBalanceKobo(): Promise<{ availableKobo: number }> {
+  async getBalanceKobo(): Promise<WalletBalance> {
     const wallet = await this.call<SendiiWallet>('getWallet', '/wallet', {
       policy: SENDII_READ_POLICY,
     });
-    return { availableKobo: nairaToKobo(wallet.available) };
+    return {
+      availableKobo: nairaToKobo(wallet.available),
+      balanceKobo: nairaToKobo(wallet.balance),
+      heldKobo: nairaToKobo(wallet.held),
+    };
   }
 
   // HMAC-SHA512 of the raw body, keyed with the endpoint's whsec_ secret,

@@ -223,29 +223,16 @@ link to it. Still to come: `courierLabel`/`etaMinutes` filled by external courie
 3) and return statuses (`returning_to_sender`, `returned_to_sender`, `return_completed`,
 phase 5).
 
-## Admin app
+## Admin app — **live** (phase 6)
 
-All **Admin only**. *(phase 6 unless noted)*
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/v1/admin/logistics/providers` | List couriers: `key`, `label`, `enabled`, `priority`, `maxAttempts`, `assignTimeoutMinutes`, `vehicleClasses`, `pilotNodeIds` |
-| `PATCH /api/v1/admin/logistics/providers/:key` | Change the above. Disabling a provider stops **new** deliveries only |
-| `GET /api/v1/admin/logistics/deliveries` | Paginated; filter `status`, `provider`, `stuck=true` (no progress beyond the provider's timeout), `from`/`to`. Each row: order tracking code, delivery, `quotedKobo`, `actualKobo`, `surchargeKobo`, failure reason |
-| `POST /api/v1/admin/logistics/deliveries/:id/retry` | Re-request the same courier |
-| `POST /api/v1/admin/logistics/deliveries/:id/fallback` | Cancel with the courier (if still possible) and hand to the in-house pool |
-| `POST /api/v1/admin/logistics/deliveries/:id/reconcile` | Pull the latest status from the courier now |
-| `GET /api/v1/admin/logistics/providers/:key/wallet` | Prepaid couriers only: `balanceKobo`, `heldKobo`, `availableKobo`, `reservedForSurchargesKobo`, `lowBalance` (bool) |
-| `GET /api/v1/admin/logistics/economics` | Per-order customer price, courier cost, surcharges, margin; filter by date/provider/route (data recorded from phase 3; endpoint phase 6) |
-
-Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) and
-`502 LOGISTICS_PROVIDER_ERROR`.
+Documented in [API.md › Admin: couriers and deliveries](API.md#admin-couriers-and-deliveries).
+In addition to this draft: vehicle-rule endpoints, `lowBalanceAlertNaira` and
+`maxCostShare` settings, and `freeKobo` on the wallet.
 
 ## New error codes
 
 | HTTP | code | Meaning |
 |---|---|---|
-| 409 | `ILLEGAL_DELIVERY_ACTION` | Admin action not possible in the delivery's current state |
 
 ## Rollout & phase map
 
@@ -257,7 +244,7 @@ Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) 
 | 3 | ✅ Sendii adapter (behind a switch, off by default), `courier-handover`, webhooks, courier allocation in earnings (live) |
 | 4 | ✅ Parcel attributes, `delivery-quotes`, vehicle-based pricing, new `feeBreakdown`, `NO_DELIVERY_OPTION` (live; placeholder rates) |
 | 5 | ✅ Return statuses, `return-intake`, `return-collect`, sender emails, public return statuses (all live) |
-| 6 | Admin logistics screens |
+| 6 | ✅ Admin logistics endpoints (live) |
 
 Sendii is rolled out gradually: first in **shadow mode** (no visible change — the system only
 records what Sendii would have cost), then for a pilot list of Nodes, then by default.
