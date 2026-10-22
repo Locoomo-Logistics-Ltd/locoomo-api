@@ -179,6 +179,7 @@ class FakeCourierProvider implements LogisticsProvider {
       quotedKobo: 150000,
       trackingUrl: null,
       etaMinutes: 25,
+      distanceMeters: 9200,
     });
   }
 
@@ -662,6 +663,13 @@ describe('Handoffs (e2e)', () => {
           { pattern: nodeNamePattern },
         )
         .execute();
+      // Road distances learned from courier quotes reference nodes too.
+      await nodes.query(
+        `DELETE FROM node_route_distances
+          WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)
+             OR "destinationNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)`,
+        [nodeNamePattern],
+      );
       await nodes
         .createQueryBuilder()
         .delete()
@@ -2601,6 +2609,37 @@ describe('Handoffs (e2e)', () => {
         .post(`/api/v1/handoffs/orders/${id}/accept`)
         .set('Cookie', [riderCookie])
         .expect(200);
+    });
+
+    it('hands the courier the vehicle the parcel needs and the most it may cost', async () => {
+      await dataSource.query(
+        `UPDATE logistics_providers SET "maxCostShare" = 0.75 WHERE key = 'fake_courier'`,
+      );
+      const { id, leg } = await dropOffWithCourier(
+        'courier-vehicle@handoffs.e2e.test',
+      );
+      await submit(leg.id);
+      await dataSource.query(
+        `UPDATE logistics_providers SET "maxCostShare" = NULL WHERE key = 'fake_courier'`,
+      );
+
+      const order = await orders.findOneByOrFail({ id });
+      const submitted = courier.requests.find((r) => r.legId === leg.id)!;
+      expect(order.vehicleClass).toBe('motorbike');
+      expect(submitted.vehicleClass).toBe('motorbike');
+      expect((await legs.findOneByOrFail({ id: leg.id })).vehicleClass).toBe(
+        'motorbike',
+      );
+      expect(submitted.maxCostKobo).toBe(
+        Math.floor((order.amountKobo - order.destinationFeeKobo) * 0.75),
+      );
+      // The road distance the courier measured is kept for future pricing.
+      const [route] = await dataSource.query<{ roadDistanceMeters: number }[]>(
+        `SELECT "roadDistanceMeters" FROM node_route_distances
+          WHERE "originNodeId" = $1 AND "destinationNodeId" = $2`,
+        [courierOriginNodeId, destinationNodeId],
+      );
+      expect(route.roadDistanceMeters).toBe(9200);
     });
 
     it('leaves the leg for the outbox to retry on a transient failure', async () => {

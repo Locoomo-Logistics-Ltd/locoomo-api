@@ -134,6 +134,7 @@ describe('SendiiProvider', () => {
         quotedKobo: 240_000,
         trackingUrl: null,
         etaMinutes: 27,
+        distanceMeters: 9200,
       });
 
       const quoteUrl = new URL(fetchSpy.mock.calls[0][0] as string);
@@ -213,6 +214,17 @@ describe('SendiiProvider', () => {
         'INSUFFICIENT_WALLET_HEADROOM',
       );
       expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses (non-retryable) a quote above the cost cap, before checking the wallet', async () => {
+      fetchSpy.mockResolvedValueOnce(quote());
+
+      const error = await provider()
+        .createDelivery({ ...request, maxCostKobo: 200_000 })
+        .catch((e: unknown) => e);
+      expect(error).toMatchObject({ retryable: false });
+      expect((error as Error).message).toContain('QUOTE_ABOVE_LIMIT');
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
 
     it.each([

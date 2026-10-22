@@ -36,6 +36,10 @@ export interface CreateDeliveryRequest {
   dropoff: DeliveryStop;
   vehicleClass: VehicleClass | null;
   description: string;
+  // The most this delivery may cost, from the provider's maxCostShare of
+  // the order's delivery fee. A quote above it is a non-retryable refusal
+  // (the order then goes to the next courier). Absent = no cap.
+  maxCostKobo?: number;
   // Prepaid-wallet providers only: the quoted fees of this provider's other
   // deliveries still in progress, so the adapter can keep headroom for the
   // surcharges they may still incur before committing a new one.
@@ -49,6 +53,9 @@ export interface CreateDeliveryResult {
   quotedKobo: number | null;
   trackingUrl: string | null;
   etaMinutes: number | null;
+  // Road distance the provider measured, if it reports one — cached per
+  // Node pair for pricing.
+  distanceMeters: number | null;
 }
 
 export interface CourierDetails {

@@ -17,7 +17,14 @@ import type {
 export class InHouseRidersProvider implements LogisticsProvider, OnModuleInit {
   readonly key = IN_HOUSE_PROVIDER_KEY;
   readonly capabilities: ProviderCapabilities = {
-    vehicleClasses: [VehicleClass.BICYCLE, VehicleClass.MOTORBIKE],
+    // Locoomo riders take every parcel today, cars included — kept so
+    // large parcels don't become undeliverable whenever no external courier
+    // is available. Vans and trucks: no.
+    vehicleClasses: [
+      VehicleClass.BICYCLE,
+      VehicleClass.MOTORBIKE,
+      VehicleClass.CAR,
+    ],
     handover: 'locoomo_code',
     updates: 'internal',
     remoteSubmission: false,
@@ -39,6 +46,7 @@ export class InHouseRidersProvider implements LogisticsProvider, OnModuleInit {
       quotedKobo: null,
       trackingUrl: null,
       etaMinutes: null,
+      distanceMeters: null,
     });
   }
 

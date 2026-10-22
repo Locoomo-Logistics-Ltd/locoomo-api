@@ -7,6 +7,7 @@ import {
   ACTIVE_LEG_STATUSES,
   DeliveryLegStatus,
   DeliveryLegType,
+  VehicleClass,
 } from '../domain/delivery-leg';
 import {
   CreateDeliveryRequest,
@@ -16,6 +17,7 @@ import {
 import { DeliveryLegEntity } from '../infrastructure/entities/delivery-leg.entity';
 import { LogisticsProviderRegistry } from './logistics-provider.registry';
 import { LogisticsRouterService } from './logistics-router.service';
+import { RouteDistanceService } from './route-distance.service';
 
 export const SUBMIT_DELIVERY_EVENT_TYPE = 'logistics.submit';
 
@@ -45,6 +47,7 @@ export class DeliveryDispatchService implements OnModuleInit {
     private readonly registry: LogisticsProviderRegistry,
     private readonly outboxService: OutboxService,
     private readonly outboxHandlers: OutboxHandlerRegistry,
+    private readonly routeDistanceService: RouteDistanceService,
   ) {}
 
   onModuleInit(): void {
@@ -84,6 +87,9 @@ export class DeliveryDispatchService implements OnModuleInit {
       return null;
     }
 
+    const [{ vehicleClass }] = await manager.query<
+      { vehicleClass: VehicleClass | null }[]
+    >(`SELECT "vehicleClass" FROM orders WHERE id = $1`, [orderId]);
     const leg = await legs.save(
       legs.create({
         orderId,
@@ -91,6 +97,7 @@ export class DeliveryDispatchService implements OnModuleInit {
         providerKey: choice.provider.key,
         status: DeliveryLegStatus.REQUESTED,
         attemptNumber: choice.attemptNumber,
+        vehicleClass,
       }),
     );
 
@@ -141,6 +148,14 @@ export class DeliveryDispatchService implements OnModuleInit {
         trackingUrl: result.trackingUrl,
         etaMinutes: result.etaMinutes,
       });
+      if (result.distanceMeters) {
+        await this.routeDistanceService.record(
+          request.pickup.nodeId,
+          request.dropoff.nodeId,
+          result.distanceMeters,
+          leg.providerKey,
+        );
+      }
     } catch (error) {
       if (!(error instanceof LogisticsProviderError) || error.retryable) {
         throw error;
@@ -181,13 +196,21 @@ export class DeliveryDispatchService implements OnModuleInit {
       {
         trackingCode: string;
         parcelSize: string;
+        handling: string[];
         originNodeId: string;
         destinationNodeId: string;
+        deliveryFeeKobo: number;
+        maxCostShare: number | null;
       }[]
     >(
-      `SELECT "trackingCode", "parcelSize", "originNodeId", "destinationNodeId"
-         FROM orders WHERE id = $1`,
-      [leg.orderId],
+      `SELECT o."trackingCode", o."parcelSize", o.handling, o."originNodeId",
+              o."destinationNodeId",
+              o."amountKobo" - o."destinationFeeKobo" AS "deliveryFeeKobo",
+              p."maxCostShare"
+         FROM orders o
+         JOIN logistics_providers p ON p.key = $2
+        WHERE o.id = $1`,
+      [leg.orderId, leg.providerKey],
     );
     const stops = await manager.query<StopRow[]>(
       `SELECT id AS "nodeId", name, address, city, state, latitude, longitude,
@@ -207,7 +230,19 @@ export class DeliveryDispatchService implements OnModuleInit {
       pickup: stop(isReturn ? order.destinationNodeId : order.originNodeId),
       dropoff: stop(isReturn ? order.originNodeId : order.destinationNodeId),
       vehicleClass: leg.vehicleClass,
-      description: `Locoomo parcel ${order.trackingCode} (${order.parcelSize})`,
+      // Size and handling flags (e.g. "fragile") are for the courier; the
+      // parcel's own description stays private.
+      description: `Locoomo parcel ${order.trackingCode} (${[
+        order.parcelSize,
+        ...order.handling,
+      ].join(', ')})`,
+      ...(order.maxCostShare !== null
+        ? {
+            maxCostKobo: Math.floor(
+              Number(order.deliveryFeeKobo) * order.maxCostShare,
+            ),
+          }
+        : {}),
     };
   }
 }

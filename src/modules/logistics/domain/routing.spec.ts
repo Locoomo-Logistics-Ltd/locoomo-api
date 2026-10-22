@@ -9,6 +9,8 @@ describe('chooseProvider', () => {
     minDistanceKm: null,
     maxDistanceKm: null,
     pilotNodeIds: null,
+    vehicleClasses: ['bicycle', 'motorbike', 'car'],
+    maxCostShare: null,
   };
   const courier: ProviderRoutingConfig = {
     key: 'courier',
@@ -18,11 +20,14 @@ describe('chooseProvider', () => {
     minDistanceKm: 0.1,
     maxDistanceKm: 80,
     pilotNodeIds: null,
+    vehicleClasses: ['motorbike', 'car'],
+    maxCostShare: 0.75,
   };
   const registered = new Set(['in_house', 'courier']);
   const context = {
     originNodeId: 'yaba',
     distanceKm: 12,
+    vehicleClass: 'motorbike',
     attemptsByProvider: {},
   };
 
@@ -80,6 +85,21 @@ describe('chooseProvider', () => {
     expect(
       chooseProvider([inHouse, courier], new Set(['in_house']), context)?.key,
     ).toBe('in_house');
+  });
+
+  it('only offers a parcel to providers with the vehicle it needs', () => {
+    expect(
+      chooseProvider([inHouse, courier], registered, {
+        ...context,
+        vehicleClass: 'bicycle',
+      })?.key,
+    ).toBe('in_house');
+    expect(
+      chooseProvider([courier], registered, {
+        ...context,
+        vehicleClass: 'van',
+      }),
+    ).toBeNull();
   });
 
   it('returns null when nothing qualifies', () => {

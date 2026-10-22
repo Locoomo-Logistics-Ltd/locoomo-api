@@ -1,21 +1,18 @@
 import {
   IsEmail,
-  IsIn,
   IsString,
   IsUUID,
   Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { ParcelSize } from '../../../../common/parcel-size.enum';
-
-const PARCEL_SIZES = Object.values(ParcelSize);
+import { ParcelDetailsDto } from '../../../../common/parcel/parcel-details.dto';
 
 // Same fields as payments' CreatePaymentIntentDto minus `originNodeId` —
 // implicit from the :nodeId route param (DispatchParcelService.dispatch),
 // which also keeps a dispatching operator from pointing an order at a
 // Node they don't run.
-export class DispatchParcelDto {
+export class DispatchParcelDto extends ParcelDetailsDto {
   @IsUUID()
   destinationNodeId!: string;
 
@@ -37,9 +34,4 @@ export class DispatchParcelDto {
   @MinLength(1)
   @MaxLength(500)
   parcelDescription!: string;
-
-  @IsIn(PARCEL_SIZES, {
-    message: `parcelSize must be one of: ${PARCEL_SIZES.join(', ')}`,
-  })
-  parcelSize!: ParcelSize;
 }

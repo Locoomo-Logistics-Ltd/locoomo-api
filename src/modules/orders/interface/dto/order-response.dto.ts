@@ -1,3 +1,7 @@
+import {
+  ParcelView,
+  toParcelView,
+} from '../../../../common/parcel/parcel-view';
 import { ParcelSize } from '../../../../common/parcel-size.enum';
 import type { DeliveryView } from '../../../logistics/application/delivery-query.service';
 import {
@@ -22,6 +26,7 @@ export class OrderResponseDto {
   receiverPhone!: string;
   parcelDescription!: string;
   parcelSize!: ParcelSize;
+  parcel!: ParcelView;
   amountKobo!: number;
   status!: OrderStatus;
   createdAt!: Date;
@@ -55,6 +60,7 @@ export class OrderResponseDto {
     dto.receiverPhone = order.receiverPhone;
     dto.parcelDescription = order.parcelDescription;
     dto.parcelSize = order.parcelSize;
+    dto.parcel = toParcelView(order);
     dto.amountKobo = order.amountKobo;
     dto.status = order.status;
     dto.createdAt = order.createdAt;

@@ -62,6 +62,15 @@ endpoints — is separate per environment.
 Before enabling a station, check it has a `contactPhone` (Sendii requires one for the
 destination) and correct coordinates.
 
+## Vehicles and cost cap
+
+Each order carries the vehicle its parcel needs (motorbike or car — see API.md › Pricing);
+Sendii is only offered vehicles it runs, and books that vehicle. The `sendii` row's
+`maxCostShare` (0.75) caps Sendii's quote at 75% of the order's delivery fee: a dearer
+quote isn't booked and the order goes to the next courier (`failureReason` starts
+`QUOTE_ABOVE_LIMIT`). Road distances from Sendii's quotes are remembered per Node pair and
+make later prices more accurate.
+
 ## Day to day
 
 | Situation | What happens |

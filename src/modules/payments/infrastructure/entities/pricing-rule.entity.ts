@@ -5,6 +5,7 @@ import {
   Index,
   PrimaryColumn,
 } from 'typeorm';
+import type { VehicleRate } from '../../domain/vehicle-pricing';
 
 // Append-only, same reasoning as OrderEvent — real money is
 // priced off this table, so a historical order's fee must stay explainable
@@ -29,6 +30,17 @@ export class PricingRuleEntity {
   // only so pre-feature rows stay valid; every new rule sets it explicitly.
   @Column({ type: 'int', default: 0 })
   destinationFeeKobo!: number;
+
+  // Road km ≈ straight-line km × this, when no courier has measured the
+  // Node pair yet (see payments/domain/vehicle-pricing.ts).
+  @Column({ type: 'double precision', default: 1.4 })
+  roadDistanceFactor!: number;
+
+  // Explicit rates for vehicle classes other than motorbike (whose rate is
+  // baseFeeKobo/perKmRateKobo above), e.g. { car: { baseFeeKobo,
+  // perKmRateKobo } }. Classes not listed use the default multipliers.
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  vehicleRates!: Partial<Record<string, VehicleRate>>;
 
   @Index()
   @Column({ type: 'timestamptz', default: () => 'now()' })

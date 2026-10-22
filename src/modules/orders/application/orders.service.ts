@@ -25,6 +25,12 @@ export interface CreateOrderFromPaidIntentFields {
   receiverPhone: string;
   parcelDescription: string;
   parcelSize: ParcelSize;
+  weightKg: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  handling: string[];
+  vehicleClass: string | null;
   amountKobo: number;
   destinationFeeKobo: number;
 }
@@ -410,6 +416,12 @@ export class OrdersService {
             receiverPhone: fields.receiverPhone,
             parcelDescription: fields.parcelDescription,
             parcelSize: fields.parcelSize,
+            weightKg: fields.weightKg,
+            lengthCm: fields.lengthCm,
+            widthCm: fields.widthCm,
+            heightCm: fields.heightCm,
+            handling: fields.handling,
+            vehicleClass: fields.vehicleClass,
             amountKobo: fields.amountKobo,
             destinationFeeKobo: fields.destinationFeeKobo,
             status: OrderStatus.AWAITING_DROP_OFF,

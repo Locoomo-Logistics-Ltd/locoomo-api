@@ -1,3 +1,7 @@
+import {
+  ParcelView,
+  toParcelView,
+} from '../../../../common/parcel/parcel-view';
 import { ParcelSize } from '../../../../common/parcel-size.enum';
 import type { DeliveryView } from '../../../logistics/application/delivery-query.service';
 import {
@@ -23,6 +27,12 @@ export interface OrderPreviewRow {
   shelfNumber: number | null;
   receiverFullName: string;
   receiverPhone: string;
+  weightKg: string | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  handling: string[];
+  vehicleClass: string | null;
 }
 
 // What the Node app shows after a scan. Never the receiver's full name or
@@ -38,6 +48,7 @@ export class OrderPreviewResponseDto {
   destinationNodeName!: string;
   parcelDescription!: string;
   parcelSize!: ParcelSize;
+  parcel!: ParcelView;
   createdAt!: Date;
   myRole!: NodeRole;
   nextAction!: NextAction;
@@ -63,6 +74,7 @@ export class OrderPreviewResponseDto {
     dto.destinationNodeName = row.destinationNodeName;
     dto.parcelDescription = row.parcelDescription;
     dto.parcelSize = row.parcelSize;
+    dto.parcel = toParcelView(row);
     dto.createdAt = row.createdAt;
     dto.myRole = nodeRoleFor(row, myNodeIds);
     dto.nextAction = nextActionFor(row.status, dto.myRole, delivery?.handover);

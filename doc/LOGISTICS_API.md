@@ -142,29 +142,10 @@ Documented in [API.md › Delivery object](API.md#delivery-object); on consumer 
 Node scan lookup and `my-node/orders`. Only `provider: "in_house"` occurs until the first
 external courier ships (phase 3) — but build the `give_code_to_courier` path now.
 
-### `parcel` attributes *(phase 4)*
+### `parcel` attributes — **live** (phase 4)
 
-Used at checkout and returned on orders.
-
-```json
-{
-  "parcelSize": "medium",
-  "weightKg": 3.5,
-  "lengthCm": 40,
-  "widthCm": 30,
-  "heightCm": 20,
-  "handling": ["fragile"]
-}
-```
-
-| Field | Rules |
-|---|---|
-| `parcelSize` | unchanged: `small`, `medium`, `large`, `extra_large` |
-| `weightKg` | 0.1–50, up to 1 decimal. **Optional at first, will become required** |
-| `lengthCm`/`widthCm`/`heightCm` | 1–200, integers, optional (send all three or none) |
-| `handling` | array of `fragile`, `keep_upright`, `perishable`, `liquid`; optional, default `[]` |
-
-Limits are provisional until the Sendii agreement fixes per-vehicle limits.
+Documented in [API.md › POST /payments/intents](API.md#post-apiv1paymentsintents) and
+[Pricing](API.md#pricing).
 
 ### `openingHours` (Nodes) — **live**
 
@@ -172,64 +153,13 @@ Shipped in phase 0 — documented in [API.md › Opening hours](API.md#opening-h
 
 ## Consumer (sender) app
 
-### `POST /api/v1/delivery-quotes` — new *(phase 4)*
+### Quotes, parcel details and vehicle pricing — **live** (phase 4)
 
-**Requires an authenticated Consumer, NodeOperator or NodeStaff session.** Price preview
-before payment — today the price only appears after `POST /payments/intents` has already
-reserved capacity. Call it whenever origin, destination or parcel attributes change. Nothing
-is reserved. Rate-limited to 30/min.
-
-Request:
-
-```json
-{
-  "originNodeId": "uuid",
-  "destinationNodeId": "uuid",
-  "parcelSize": "medium",
-  "weightKg": 3.5,
-  "handling": []
-}
-```
-
-Response `200`, `data`:
-
-```json
-{
-  "amountKobo": 520000,
-  "vehicleClass": "motorbike",
-  "estimatedDeliveryMinutes": 45,
-  "distanceKm": 9.2,
-  "validUntil": "2026-10-21T10:15:00.000Z"
-}
-```
-
-The amount shown here is what `POST /payments/intents` will charge if called before
-`validUntil` with the same inputs. `estimatedDeliveryMinutes` is the courier leg only (after
-drop-off), not end-to-end.
-
-Errors: `400 VALIDATION_FAILED`, `404 NOT_FOUND` (Node missing, inactive or private),
-`422 NO_DELIVERY_OPTION`, `429 RATE_LIMITED`, `503 PRICING_NOT_CONFIGURED`.
-
-### `POST /api/v1/payments/intents` — changed *(phase 4)*
-
-Accepts the [parcel attributes](#parcel-attributes-phase-4) above in addition to today's
-fields. `parcelSize` **will affect the fee** from this phase on (via the vehicle it needs).
-Response gains `vehicleClass`, and `feeBreakdown` changes to:
-
-```json
-{
-  "pricingRuleId": "uuid",
-  "deliveryFeeKobo": 470000,
-  "destinationFeeKobo": 50000,
-  "distanceKm": 9.2,
-  "vehicleClass": "motorbike",
-  "totalKobo": 520000
-}
-```
-
-Show `totalKobo`; treat the other fields as informational (the formula behind them is being
-agreed and will change). New error: `422 NO_DELIVERY_OPTION`. Same changes apply to
-`POST /api/v1/node-operators/nodes/:nodeId/dispatch`.
+`POST /delivery-quotes`, the parcel fields and new `feeBreakdown` on
+`POST /payments/intents` (and `dispatch`), and `NO_DELIVERY_OPTION` are documented in
+[API.md › Pricing](API.md#pricing). Differences from this draft: weight is accepted up to
+1000 kg (anything a vehicle can't carry is the 422, not a 400), and `feeBreakdown` keeps
+`baseFeeKobo`/`perKmRateKobo` (the applied vehicle rate) alongside the new fields.
 
 ### `GET /api/v1/orders` and `GET /api/v1/orders/:id` — changed *(phases 1–5)*
 
@@ -240,7 +170,6 @@ Still to come on each order:
 
 | Field | Phase | Notes |
 |---|---|---|
-| `parcel` | 4 | Attributes captured at checkout |
 
 Return statuses (phase 5) appear in `status`; when present, show the origin Node's
 details (`originNodeName`, `originNodeAddress`) as the collection point.
@@ -316,7 +245,6 @@ Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) 
 
 | HTTP | code | Meaning |
 |---|---|---|
-| 422 | `NO_DELIVERY_OPTION` | No courier can carry this parcel on this route (too heavy/large for every vehicle class, or the route isn't served). Ask the sender to adjust the parcel details or pick another Node |
 | 409 | `ILLEGAL_DELIVERY_ACTION` | Admin action not possible in the delivery's current state |
 
 ## Rollout & phase map
@@ -327,7 +255,7 @@ Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) 
 | 1 | ✅ Forgiving lookup at both Nodes, `nextAction`, `shelfNumber`, `receiverMasked`, queues, `trackingUrl`, `labelInstructions`, public tracking endpoint, email links + QR (all live) |
 | 2 | ✅ `delivery` object, courier-aware `nextAction`, rider pool excludes courier orders (all live; only `in_house` until phase 3) |
 | 3 | ✅ Sendii adapter (behind a switch, off by default), `courier-handover`, webhooks, courier allocation in earnings (live) |
-| 4 | Parcel attributes, `delivery-quotes`, new `feeBreakdown`, `NO_DELIVERY_OPTION` |
+| 4 | ✅ Parcel attributes, `delivery-quotes`, vehicle-based pricing, new `feeBreakdown`, `NO_DELIVERY_OPTION` (live; placeholder rates) |
 | 5 | ✅ Return statuses, `return-intake`, `return-collect`, sender emails, public return statuses (all live) |
 | 6 | Admin logistics screens |
 

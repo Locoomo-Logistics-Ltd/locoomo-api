@@ -1,3 +1,4 @@
+import { numericTransformer } from '../../../../common/database/numeric-transformer';
 import {
   Column,
   CreateDateColumn,
@@ -53,6 +54,32 @@ export class OrderEntity {
 
   @Column({ type: 'enum', enum: ParcelSize, enumName: 'parcel_size_enum' })
   parcelSize!: ParcelSize;
+
+  // Parcel details beyond the size class (all optional) and the vehicle
+  // they resolve to — see ParcelDetailsDto / VehicleSelectionService.
+  @Column({
+    type: 'numeric',
+    precision: 6,
+    scale: 1,
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  weightKg!: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  lengthCm!: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  widthCm!: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  heightCm!: number | null;
+
+  @Column({ type: 'text', array: true, default: () => "'{}'" })
+  handling!: string[];
+
+  @Column({ type: 'varchar', nullable: true })
+  vehicleClass!: string | null;
 
   @Column({ type: 'int' })
   amountKobo!: number;

@@ -1,11 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { RouteDistanceService } from '../../logistics/application/route-distance.service';
 import { FeeBreakdown } from '../domain/fee-breakdown';
 import { PricingNotConfiguredException } from '../domain/exceptions/pricing-not-configured.exception';
+import { deliveryFeeKobo, rateFor } from '../domain/vehicle-pricing';
 import { PricingRuleEntity } from '../infrastructure/entities/pricing-rule.entity';
 
-interface NodeCoordinates {
+interface PricedNode {
+  id: string;
   latitude: number;
   longitude: number;
 }
@@ -17,6 +20,7 @@ export class PricingService {
     private readonly pricingRules: Repository<PricingRuleEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly routeDistanceService: RouteDistanceService,
   ) {}
 
   async getCurrentRule(): Promise<PricingRuleEntity> {
@@ -32,14 +36,10 @@ export class PricingService {
     return rule;
   }
 
-  // Distance via PostGIS ST_Distance (meters) on the same geography points
-  // NodesService already maintains — no new geo infrastructure needed.
-  async calculateFee(
-    origin: NodeCoordinates,
-    destination: NodeCoordinates,
-  ): Promise<FeeBreakdown> {
-    const rule = await this.getCurrentRule();
-
+  async straightLineKm(
+    origin: PricedNode,
+    destination: PricedNode,
+  ): Promise<number> {
     const [{ distanceMeters }] = await this.dataSource.query<
       { distanceMeters: number }[]
     >(
@@ -54,19 +54,38 @@ export class PricingService {
         destination.latitude,
       ],
     );
+    return distanceMeters / 1000;
+  }
 
-    const distanceKm = distanceMeters / 1000;
-    const distanceFeeKobo = Math.round(rule.perKmRateKobo * distanceKm);
-    const totalKobo =
-      rule.baseFeeKobo + distanceFeeKobo + rule.destinationFeeKobo;
+  // Delivery fee for the vehicle the parcel needs over the road distance
+  // (a courier-measured one for this Node pair when known, else an
+  // estimate from the straight line), plus the destination Node's flat fee.
+  async calculateFee(
+    origin: PricedNode,
+    destination: PricedNode,
+    vehicleClass: string,
+  ): Promise<FeeBreakdown> {
+    const rule = await this.getCurrentRule();
+    const straightLineKm = await this.straightLineKm(origin, destination);
+    const routeKm = await this.routeDistanceService.roadDistanceKm(
+      origin.id,
+      destination.id,
+    );
+    const distanceKm = routeKm ?? straightLineKm * rule.roadDistanceFactor;
+    const rate = rateFor(rule, vehicleClass);
+    const deliveryFee = deliveryFeeKobo(rate, distanceKm);
 
     return {
       pricingRuleId: rule.id,
-      baseFeeKobo: rule.baseFeeKobo,
-      perKmRateKobo: rule.perKmRateKobo,
+      vehicleClass,
+      baseFeeKobo: rate.baseFeeKobo,
+      perKmRateKobo: rate.perKmRateKobo,
+      distanceKm: Math.round(distanceKm * 100) / 100,
+      distanceSource: routeKm !== null ? 'route' : 'estimate',
+      straightLineKm: Math.round(straightLineKm * 100) / 100,
+      deliveryFeeKobo: deliveryFee,
       destinationFeeKobo: rule.destinationFeeKobo,
-      distanceKm,
-      totalKobo,
+      totalKobo: deliveryFee + rule.destinationFeeKobo,
     };
   }
 }

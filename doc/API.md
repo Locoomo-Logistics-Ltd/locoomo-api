@@ -129,9 +129,10 @@ backend greps logs for.
 | 400 | `NODE_LOCATION_MISMATCH` | `POST /nodes`, `PATCH /nodes/:id`, `POST /node-operators/onboarding`, `POST /node-operators/nodes` — the map pin is clearly not where the address is. Show the message (it says where the address actually is) and let the user move the pin or fix the address |
 | 400 | `INVALID_REVENUE_SPLIT` | `POST /admin/revenue-split` — `riderPercent`/`nodePercent`/`platformPercent` didn't sum to 100 |
 | 400 | `BANK_ACCOUNT_VERIFICATION_FAILED` | `PATCH /riders/me/payout-account` or `PATCH /node-operators/nodes/:nodeId/payout-account` — Paystack couldn't resolve that `accountNumber` at that `bankCode`. Nothing is saved; a previously-verified payout account on file, if any, is untouched |
-| 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; `/track/:trackingCode` allows 10/min; `/handoffs/orders/:id/courier-handover` allows 20/min; everything else defaults to 100/min |
+| 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; `/track/:trackingCode` allows 10/min; `/handoffs/orders/:id/courier-handover` allows 20/min; `/delivery-quotes` allows 30/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
 | 409 | `COURIER_HANDOVER_NOT_AVAILABLE` | `GET /handoffs/orders/:id/courier-handover` — nothing to hand an external courier at your Node right now. Refresh the order and follow `nextAction` |
+| 422 | `NO_DELIVERY_OPTION` | `POST /delivery-quotes`, `POST /payments/intents`, `POST /node-operators/nodes/:nodeId/dispatch` — no vehicle we run can carry this parcel, or no courier serves that vehicle between these Nodes. Ask for different parcel details or Nodes; retrying unchanged won't help |
 | 409 | `REVENUE_SPLIT_NOT_PAYABLE` | `PATCH /admin/revenue-split/entries/:id/mark-paid` on a `courier_allocation` row — recorded for reporting only, never paid |
 | 502 | `LOGISTICS_PROVIDER_ERROR` | A courier's API failed or timed out while you waited (e.g. loading a handover code). Safe to retry |
 | 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed, timed out (15 s) or was unreachable — placing an order, listing banks, or resolving a payout account number. Safe to retry |
@@ -1188,8 +1189,23 @@ calculated, so past orders stay explainable even after rates change.
 Request:
 
 ```json
-{ "baseFeeNaira": 500, "perKmRateNaira": 100, "destinationFeeNaira": 50 }
+{
+  "baseFeeNaira": 1100,
+  "perKmRateNaira": 320,
+  "destinationFeeNaira": 300,
+  "roadDistanceFactor": 1.4,
+  "vehicleRates": { "car": { "baseFeeNaira": 2500, "perKmRateNaira": 780 } }
+}
 ```
+
+How a delivery fee is worked out (see [Pricing](#pricing)): `baseFeeNaira` /
+`perKmRateNaira` are the **motorbike** rate, per **road** kilometre. Other vehicles use
+`vehicleRates` when given (keys `bicycle`, `car`, `van`, `truck`), otherwise the motorbike
+rate × a default multiplier (car 2.4, bicycle 0.7, van 5, truck 8). `roadDistanceFactor`
+(optional, 1–3, default 1.4) estimates road km from the straight line until a courier has
+measured that pair of Nodes. The values above are the current **placeholder** recommendation
+(derived from Sendii sandbox quotes so the 60% courier allocation covers the courier's cost)
+until the Locoomo–Sendii pricing formula is agreed.
 
 `destinationFeeNaira` is a flat fee added to the order total and paid entirely to the
 **destination** Node on order completion — it is not part of the rider/origin-Node/platform
@@ -1207,6 +1223,10 @@ Response `201`, `data`:
   "perKmRateKobo": 10000,
   "destinationFeeNaira": 50,
   "destinationFeeKobo": 5000,
+  "roadDistanceFactor": 1.4,
+  "vehicleRates": {
+    "car": { "baseFeeNaira": 2500, "baseFeeKobo": 250000, "perKmRateNaira": 780, "perKmRateKobo": 78000 }
+  },
   "effectiveFrom": "2026-07-22T09:14:00.000Z",
   "createdByAdminId": "uuid"
 }
@@ -1245,6 +1265,73 @@ Response `200`, `data`:
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a Rider or NodeOperator).
 
+### Pricing
+
+A delivery's price depends on **the vehicle the parcel needs** and **the road distance**:
+
+1. **Vehicle** — the smallest vehicle class whose limits the parcel fits (current
+   placeholder limits, configurable server-side):
+
+   | Vehicle | Sizes | Max weight | Longest side |
+   |---|---|---|---|
+   | `motorbike` | small, medium | 20 kg | 60 cm |
+   | `car` | small – extra_large | 50 kg | 120 cm |
+
+   (Bicycle and van classes exist but are switched off.) Anything bigger or heavier is
+   refused with `422 NO_DELIVERY_OPTION`.
+2. **Distance** — road kilometres between the two Nodes: measured by a courier for that
+   pair when known (`distanceSource: "route"`), otherwise the straight line × the pricing
+   rule's factor (`"estimate"`).
+3. **Fee** — the vehicle's base fee + per-km rate × distance (see
+   [`POST /admin/pricing`](#post-apiv1adminpricing)), plus the destination Node's flat fee.
+
+### `POST /api/v1/delivery-quotes`
+
+**Requires an authenticated Consumer, NodeOperator or NodeStaff session.** Price preview
+before payment — nothing is reserved. Call it whenever the Nodes or parcel details change.
+Same body rules as `POST /payments/intents` (Nodes + parcel fields, no receiver details).
+Consumers can only quote public Nodes; Node staff can also quote their own private ones
+(for `dispatch`). Rate-limited to 30/min.
+
+Request:
+
+```json
+{
+  "originNodeId": "uuid",
+  "destinationNodeId": "uuid",
+  "parcelSize": "medium",
+  "weightKg": 6.5,
+  "lengthCm": 100,
+  "widthCm": 30,
+  "heightCm": 30,
+  "handling": ["fragile"]
+}
+```
+
+Response `200`, `data`:
+
+```json
+{
+  "amountKobo": 1000560,
+  "vehicleClass": "car",
+  "estimatedDeliveryMinutes": 50,
+  "distanceKm": 9.2,
+  "feeBreakdown": { "…": "same shape as on a payment intent" },
+  "validUntil": "2026-10-22T10:15:00.000Z"
+}
+```
+
+`amountKobo` is what `POST /payments/intents` will charge for the same inputs (prices only
+change when an Admin adds a pricing rule; `validUntil` is a sensible point to refresh).
+`estimatedDeliveryMinutes` is a rough estimate of the courier leg only (after drop-off) —
+present it as approximate.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `400 VALIDATION_FAILED`, `404 NOT_FOUND`
+(Node missing, inactive, or private for a Consumer), `422 NO_DELIVERY_OPTION` (too
+big/heavy for any vehicle, or no courier serves that vehicle between these Nodes — ask the
+sender to adjust the parcel details or choose other Nodes), `429 RATE_LIMITED`, `503
+PRICING_NOT_CONFIGURED`.
+
 ### `POST /api/v1/payments/intents`
 
 **Requires an authenticated Consumer session.** Order placement — step one of the
@@ -1264,7 +1351,12 @@ Request:
   "receiverEmail": "receiver@example.com",
   "receiverPhone": "+2348012345678",
   "parcelDescription": "A small box of documents",
-  "parcelSize": "small"
+  "parcelSize": "small",
+  "weightKg": 2.5,
+  "lengthCm": 30,
+  "widthCm": 20,
+  "heightCm": 15,
+  "handling": ["fragile"]
 }
 ```
 
@@ -1274,7 +1366,13 @@ Request:
 | `receiverEmail` | valid email |
 | `receiverPhone` | `+` optional, 7–15 digits, same format as registration's `phone` |
 | `parcelDescription` | 1–500 chars |
-| `parcelSize` | one of `small`, `medium`, `large`, `extra_large` — informational for the Node operator, does **not** affect the fee (pricing is distance-only) |
+| `parcelSize` | one of `small`, `medium`, `large`, `extra_large` — together with weight and dimensions it decides the **vehicle**, and so the fee |
+| `weightKg` | optional, 0.1–1000, at most 1 decimal. **Optional for now, will become required** — ask for it |
+| `lengthCm`, `widthCm`, `heightCm` | optional integers 1–500 — send all three or none |
+| `handling` | optional array of `fragile`, `keep_upright`, `perishable`, `liquid` (passed on to the courier) |
+
+Call [`POST /delivery-quotes`](#post-apiv1delivery-quotes) first to show the price; this
+endpoint charges exactly what the quote showed for the same inputs.
 
 Response `201`, `data`:
 
@@ -1288,15 +1386,28 @@ Response `201`, `data`:
   "receiverPhone": "+2348012345678",
   "parcelDescription": "A small box of documents",
   "parcelSize": "small",
+  "parcel": {
+    "parcelSize": "small",
+    "weightKg": 2.5,
+    "lengthCm": 30,
+    "widthCm": 20,
+    "heightCm": 15,
+    "handling": ["fragile"],
+    "vehicleClass": "motorbike"
+  },
   "feeBreakdown": {
     "pricingRuleId": "uuid",
-    "baseFeeKobo": 50000,
-    "perKmRateKobo": 10000,
-    "destinationFeeKobo": 5000,
-    "distanceKm": 4.2,
-    "totalKobo": 97000
+    "vehicleClass": "motorbike",
+    "baseFeeKobo": 110000,
+    "perKmRateKobo": 32000,
+    "distanceKm": 5.88,
+    "distanceSource": "estimate",
+    "straightLineKm": 4.2,
+    "deliveryFeeKobo": 298160,
+    "destinationFeeKobo": 30000,
+    "totalKobo": 328160
   },
-  "amountKobo": 97000,
+  "amountKobo": 328160,
   "status": "pending",
   "expiresAt": "2026-07-22T09:29:00.000Z",
   "authorizationUrl": "https://checkout.paystack.com/..."
@@ -1313,8 +1424,12 @@ confirms that) — land the consumer on a "processing" screen and poll `GET
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `400 VALIDATION_FAILED`,
 `404 NOT_FOUND` (either Node doesn't exist, isn't active, or is `isPubliclyVisible:
 false` — a private Node is hidden from a Consumer the same way a nonexistent one is, not
-a `403`), `409 NODE_CAPACITY_UNAVAILABLE`, `429 RATE_LIMITED`, `502
-PAYMENT_PROVIDER_ERROR`, `503 PRICING_NOT_CONFIGURED`.
+a `403`), `409 NODE_CAPACITY_UNAVAILABLE`, `422 NO_DELIVERY_OPTION`, `429 RATE_LIMITED`,
+`502 PAYMENT_PROVIDER_ERROR`, `503 PRICING_NOT_CONFIGURED`.
+
+Show `totalKobo`/`amountKobo`; treat the rest of `feeBreakdown` as informational (the
+formula is a placeholder until the courier pricing agreement is final). The parcel details
+and `vehicleClass` are kept on the order (`parcel` on order responses).
 
 Node-operators dispatching their own parcels (no Consumer involved) use `POST
 /node-operators/nodes/:nodeId/dispatch` instead, not this endpoint — see that section
@@ -1394,6 +1509,10 @@ Response `200`, `data`:
   /track/:trackingCode`](#get-apiv1tracktrackingcode)). Offer a **"Share tracking link"**
   button (WhatsApp/SMS share sheet) so the sender can pass it to the receiver. It contains
   a signed token, so don't log it or send it to analytics.
+- `parcel` — the parcel details captured at checkout (`parcelSize`, `weightKg`,
+  `lengthCm`/`widthCm`/`heightCm`, `handling`) and the `vehicleClass` they need. Fields
+  not given at checkout are `null` (`handling`: `[]`). Also on the Node app's
+  `by-tracking-code` and `my-node/orders` items.
 - `delivery` — who is carrying the parcel; see [Delivery object](#delivery-object).
   `null` until the parcel is dropped off. Never includes the courier's phone for a
   Consumer.

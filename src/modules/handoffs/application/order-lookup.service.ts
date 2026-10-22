@@ -37,7 +37,8 @@ export class OrderLookupService {
       `SELECT o.id, o."trackingCode", o.status, o."originNodeId",
               o."destinationNodeId", o."parcelDescription", o."parcelSize",
               o."createdAt", o."shelfNodeId", o."shelfNumber",
-              o."receiverFullName", o."receiverPhone",
+              o."receiverFullName", o."receiverPhone", o."weightKg",
+              o."lengthCm", o."widthCm", o."heightCm", o.handling, o."vehicleClass",
               origin.name AS "originNodeName", dest.name AS "destinationNodeName"
          FROM orders o
          JOIN nodes origin ON origin.id = o."originNodeId"

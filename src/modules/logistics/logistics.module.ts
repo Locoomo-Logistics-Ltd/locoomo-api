@@ -9,6 +9,8 @@ import { DeliveryEventBus } from './application/delivery-event-bus';
 import { DeliveryEventsService } from './application/delivery-events.service';
 import { DeliveryQueryService } from './application/delivery-query.service';
 import { LogisticsProviderRegistry } from './application/logistics-provider.registry';
+import { RouteDistanceService } from './application/route-distance.service';
+import { VehicleSelectionService } from './application/vehicle-selection.service';
 import { LogisticsRouterService } from './application/logistics-router.service';
 import { DeliveryLegEntity } from './infrastructure/entities/delivery-leg.entity';
 import { LogisticsInboundEventEntity } from './infrastructure/entities/logistics-inbound-event.entity';
@@ -45,6 +47,8 @@ import { CourierWebhooksController } from './interface/courier-webhooks.controll
     CourierWebhookService,
     DeliveryReconcilerService,
     CourierHandoverService,
+    VehicleSelectionService,
+    RouteDistanceService,
   ],
   controllers: [CourierWebhooksController],
   exports: [
@@ -54,6 +58,9 @@ import { CourierWebhooksController } from './interface/courier-webhooks.controll
     DeliveryEventsService,
     DeliveryQueryService,
     CourierHandoverService,
+    VehicleSelectionService,
+    RouteDistanceService,
+    LogisticsRouterService,
   ],
 })
 export class LogisticsModule {}

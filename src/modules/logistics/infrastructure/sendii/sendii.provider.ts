@@ -145,6 +145,14 @@ export class SendiiProvider implements LogisticsProvider, OnModuleInit {
       policy: SENDII_READ_POLICY,
     });
     const feeKobo = nairaToKobo(quote.fee);
+    if (request.maxCostKobo !== undefined && feeKobo > request.maxCostKobo) {
+      throw new LogisticsProviderError(
+        this.key,
+        'createDelivery',
+        `QUOTE_ABOVE_LIMIT: quoted ${feeKobo} kobo, limit ${request.maxCostKobo} kobo`,
+        false,
+      );
+    }
 
     if (request.otherActiveQuotedKobo !== undefined) {
       await this.assertWalletHeadroom(feeKobo, request.otherActiveQuotedKobo);
@@ -194,6 +202,7 @@ export class SendiiProvider implements LogisticsProvider, OnModuleInit {
       quotedKobo: nairaToKobo(delivery.fee),
       trackingUrl: delivery.tracking_url,
       etaMinutes: quote.eta_minutes,
+      distanceMeters: quote.distance_m,
     };
   }
 
