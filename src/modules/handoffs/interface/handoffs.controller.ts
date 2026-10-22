@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
@@ -9,6 +10,8 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { CourierHandoverQueryService } from '../application/courier-handover-query.service';
+import { CourierHandoverResponseDto } from './dto/courier-handover-response.dto';
 import { DeliveryQueryService } from '../../logistics/application/delivery-query.service';
 import { Throttle, seconds } from '@nestjs/throttler';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
@@ -56,6 +59,7 @@ export class HandoffsController {
     private readonly listMyOrdersService: ListMyOrdersService,
     private readonly listMyNodeOrdersService: ListMyNodeOrdersService,
     private readonly deliveryQueryService: DeliveryQueryService,
+    private readonly courierHandoverQueryService: CourierHandoverQueryService,
   ) {}
 
   @Roles(UserRole.RIDER)
@@ -138,6 +142,20 @@ export class HandoffsController {
   ): Promise<OrderTransitionResponseDto> {
     const order = await this.confirmDropOffService.confirm(id, user.id);
     return OrderTransitionResponseDto.fromResult(order);
+  }
+
+  // External couriers only: the code staff read out to the courier (who
+  // enters it in their own app). Fetched live from the courier on every
+  // call — never cached, so no-store.
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
+  @Throttle({ default: { limit: 20, ttl: seconds(60) } })
+  @Header('Cache-Control', 'no-store')
+  @Get('orders/:id/courier-handover')
+  courierHandover(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<CourierHandoverResponseDto> {
+    return this.courierHandoverQueryService.forNode(id, user.id);
   }
 
   @Roles(UserRole.RIDER)

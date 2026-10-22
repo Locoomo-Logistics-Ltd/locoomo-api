@@ -37,6 +37,7 @@ import { RiderStatus } from '../../src/modules/riders/domain/rider-status.enum';
 import { RiderProfileEntity } from '../../src/modules/riders/infrastructure/entities/rider-profile.entity';
 import { OutboxHandlerRegistry } from '../../src/modules/notifications/application/outbox-handler.registry';
 import { DeliveryEventsService } from '../../src/modules/logistics/application/delivery-events.service';
+import { DeliveryReconcilerService } from '../../src/modules/logistics/application/delivery-reconciler.service';
 import { LogisticsProviderRegistry } from '../../src/modules/logistics/application/logistics-provider.registry';
 import {
   DeliveryEventType,
@@ -46,10 +47,12 @@ import {
 import {
   CreateDeliveryRequest,
   CreateDeliveryResult,
+  HandoverCodes,
   LogisticsProvider,
   LogisticsProviderError,
   ProviderCapabilities,
   ProviderDeliverySnapshot,
+  ProviderWebhookEvent,
 } from '../../src/modules/logistics/domain/ports/logistics-provider.port';
 import { DeliveryLegEntity } from '../../src/modules/logistics/infrastructure/entities/delivery-leg.entity';
 import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
@@ -134,7 +137,8 @@ class FakePaystackPaymentProvider implements PaymentProvider {
 }
 
 // Stands in for an external courier (Sendii-like): remote submission, its
-// own handover codes, progress arriving as provider events.
+// own handover codes, progress reported by webhook and readable by polling.
+// Keeps its own view of each delivery, as a real provider does.
 class FakeCourierProvider implements LogisticsProvider {
   readonly key = 'fake_courier';
   readonly capabilities: ProviderCapabilities = {
@@ -146,7 +150,13 @@ class FakeCourierProvider implements LogisticsProvider {
     prepaidWallet: false,
   };
   requests: CreateDeliveryRequest[] = [];
+  cancelled: string[] = [];
   failNext: Error | null = null;
+  failCodes = false;
+  deliveries = new Map<
+    string,
+    { status: DeliveryLegStatus; sequence: number }
+  >();
 
   createDelivery(
     request: CreateDeliveryRequest,
@@ -157,17 +167,85 @@ class FakeCourierProvider implements LogisticsProvider {
       return Promise.reject(error);
     }
     this.requests.push(request);
+    const externalId = `fake-${request.legId}`;
+    this.deliveries.set(externalId, {
+      status: DeliveryLegStatus.REQUESTED,
+      sequence: 1,
+    });
     return Promise.resolve({
-      externalId: `fake-${request.legId}`,
+      externalId,
       status: DeliveryLegStatus.REQUESTED,
       providerStatus: 'pending',
       quotedKobo: 150000,
       trackingUrl: null,
+      etaMinutes: 25,
     });
   }
 
-  cancel(): Promise<void> {
+  // What the courier now says about a delivery (its own state moves on).
+  advance(externalId: string, status: DeliveryLegStatus): void {
+    const delivery = this.deliveries.get(externalId)!;
+    delivery.status = status;
+    delivery.sequence += 1;
+  }
+
+  cancel(externalId: string | null): Promise<void> {
+    if (externalId) {
+      this.cancelled.push(externalId);
+      this.advance(externalId, DeliveryLegStatus.CANCELLED);
+    }
     return Promise.resolve();
+  }
+
+  getDelivery(externalId: string): Promise<ProviderDeliverySnapshot> {
+    const delivery = this.deliveries.get(externalId)!;
+    return Promise.resolve({
+      externalId,
+      status: delivery.status,
+      providerStatus: delivery.status,
+      sequence: delivery.sequence,
+      courier: {
+        name: 'Musa A.',
+        phone: '+2348031112222',
+        vehicle: 'motorbike',
+      },
+      trackingUrl: null,
+      actualKobo: null,
+      surchargeKobo: 0,
+      failureReason: null,
+    });
+  }
+
+  getHandoverCodes(externalId: string): Promise<HandoverCodes> {
+    if (this.failCodes) {
+      return Promise.reject(
+        new LogisticsProviderError(this.key, 'getHandoverCodes', 'down', true),
+      );
+    }
+    const { status } = this.deliveries.get(externalId)!;
+    return Promise.resolve({
+      pickupCode: status === DeliveryLegStatus.ASSIGNED ? '111111' : null,
+      deliveryCode: status === DeliveryLegStatus.PICKED_UP ? '222222' : null,
+    });
+  }
+
+  verifyWebhook(_raw: Buffer, headers: Record<string, string | undefined>) {
+    return headers['x-fake-signature'] === 'valid';
+  }
+
+  parseWebhook(raw: Buffer): ProviderWebhookEvent {
+    const body = JSON.parse(raw.toString('utf8')) as {
+      id: string;
+      externalId: string | null;
+      event: DeliveryEventType | null;
+      status: DeliveryLegStatus;
+    };
+    return {
+      eventId: body.id,
+      externalId: body.externalId,
+      event: body.event,
+      snapshot: null,
+    };
   }
 }
 
@@ -1984,7 +2062,9 @@ describe('Handoffs (e2e)', () => {
       const shelfC = ((await dropOff(c.id)).body as SuccessBody).data
         .shelfNumber as number;
       expect(shelfC).toBe(shelfA);
-    });
+      // Four accounts (password hashing) and three paid orders — slower
+      // than Jest's 5 s default on a loaded machine.
+    }, 20_000);
 
     it('shelves the parcel at the destination on intake and frees it on collection', async () => {
       const { cookie: riderCookie } = await createActiveRider(
@@ -2307,6 +2387,9 @@ describe('Handoffs (e2e)', () => {
 
     afterAll(async () => {
       await dataSource.query(
+        `DELETE FROM logistics_inbound_events WHERE "providerKey" = 'fake_courier'`,
+      );
+      await dataSource.query(
         `DELETE FROM delivery_legs WHERE "providerKey" = 'fake_courier'`,
       );
       await dataSource.query(
@@ -2324,20 +2407,20 @@ describe('Handoffs (e2e)', () => {
       return { ...order, leg };
     }
 
-    function courierEvent(
+    // What the courier reports about a delivery — applied the way webhook
+    // processing and reconciliation apply it.
+    function courierReports(
       externalId: string,
-      event: DeliveryEventType,
+      status: DeliveryLegStatus,
       snapshot: Partial<ProviderDeliverySnapshot> = {},
     ): Promise<boolean> {
       return dataSource.transaction((manager) =>
-        deliveryEvents.applyProviderEvent(
+        deliveryEvents.syncFromSnapshot(
           'fake_courier',
-          externalId,
-          event,
           {
             externalId,
-            status: DeliveryLegStatus.REQUESTED,
-            providerStatus: event,
+            status,
+            providerStatus: status,
             sequence: null,
             courier: null,
             trackingUrl: null,
@@ -2405,7 +2488,7 @@ describe('Handoffs (e2e)', () => {
       ).currentCount;
 
       expect(
-        await courierEvent(externalId, DeliveryEventType.ASSIGNED, {
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
           sequence: 1,
           courier: {
             name: 'Musa A.',
@@ -2453,7 +2536,7 @@ describe('Handoffs (e2e)', () => {
       expect(forSender.delivery.courier.name).toBe('Musa A.');
       expect(forSender.delivery.courier).not.toHaveProperty('phone');
 
-      await courierEvent(externalId, DeliveryEventType.PICKED_UP, {
+      await courierReports(externalId, DeliveryLegStatus.PICKED_UP, {
         sequence: 2,
       });
       const pickedUp = await orders.findOneByOrFail({ id });
@@ -2465,13 +2548,13 @@ describe('Handoffs (e2e)', () => {
 
       // A late redelivery of an older update changes nothing.
       expect(
-        await courierEvent(externalId, DeliveryEventType.ASSIGNED, {
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
           sequence: 1,
         }),
       ).toBe(false);
       expect((await orders.findOneByOrFail({ id })).status).toBe('in_transit');
 
-      await courierEvent(externalId, DeliveryEventType.DELIVERED, {
+      await courierReports(externalId, DeliveryLegStatus.DELIVERED, {
         sequence: 3,
       });
       expect((await orders.findOneByOrFail({ id })).status).toBe(
@@ -2537,6 +2620,268 @@ describe('Handoffs (e2e)', () => {
       expect((await legs.findOneByOrFail({ id: leg.id })).externalId).toBe(
         `fake-${leg.id}`,
       );
+    });
+
+    describe('phase 3: webhooks, releases, timeouts, handovers, settlement', () => {
+      let processInbound: (inboundEventId: string) => Promise<void>;
+      let reconciler: DeliveryReconcilerService;
+
+      beforeAll(async () => {
+        const handler = app
+          .get(OutboxHandlerRegistry)
+          .get('logistics.process_inbound')!;
+        processInbound = (inboundEventId) => handler.handle({ inboundEventId });
+        reconciler = app.get(DeliveryReconcilerService);
+        await dataSource.query(
+          `UPDATE logistics_providers SET "assignTimeoutMinutes" = 20 WHERE key = 'fake_courier'`,
+        );
+      });
+
+      async function submittedCourierOrder(email: string) {
+        const order = await dropOffWithCourier(email);
+        await submit(order.leg.id);
+        return { ...order, externalId: `fake-${order.leg.id}` };
+      }
+
+      function postWebhook(body: Record<string, unknown>, signature = 'valid') {
+        return request(app.getHttpServer())
+          .post('/api/v1/logistics/webhooks/fake_courier')
+          .set('x-fake-signature', signature)
+          .set('Content-Type', 'application/json')
+          .send(JSON.stringify(body));
+      }
+
+      it('stores a signed webhook once, then applies what the courier says now', async () => {
+        const { id, externalId } = await submittedCourierOrder(
+          'courier-webhook@handoffs.e2e.test',
+        );
+        // The courier has moved on to picked_up; the webhook only says
+        // "assigned" — processing must apply the courier's current state.
+        courier.advance(externalId, DeliveryLegStatus.ASSIGNED);
+        courier.advance(externalId, DeliveryLegStatus.PICKED_UP);
+        const body = {
+          id: `wh-${externalId}`,
+          externalId,
+          event: DeliveryEventType.ASSIGNED,
+        };
+
+        await postWebhook(body).expect(200);
+        await postWebhook(body).expect(200); // redelivery
+        const stored = await dataSource.query<{ id: string }[]>(
+          `SELECT id FROM logistics_inbound_events WHERE "eventId" = $1`,
+          [body.id],
+        );
+        expect(stored).toHaveLength(1);
+
+        await processInbound(stored[0].id);
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'in_transit',
+        );
+        const [processed] = await dataSource.query<{ processedAt: Date }[]>(
+          `SELECT "processedAt" FROM logistics_inbound_events WHERE id = $1`,
+          [stored[0].id],
+        );
+        expect(processed.processedAt).toBeInstanceOf(Date);
+      });
+
+      it('rejects an unsigned webhook and one for an unknown courier', async () => {
+        await postWebhook(
+          { id: 'wh-x', externalId: 'x', event: 'assigned' },
+          'forged',
+        ).expect(401);
+        await request(app.getHttpServer())
+          .post('/api/v1/logistics/webhooks/no_such_courier')
+          .set('Content-Type', 'application/json')
+          .send('{}')
+          .expect(404);
+      });
+
+      it('puts the order back to waiting when the courier drops the job before pickup', async () => {
+        const { id, externalId, leg } = await submittedCourierOrder(
+          'courier-release@handoffs.e2e.test',
+        );
+        courier.advance(externalId, DeliveryLegStatus.ASSIGNED);
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 2,
+        });
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'rider_assigned',
+        );
+
+        await courierReports(externalId, DeliveryLegStatus.REQUESTED, {
+          sequence: 3,
+        });
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'parcel_received_at_origin',
+        );
+        const released = await legs.findOneByOrFail({ id: leg.id });
+        expect(released.status).toBe('requested');
+        expect(released.courierName).toBeNull();
+        expect(
+          await orderEvents.countBy({ orderId: id, type: 'courier_released' }),
+        ).toBe(1);
+      });
+
+      it('re-routes to the in-house pool when the courier cancels (no rider found)', async () => {
+        const { id, externalId, leg } = await submittedCourierOrder(
+          'courier-cancel@handoffs.e2e.test',
+        );
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 2,
+        });
+        await courierReports(externalId, DeliveryLegStatus.CANCELLED, {
+          sequence: 3,
+          failureReason: 'no_rider_found',
+        });
+
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'parcel_received_at_origin',
+        );
+        expect(await legs.findOneByOrFail({ id: leg.id })).toMatchObject({
+          status: 'cancelled',
+          failureReason: 'no_rider_found',
+        });
+        // fake_courier allows one attempt per order — next is in-house.
+        expect(
+          await legs.findOneByOrFail({
+            orderId: id,
+            status: DeliveryLegStatus.REQUESTED,
+          }),
+        ).toMatchObject({ providerKey: 'in_house' });
+      });
+
+      it('gives up on a courier that finds no rider in time, and polls deliveries that went quiet', async () => {
+        const waiting = await submittedCourierOrder(
+          'courier-timeout@handoffs.e2e.test',
+        );
+        await legs.query(
+          `UPDATE delivery_legs SET "createdAt" = now() - interval '30 minutes' WHERE id = $1`,
+          [waiting.leg.id],
+        );
+        const quiet = await submittedCourierOrder(
+          'courier-quiet@handoffs.e2e.test',
+        );
+        await courierReports(quiet.externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 2,
+        });
+        courier.advance(quiet.externalId, DeliveryLegStatus.ASSIGNED);
+        courier.advance(quiet.externalId, DeliveryLegStatus.PICKED_UP);
+        await legs.query(
+          `UPDATE delivery_legs SET "updatedAt" = now() - interval '10 minutes' WHERE id = $1`,
+          [quiet.leg.id],
+        );
+
+        await reconciler.runOnce();
+
+        expect(courier.cancelled).toContain(waiting.externalId);
+        expect(
+          await legs.findOneByOrFail({ id: waiting.leg.id }),
+        ).toMatchObject({
+          status: 'cancelled',
+          failureReason: 'assign_timeout',
+        });
+        expect(
+          await legs.findOneByOrFail({
+            orderId: waiting.id,
+            status: DeliveryLegStatus.REQUESTED,
+          }),
+        ).toMatchObject({ providerKey: 'in_house' });
+        expect((await orders.findOneByOrFail({ id: quiet.id })).status).toBe(
+          'in_transit',
+        );
+      });
+
+      it('gives Node staff the right live code for each side of the handover', async () => {
+        const { id, externalId } = await submittedCourierOrder(
+          'courier-codes@handoffs.e2e.test',
+        );
+        const handover = (cookie: string) =>
+          request(app.getHttpServer())
+            .get(`/api/v1/handoffs/orders/${id}/courier-handover`)
+            .set('Cookie', [cookie]);
+
+        // No courier yet.
+        await handover(courierOperatorCookie).expect(409);
+
+        courier.advance(externalId, DeliveryLegStatus.ASSIGNED);
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 2,
+          courier: {
+            name: 'Musa A.',
+            phone: '+2348031112222',
+            vehicle: 'motorbike',
+          },
+        });
+        const pickup = await handover(courierOperatorCookie).expect(200);
+        expect(pickup.headers['cache-control']).toBe('no-store');
+        expect((pickup.body as SuccessBody).data).toMatchObject({
+          kind: 'pickup',
+          code: '111111',
+          providerLabel: 'Fake Courier',
+          courier: { name: 'Musa A.' },
+        });
+        // The destination has nothing to give until the parcel is on its way.
+        await handover(destinationOperatorCookie).expect(409);
+
+        courier.advance(externalId, DeliveryLegStatus.PICKED_UP);
+        await courierReports(externalId, DeliveryLegStatus.PICKED_UP, {
+          sequence: 3,
+        });
+        const delivery = await handover(destinationOperatorCookie).expect(200);
+        expect((delivery.body as SuccessBody).data).toMatchObject({
+          kind: 'delivery',
+          code: '222222',
+        });
+
+        courier.failCodes = true;
+        const failed = await handover(destinationOperatorCookie).expect(502);
+        courier.failCodes = false;
+        expect((failed.body as { error: { code: string } }).error.code).toBe(
+          'LOGISTICS_PROVIDER_ERROR',
+        );
+      });
+
+      it('settles a courier-delivered order with a non-payable courier allocation instead of a rider share', async () => {
+        const { id, externalId } = await submittedCourierOrder(
+          'courier-settle@handoffs.e2e.test',
+        );
+        await courierReports(externalId, DeliveryLegStatus.DELIVERED, {
+          sequence: 9,
+        });
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/intake`)
+          .set('Cookie', [destinationOperatorCookie])
+          .expect(200);
+        const code = await extractLatestCollectionCode(receiverEmail);
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/collect`)
+          .set('Cookie', [destinationOperatorCookie])
+          .send({ code, identityConfirmed: true })
+          .expect(200);
+
+        const entries = await revenueSplitEntries.findBy({ orderId: id });
+        expect(entries.map((e) => e.partyType).sort()).toEqual([
+          'courier_allocation',
+          'destination_node',
+          'node',
+          'platform',
+        ]);
+        const allocation = entries.find(
+          (e) => (e.partyType as string) === 'courier_allocation',
+        )!;
+        expect(allocation.partyId).toBeNull();
+        expect(allocation.payoutStatus).toBe('not_payable');
+
+        const refused = await request(app.getHttpServer())
+          .patch(
+            `/api/v1/admin/revenue-split/entries/${allocation.id}/mark-paid`,
+          )
+          .set('Cookie', [adminCookie])
+          .expect(409);
+        expect((refused.body as { error: { code: string } }).error.code).toBe(
+          'REVENUE_SPLIT_NOT_PAYABLE',
+        );
+      });
     });
   });
 });

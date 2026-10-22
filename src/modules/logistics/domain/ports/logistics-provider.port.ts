@@ -36,6 +36,10 @@ export interface CreateDeliveryRequest {
   dropoff: DeliveryStop;
   vehicleClass: VehicleClass | null;
   description: string;
+  // Prepaid-wallet providers only: the quoted fees of this provider's other
+  // deliveries still in progress, so the adapter can keep headroom for the
+  // surcharges they may still incur before committing a new one.
+  otherActiveQuotedKobo?: number;
 }
 
 export interface CreateDeliveryResult {
@@ -44,6 +48,7 @@ export interface CreateDeliveryResult {
   providerStatus: string | null;
   quotedKobo: number | null;
   trackingUrl: string | null;
+  etaMinutes: number | null;
 }
 
 export interface CourierDetails {

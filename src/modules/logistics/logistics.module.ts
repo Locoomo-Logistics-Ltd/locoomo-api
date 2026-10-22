@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { CourierHandoverService } from './application/courier-handover.service';
+import { CourierWebhookService } from './application/courier-webhook.service';
+import { DeliveryReconcilerService } from './application/delivery-reconciler.service';
 import { DeliveryDispatchService } from './application/delivery-dispatch.service';
 import { DeliveryEventBus } from './application/delivery-event-bus';
 import { DeliveryEventsService } from './application/delivery-events.service';
@@ -8,8 +11,11 @@ import { DeliveryQueryService } from './application/delivery-query.service';
 import { LogisticsProviderRegistry } from './application/logistics-provider.registry';
 import { LogisticsRouterService } from './application/logistics-router.service';
 import { DeliveryLegEntity } from './infrastructure/entities/delivery-leg.entity';
+import { LogisticsInboundEventEntity } from './infrastructure/entities/logistics-inbound-event.entity';
 import { LogisticsProviderConfigEntity } from './infrastructure/entities/logistics-provider-config.entity';
 import { InHouseRidersProvider } from './infrastructure/in-house-riders.provider';
+import { SendiiProvider } from './infrastructure/sendii/sendii.provider';
+import { CourierWebhooksController } from './interface/courier-webhooks.controller';
 
 // Couriers as a pluggable layer: who carries each parcel between Nodes
 // (delivery legs), which courier gets it (routing over logistics_providers),
@@ -21,6 +27,7 @@ import { InHouseRidersProvider } from './infrastructure/in-house-riders.provider
     TypeOrmModule.forFeature([
       DeliveryLegEntity,
       LogisticsProviderConfigEntity,
+      LogisticsInboundEventEntity,
     ]),
     // OutboxService + OutboxHandlerRegistry: remote submission runs as a
     // 'logistics.submit' outbox job.
@@ -34,13 +41,19 @@ import { InHouseRidersProvider } from './infrastructure/in-house-riders.provider
     DeliveryEventsService,
     DeliveryQueryService,
     InHouseRidersProvider,
+    SendiiProvider,
+    CourierWebhookService,
+    DeliveryReconcilerService,
+    CourierHandoverService,
   ],
+  controllers: [CourierWebhooksController],
   exports: [
     LogisticsProviderRegistry,
     DeliveryEventBus,
     DeliveryDispatchService,
     DeliveryEventsService,
     DeliveryQueryService,
+    CourierHandoverService,
   ],
 })
 export class LogisticsModule {}

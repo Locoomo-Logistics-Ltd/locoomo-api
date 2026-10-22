@@ -254,44 +254,14 @@ on drop-off/intake are documented in
 [API.md › by-tracking-code](API.md#get-apiv1handoffsordersby-tracking-codecode) and
 [Shelf numbers](API.md#shelf-numbers).
 
-`delivery` and the external-courier `nextAction` values `hand_to_courier` /
-`receive_from_courier` are live (phase 2). Still to come: the courier handover screen
-they lead to (phase 3) and the return values (phase 5) — see [nextAction](#nextaction-node-app--what-the-operator-at-this-node-should-do-now).
+`delivery`, the external-courier `nextAction` values `hand_to_courier` /
+`receive_from_courier` and the courier handover endpoint they lead to are live (phases
+2–3). Still to come: the return values (phase 5) — see [nextAction](#nextaction-node-app--what-the-operator-at-this-node-should-do-now).
 If the QR decodes to a full tracking URL, send it as-is — the server extracts the code.
 
-### `GET /api/v1/handoffs/orders/:id/courier-handover` — new *(phase 3)*
+### `GET /api/v1/handoffs/orders/:id/courier-handover` — **live** (phase 3)
 
-**Requires an authenticated NodeOperator or NodeStaff session** at the Node that is
-handing over right now (origin for pickup, destination for arrival, origin again for a
-return). Only for `delivery.handover: "give_code_to_courier"`.
-
-Response `200`, `data`:
-
-```json
-{
-  "kind": "pickup",
-  "code": "731942",
-  "courier": { "name": "Musa A.", "phone": "+2348031234567", "vehicle": "Motorbike" },
-  "providerLabel": "Sendii",
-  "shelfNumber": 17,
-  "trackingCode": "LCM-4F2K-9XPT"
-}
-```
-
-Flow: operator scans/types the parcel → `nextAction` is `hand_to_courier` → open this screen →
-check the courier's name against `courier.name` → **read `code` to the courier** → courier
-enters it in their own app → the order moves to `in_transit` on its own within seconds. Poll
-`by-tracking-code` (every 3–5 s, stop after 2 min) to show "Handed over ✓".
-
-- `kind` is `pickup`, `delivery` or `return_delivery`.
-- **The code is a credential**: don't store it, log it, cache it or send it to analytics.
-  Fetch it fresh each time the screen opens; never put it in a URL.
-- The code is fetched live from the courier, so this can be slower (≤ 3 s) and can fail with
-  `502` — show "Couldn't load the code, try again".
-
-Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND` (not your Node / not the
-handing-over side), `409 COURIER_HANDOVER_NOT_AVAILABLE` (no courier assigned yet, already
-handed over, or this delivery uses rider codes instead), `502 LOGISTICS_PROVIDER_ERROR`.
+Documented in [API.md](API.md#get-apiv1handoffsordersidcourier-handover).
 
 ### `POST /api/v1/handoffs/orders/:id/return-intake` — new *(phase 5)*
 
@@ -351,7 +321,7 @@ All **Admin only**. *(phase 6 unless noted)*
 | `POST /api/v1/admin/logistics/deliveries/:id/fallback` | Cancel with the courier (if still possible) and hand to the in-house pool |
 | `POST /api/v1/admin/logistics/deliveries/:id/reconcile` | Pull the latest status from the courier now |
 | `GET /api/v1/admin/logistics/providers/:key/wallet` | Prepaid couriers only: `balanceKobo`, `heldKobo`, `availableKobo`, `reservedForSurchargesKobo`, `lowBalance` (bool) |
-| `GET /api/v1/admin/logistics/economics` | Per-order customer price, courier cost, surcharges, margin; filter by date/provider/route *(phase 3)* |
+| `GET /api/v1/admin/logistics/economics` | Per-order customer price, courier cost, surcharges, margin; filter by date/provider/route (data recorded from phase 3; endpoint phase 6) |
 
 Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) and
 `502 LOGISTICS_PROVIDER_ERROR`.
@@ -361,9 +331,7 @@ Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) 
 | HTTP | code | Meaning |
 |---|---|---|
 | 422 | `NO_DELIVERY_OPTION` | No courier can carry this parcel on this route (too heavy/large for every vehicle class, or the route isn't served). Ask the sender to adjust the parcel details or pick another Node |
-| 409 | `COURIER_HANDOVER_NOT_AVAILABLE` | No handover code to show right now — refresh the order; the `nextAction` will tell you what to do instead |
 | 409 | `ILLEGAL_DELIVERY_ACTION` | Admin action not possible in the delivery's current state |
-| 502 | `LOGISTICS_PROVIDER_ERROR` | The courier's API failed or timed out. Safe to retry |
 
 ## Rollout & phase map
 
@@ -372,7 +340,7 @@ Errors: standard, plus `409 ILLEGAL_DELIVERY_ACTION` (e.g. cancel after pickup) 
 | 0 | ✅ Node `contactPhone`, `openingHours`, `PATCH …/contact`, location check (all live) |
 | 1 | ✅ Forgiving lookup at both Nodes, `nextAction`, `shelfNumber`, `receiverMasked`, queues, `trackingUrl`, `labelInstructions`, public tracking endpoint, email links + QR (all live) |
 | 2 | ✅ `delivery` object, courier-aware `nextAction`, rider pool excludes courier orders (all live; only `in_house` until phase 3) |
-| 3 | External couriers: `courier-handover`, `handover: give_code_to_courier`, Sendii in `delivery` |
+| 3 | ✅ Sendii adapter (behind a switch, off by default), `courier-handover`, webhooks, courier allocation in earnings (live) |
 | 4 | Parcel attributes, `delivery-quotes`, new `feeBreakdown`, `NO_DELIVERY_OPTION` |
 | 5 | Return statuses, `return-intake`, `return-collect` |
 | 6 | Admin logistics screens |

@@ -38,6 +38,7 @@ export class InHouseRidersProvider implements LogisticsProvider, OnModuleInit {
       providerStatus: null,
       quotedKobo: null,
       trackingUrl: null,
+      etaMinutes: null,
     });
   }
 

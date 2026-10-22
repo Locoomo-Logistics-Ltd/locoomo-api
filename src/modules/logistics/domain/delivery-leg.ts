@@ -90,6 +90,38 @@ export function nextLegStatus(
   return rule.from.includes(current) ? rule.to : null;
 }
 
+// The events that take a leg from `from` to `to`, shortest path first —
+// used to catch up when a provider reports a state we skipped (a lost or
+// out-of-order webhook: we saw `assigned`, they now say `delivered`).
+// [] when `to` isn't reachable (it's behind us — a stale report) or equal.
+export function eventsToReach(
+  from: DeliveryLegStatus,
+  to: DeliveryLegStatus,
+): DeliveryEventType[] {
+  if (from === to) {
+    return [];
+  }
+  const queue: { status: DeliveryLegStatus; path: DeliveryEventType[] }[] = [
+    { status: from, path: [] },
+  ];
+  const seen = new Set<DeliveryLegStatus>([from]);
+  while (queue.length > 0) {
+    const { status, path } = queue.shift()!;
+    for (const event of Object.values(DeliveryEventType)) {
+      const next = nextLegStatus(status, event);
+      if (!next || seen.has(next)) {
+        continue;
+      }
+      if (next === to) {
+        return [...path, event];
+      }
+      seen.add(next);
+      queue.push({ status: next, path: [...path, event] });
+    }
+  }
+  return [];
+}
+
 export function isTerminal(status: DeliveryLegStatus): boolean {
   return !ACTIVE_LEG_STATUSES.includes(status);
 }

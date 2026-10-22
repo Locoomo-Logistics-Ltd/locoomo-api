@@ -129,14 +129,17 @@ export class DeliveryDispatchService implements OnModuleInit {
     }
 
     try {
-      const result = await provider.createDelivery(
-        await this.buildRequest(leg, this.dataSource.manager),
-      );
+      const request = await this.buildRequest(leg, this.dataSource.manager);
+      if (provider.capabilities.prepaidWallet) {
+        request.otherActiveQuotedKobo = await this.otherActiveQuotedKobo(leg);
+      }
+      const result = await provider.createDelivery(request);
       await this.dataSource.getRepository(DeliveryLegEntity).update(leg.id, {
         externalId: result.externalId,
         providerStatus: result.providerStatus,
         quotedKobo: result.quotedKobo,
         trackingUrl: result.trackingUrl,
+        etaMinutes: result.etaMinutes,
       });
     } catch (error) {
       if (!(error instanceof LogisticsProviderError) || error.retryable) {
@@ -154,6 +157,16 @@ export class DeliveryDispatchService implements OnModuleInit {
         await this.dispatch(leg.orderId, manager, leg.legType);
       });
     }
+  }
+
+  private async otherActiveQuotedKobo(leg: DeliveryLegEntity): Promise<number> {
+    const [{ total }] = await this.dataSource.query<{ total: number }[]>(
+      `SELECT COALESCE(SUM("quotedKobo"), 0)::int AS total FROM delivery_legs
+        WHERE "providerKey" = $1 AND id <> $2
+          AND status IN ('requested', 'assigned', 'picked_up', 'returning')`,
+      [leg.providerKey, leg.id],
+    );
+    return total;
   }
 
   // Pickup and drop-off are the two Nodes' counters. Deliberately carries

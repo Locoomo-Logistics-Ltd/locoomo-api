@@ -9,6 +9,9 @@ import { Env } from './config/env.validation';
 // Must match PaymentWebhooksController's route exactly — the full resolved
 // path (global prefix + version + controller + method path).
 const PAYSTACK_WEBHOOK_PATH = '/api/v1/payments/webhooks/paystack';
+// Prefix for every courier's webhook (CourierWebhooksController,
+// /api/v1/logistics/webhooks/:providerKey) — same raw-body reason.
+const COURIER_WEBHOOKS_PATH = '/api/v1/logistics/webhooks';
 
 export function configureApp(app: INestApplication): void {
   const config = app.get(ConfigService<Env, true>);
@@ -24,6 +27,7 @@ export function configureApp(app: INestApplication): void {
   // Scoped to exactly this one path; every other route keeps normal JSON
   // parsing.
   app.use(PAYSTACK_WEBHOOK_PATH, express.raw({ type: 'application/json' }));
+  app.use(COURIER_WEBHOOKS_PATH, express.raw({ type: 'application/json' }));
 
   app.useGlobalPipes(createAppValidationPipe());
 

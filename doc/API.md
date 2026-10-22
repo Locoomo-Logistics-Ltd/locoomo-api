@@ -129,8 +129,11 @@ backend greps logs for.
 | 400 | `NODE_LOCATION_MISMATCH` | `POST /nodes`, `PATCH /nodes/:id`, `POST /node-operators/onboarding`, `POST /node-operators/nodes` — the map pin is clearly not where the address is. Show the message (it says where the address actually is) and let the user move the pin or fix the address |
 | 400 | `INVALID_REVENUE_SPLIT` | `POST /admin/revenue-split` — `riderPercent`/`nodePercent`/`platformPercent` didn't sum to 100 |
 | 400 | `BANK_ACCOUNT_VERIFICATION_FAILED` | `PATCH /riders/me/payout-account` or `PATCH /node-operators/nodes/:nodeId/payout-account` — Paystack couldn't resolve that `accountNumber` at that `bankCode`. Nothing is saved; a previously-verified payout account on file, if any, is untouched |
-| 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; `/track/:trackingCode` allows 10/min; everything else defaults to 100/min |
+| 429 | `RATE_LIMITED` | Too many requests to this route from your IP. `/auth/register` and `/auth/login` allow 5/min; `/payments/intents` allows 5/min; `/track/:trackingCode` allows 10/min; `/handoffs/orders/:id/courier-handover` allows 20/min; everything else defaults to 100/min |
 | 500 | `INTERNAL_ERROR` | Unexpected server failure — message is always the generic "Something went wrong," never internal detail. Report the `correlationId` to backend |
+| 409 | `COURIER_HANDOVER_NOT_AVAILABLE` | `GET /handoffs/orders/:id/courier-handover` — nothing to hand an external courier at your Node right now. Refresh the order and follow `nextAction` |
+| 409 | `REVENUE_SPLIT_NOT_PAYABLE` | `PATCH /admin/revenue-split/entries/:id/mark-paid` on a `courier_allocation` row — recorded for reporting only, never paid |
+| 502 | `LOGISTICS_PROVIDER_ERROR` | A courier's API failed or timed out while you waited (e.g. loading a handover code). Safe to retry |
 | 502 | `PAYMENT_PROVIDER_ERROR` | Paystack's API failed, timed out (15 s) or was unreachable — placing an order, listing banks, or resolving a payout account number. Safe to retry |
 | 503 | `PRICING_NOT_CONFIGURED` | No Admin-configured pricing rule exists yet — an ops/config gap, not something the consumer caused; surface as "orders temporarily unavailable" |
 | 503 | `REVENUE_SPLIT_NOT_CONFIGURED` | `POST /handoffs/orders/:id/collect` — no Admin-configured revenue-split rule exists yet, so the order can't complete without its earnings going untracked. Same ops/config gap as `PRICING_NOT_CONFIGURED`, not something the operator or receiver caused |
@@ -1338,6 +1341,12 @@ Server-to-server only — Paystack calls this, your frontend never does. Listed 
 for completeness. Unauthenticated (no session cookie involved), verified instead via
 Paystack's HMAC signature header.
 
+### `POST /api/v1/logistics/webhooks/:providerKey`
+
+Server-to-server only — courier partners (e.g. Sendii, `/sendii`) call this, your frontend
+never does. Listed for completeness. Verified by the courier's signature header, not a
+session.
+
 ### `GET /api/v1/orders`
 
 **Requires an authenticated Consumer session.** Lists only the requesting consumer's own
@@ -1642,10 +1651,10 @@ Response `200`, `data`:
 | `confirm_drop_off` | "Receive parcel" | `POST /handoffs/orders/:id/drop-off` |
 | `await_courier` | "Waiting for a rider" (no button) | — |
 | `hand_to_rider` | "Hand to rider — enter their code" | `POST /handoffs/orders/:id/confirm-handoff` (`rider_pickup`) |
-| `hand_to_courier` | "Hand to courier — give them the code" (external courier) | Courier handover screen — arrives with the first external courier (see LOGISTICS_API.md) |
+| `hand_to_courier` | "Hand to courier — give them the code" (external courier) | [`GET /handoffs/orders/:id/courier-handover`](#get-apiv1handoffsordersidcourier-handover) |
 | `await_arrival` | "On the way to you" (no button) | — |
 | `receive_from_rider` | "Receive from rider — enter their code" | `POST /handoffs/orders/:id/confirm-handoff` (`rider_arrival`) |
-| `receive_from_courier` | "Receive from courier — give them the code" (external courier) | Courier handover screen, as above |
+| `receive_from_courier` | "Receive from courier — give them the code" (external courier) | [`GET /handoffs/orders/:id/courier-handover`](#get-apiv1handoffsordersidcourier-handover) |
 | `intake` | "Shelve parcel" | `POST /handoffs/orders/:id/intake` |
 | `hand_to_receiver` | "Hand to receiver" | `POST /handoffs/orders/:id/collect` |
 | `none` | Read-only | — |
@@ -1731,6 +1740,44 @@ logged or emailed.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Rider), `403 RIDER_NOT_ACTIVE`,
 `404 NOT_FOUND` (not your order), `400 VALIDATION_FAILED`.
+
+### `GET /api/v1/handoffs/orders/:id/courier-handover`
+
+**Requires an authenticated NodeOperator or NodeStaff session** at the Node doing the
+handover right now. For **external couriers** (`delivery.handover:
+"give_code_to_courier"`, `nextAction` `hand_to_courier` / `receive_from_courier`): returns
+the code staff read out to the courier, who enters it in their own app. The order then
+moves on by itself a few seconds later (poll `by-tracking-code` every 3–5 s for up to
+2 minutes to show "Handed over ✓").
+
+Response `200`, `data`:
+
+```json
+{
+  "kind": "pickup",
+  "code": "731942",
+  "courier": { "name": "Musa A.", "phone": "+2348031112222", "vehicle": "motorbike" },
+  "providerLabel": "Sendii",
+  "shelfNumber": 17,
+  "trackingCode": "LCM-4F2K-9XPT"
+}
+```
+
+- `kind`: `pickup` (origin Node, courier assigned) or `delivery` (destination Node, parcel
+  in transit).
+- Flow: scan the parcel → check the courier's name against `courier.name` → **read out
+  `code`** → the courier enters it.
+- **The code is a credential** — whoever holds it can take the parcel. Don't store, log,
+  cache or send it to analytics; fetch it fresh each time the screen opens (the response
+  is `Cache-Control: no-store`); never put it in a URL.
+- It's fetched live from the courier, so it can take a couple of seconds and can fail with
+  `502` — show "Couldn't load the code, try again".
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-NodeOperator/NodeStaff), `404
+NOT_FOUND` (not your Node), `409 COURIER_HANDOVER_NOT_AVAILABLE` (no courier assigned yet,
+already handed over, your Node isn't the side handing over, or the delivery uses Locoomo
+rider codes — refresh and follow `nextAction`), `502 LOGISTICS_PROVIDER_ERROR`, `429
+RATE_LIMITED` (20/min).
 
 ### `POST /api/v1/handoffs/orders/:id/confirm-handoff`
 
@@ -1923,6 +1970,14 @@ completes — see `POST /handoffs/orders/:id/collect` above:
 Each party's share is one immutable row; nothing here ever moves money, it only records
 who's owed what and whether an Admin has settled it off-system yet.
 
+**Orders carried by an external courier (Sendii) — pilot rule.** There's no Locoomo rider,
+so instead of a `rider` row the rider's share is recorded as a **`courier_allocation`**
+row: `partyId: null`, `payoutStatus: "not_payable"`. It is never paid to anyone — the
+courier was already paid from Locoomo's prepaid courier wallet — and exists so the
+allocation can be compared with the courier's actual cost per order while the final
+settlement rule is agreed. The `node`, `destination_node` and `platform` rows are
+unchanged. `mark-paid` refuses these rows (`409 REVENUE_SPLIT_NOT_PAYABLE`).
+
 ### `POST /api/v1/admin/revenue-split`
 
 **Requires an authenticated Admin session.** Sets the split ratio used for every order
@@ -1964,9 +2019,10 @@ shape as `GET /admin/pricing`.
 **Requires an authenticated Admin session.** Every revenue-split entry across every
 completed order — four rows per order (rider, origin Node, destination Node, platform).
 Paginated (see [Pagination](#pagination-list-endpoints)), newest first. Optional query
-filters: `partyType` (`rider`/`node`/`destination_node`/`platform`) and `payoutStatus`
-(`pending`/`paid`) — e.g. `?partyType=rider&payoutStatus=pending` to see exactly what's
-still owed to riders.
+filters: `partyType` (`rider`/`node`/`destination_node`/`platform`/`courier_allocation`)
+and `payoutStatus` (`pending`/`paid`/`not_payable`) — e.g.
+`?partyType=rider&payoutStatus=pending` to see exactly what's still owed to riders.
+`courier_allocation` rows show `partyLabel: "Courier allocation (not payable)"`.
 
 Response `200`, `data`:
 
@@ -2032,7 +2088,8 @@ No request body. Response `200`, `data`:
 }
 ```
 
-Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `404 NOT_FOUND`.
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `404 NOT_FOUND`,
+`409 REVENUE_SPLIT_NOT_PAYABLE` (a `courier_allocation` row).
 
 ### `GET /api/v1/earnings/mine`
 

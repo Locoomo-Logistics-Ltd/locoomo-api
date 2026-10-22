@@ -6,11 +6,13 @@ import {
   DeliveryEventType,
   DeliveryLegStatus,
   DeliveryLegType,
+  eventsToReach,
   isTerminal,
   nextLegStatus,
 } from '../domain/delivery-leg';
 import type { ProviderDeliverySnapshot } from '../domain/ports/logistics-provider.port';
 import { DeliveryLegEntity } from '../infrastructure/entities/delivery-leg.entity';
+import { DeliveryDispatchService } from './delivery-dispatch.service';
 import { DeliveryEventBus } from './delivery-event-bus';
 import { IN_HOUSE_PROVIDER_KEY } from './in-house-provider-key';
 
@@ -20,7 +22,10 @@ import { IN_HOUSE_PROVIDER_KEY } from './in-house-provider-key';
 // caller's transaction and locks the leg row.
 @Injectable()
 export class DeliveryEventsService {
-  constructor(private readonly bus: DeliveryEventBus) {}
+  constructor(
+    private readonly bus: DeliveryEventBus,
+    private readonly deliveryDispatchService: DeliveryDispatchService,
+  ) {}
 
   // A rider claiming an order from the pool. The order's leg must be the
   // in-house pool's and still unassigned; an order dropped off before legs
@@ -100,16 +105,16 @@ export class DeliveryEventsService {
     }
   }
 
-  // A provider-reported change (webhook or reconciliation), with the
-  // provider's normalised snapshot. Returns false when ignored: unknown
-  // delivery, a stale out-of-order update, or an event that doesn't apply
-  // in the leg's current state (duplicates) — never an error, since
+  // Brings a remote provider's leg in line with what the provider says now
+  // (a webhook's delivery, or a reconciliation poll). The provider's status
+  // is the truth: any steps between ours and theirs are replayed in order,
+  // so the order still passes through each state even if webhooks were lost
+  // or arrived out of order. Returns false when ignored — unknown delivery,
+  // a stale snapshot (older sequence), or nothing to change. Never an error:
   // providers redeliver freely.
-  async applyProviderEvent(
+  async syncFromSnapshot(
     providerKey: string,
-    externalId: string,
-    event: DeliveryEventType,
-    snapshot: ProviderDeliverySnapshot | null,
+    snapshot: ProviderDeliverySnapshot,
     manager: EntityManager,
   ): Promise<boolean> {
     const leg = await manager
@@ -117,30 +122,64 @@ export class DeliveryEventsService {
       .createQueryBuilder('leg')
       .setLock('pessimistic_write')
       .where('leg."providerKey" = :providerKey', { providerKey })
-      .andWhere('leg."externalId" = :externalId', { externalId })
+      .andWhere('leg."externalId" = :externalId', {
+        externalId: snapshot.externalId,
+      })
       .getOne();
     if (!leg) {
       return false;
     }
     if (
-      snapshot?.sequence != null &&
-      leg.providerSequence != null &&
+      snapshot.sequence !== null &&
+      leg.providerSequence !== null &&
       snapshot.sequence <= leg.providerSequence
     ) {
       return false;
     }
-    if (snapshot) {
-      leg.providerStatus = snapshot.providerStatus;
-      leg.providerSequence = snapshot.sequence;
-      leg.courierName = snapshot.courier?.name ?? leg.courierName;
-      leg.courierPhone = snapshot.courier?.phone ?? leg.courierPhone;
-      leg.courierVehicle = snapshot.courier?.vehicle ?? leg.courierVehicle;
-      leg.trackingUrl = snapshot.trackingUrl ?? leg.trackingUrl;
-      leg.actualKobo = snapshot.actualKobo ?? leg.actualKobo;
-      leg.surchargeKobo = snapshot.surchargeKobo ?? leg.surchargeKobo;
-      leg.failureReason = snapshot.failureReason ?? leg.failureReason;
+
+    leg.providerStatus = snapshot.providerStatus;
+    leg.providerSequence = snapshot.sequence;
+    leg.courierName = snapshot.courier?.name ?? leg.courierName;
+    leg.courierPhone = snapshot.courier?.phone ?? leg.courierPhone;
+    leg.courierVehicle = snapshot.courier?.vehicle ?? leg.courierVehicle;
+    leg.trackingUrl = snapshot.trackingUrl ?? leg.trackingUrl;
+    leg.actualKobo = snapshot.actualKobo ?? leg.actualKobo;
+    leg.surchargeKobo = snapshot.surchargeKobo ?? leg.surchargeKobo;
+    leg.failureReason = snapshot.failureReason ?? leg.failureReason;
+
+    const steps = eventsToReach(leg.status, snapshot.status);
+    if (steps.length === 0) {
+      // Same state, new details (a failed attempt's surcharge, a rider's
+      // phone) — record them without moving anything.
+      await manager.getRepository(DeliveryLegEntity).save(leg);
+      return true;
     }
-    return this.apply(leg, event, manager);
+    for (const event of steps) {
+      await this.apply(leg, event, manager);
+    }
+    return true;
+  }
+
+  // Ends a leg from our side (e.g. no rider assigned in time) — the caller
+  // has already cancelled it with the provider. The order then goes back to
+  // waiting and is routed onward, as for any cancellation. False if the leg
+  // has moved past the point where it can be cancelled.
+  async cancelLeg(
+    legId: string,
+    reason: string,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const leg = await manager
+      .getRepository(DeliveryLegEntity)
+      .createQueryBuilder('leg')
+      .setLock('pessimistic_write')
+      .where('leg.id = :legId', { legId })
+      .getOne();
+    if (!leg) {
+      return false;
+    }
+    leg.failureReason = reason;
+    return this.apply(leg, DeliveryEventType.CANCELLED, manager);
   }
 
   private async apply(
@@ -172,9 +211,21 @@ export class DeliveryEventsService {
         providerKey: leg.providerKey,
         event,
         courierUserId: leg.courierUserId,
+        reason: leg.failureReason,
       },
       manager,
     );
+
+    // A cancelled leg (before pickup — later states can't be cancelled)
+    // means the parcel is still at the Node: route it again, to this
+    // provider if it allows another attempt, else down the list.
+    if (event === DeliveryEventType.CANCELLED) {
+      await this.deliveryDispatchService.dispatch(
+        leg.orderId,
+        manager,
+        leg.legType,
+      );
+    }
     return true;
   }
 

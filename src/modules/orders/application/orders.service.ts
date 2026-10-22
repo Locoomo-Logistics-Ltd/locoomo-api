@@ -144,6 +144,45 @@ export class OrdersService {
     );
   }
 
+  // The courier assigned to this order let it go before pickup (dropped
+  // the job, or the delivery was cancelled). The parcel is still on the
+  // origin shelf; the order waits for the next courier.
+  async markCourierReleased(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown> = {},
+  ): Promise<OrderEntity> {
+    assertLegalTransition(
+      OrderStatus.RIDER_ASSIGNED,
+      OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+    );
+    const [rows] = await manager.query<[OrderEntity[], number]>(
+      `UPDATE orders SET status = $1, "riderId" = NULL, "updatedAt" = now()
+        WHERE id = $2 AND status = $3
+        RETURNING *`,
+      [
+        OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+        orderId,
+        OrderStatus.RIDER_ASSIGNED,
+      ],
+    );
+    const order = rows[0];
+    if (!order) {
+      throw new IllegalOrderTransitionException(
+        orderId,
+        OrderStatus.RIDER_ASSIGNED,
+        OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+      );
+    }
+    await this.appendEvent(
+      manager,
+      orderId,
+      OrderEventType.COURIER_RELEASED,
+      eventPayload,
+    );
+    return order;
+  }
+
   async markReceivedAtOrigin(
     orderId: string,
     manager: EntityManager,

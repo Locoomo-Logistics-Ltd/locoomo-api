@@ -1,6 +1,7 @@
 import {
   DeliveryEventType as E,
   DeliveryLegStatus as S,
+  eventsToReach,
   isTerminal,
   nextLegStatus,
 } from './delivery-leg';
@@ -35,5 +36,30 @@ describe('nextLegStatus', () => {
     expect(
       [S.REQUESTED, S.ASSIGNED, S.PICKED_UP, S.RETURNING].some(isTerminal),
     ).toBe(false);
+  });
+});
+
+describe('eventsToReach', () => {
+  it('fills in the steps a lost webhook skipped', () => {
+    expect(eventsToReach(S.REQUESTED, S.DELIVERED)).toEqual([
+      E.ASSIGNED,
+      E.PICKED_UP,
+      E.DELIVERED,
+    ]);
+    expect(eventsToReach(S.ASSIGNED, S.RETURNING)).toEqual([
+      E.PICKED_UP,
+      E.RETURNING,
+    ]);
+  });
+
+  it('takes the direct step when there is one', () => {
+    expect(eventsToReach(S.ASSIGNED, S.REQUESTED)).toEqual([E.RELEASED]);
+    expect(eventsToReach(S.ASSIGNED, S.CANCELLED)).toEqual([E.CANCELLED]);
+  });
+
+  it('returns nothing for the same or an earlier state', () => {
+    expect(eventsToReach(S.PICKED_UP, S.PICKED_UP)).toEqual([]);
+    expect(eventsToReach(S.DELIVERED, S.PICKED_UP)).toEqual([]);
+    expect(eventsToReach(S.PICKED_UP, S.CANCELLED)).toEqual([]);
   });
 });

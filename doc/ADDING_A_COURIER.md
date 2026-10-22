@@ -57,14 +57,23 @@ courier progress (webhook / polling / in-house handover)
 3. **Routing row** — a migration inserting into `logistics_providers` with `enabled:
    false`, then turn it on per environment (start with `pilotNodeIds`). Only rows whose
    adapter is registered are ever routed to.
-4. **Progress** — webhook and/or polling that ends in
-   `DeliveryEventsService.applyProviderEvent(key, externalId, event, snapshot, manager)`
-   inside a transaction. Pass the provider's monotonic `sequence` when it has one; stale
-   updates are then dropped.
+4. **Progress** — implement `verifyWebhook`/`parseWebhook` and `getDelivery`; the rest is
+   shared:
+   - Webhooks arrive at `POST /api/v1/logistics/webhooks/<key>` (raw body, unthrottled),
+     are stored deduplicated in `logistics_inbound_events`, and processed from the outbox
+     (`CourierWebhookService`): the provider's current state (`getDelivery`) is applied
+     with `DeliveryEventsService.syncFromSnapshot`, which replays any skipped steps.
+   - `DeliveryReconcilerService` polls quiet deliveries and cancels ones still unassigned
+     after the provider's `assignTimeoutMinutes`.
+   - Return the provider's monotonic `sequence` in snapshots when it has one; stale updates
+     are then dropped.
+   - Implement `getHandoverCodes` if `handover: 'provider_code'` — the Node screen calls it
+     live via `GET /handoffs/orders/:id/courier-handover`.
 5. **Tests**
    - Adapter unit spec mocking `global.fetch` (see `notifications/infrastructure/resend-api-email-sender.spec.ts`).
    - The external-courier e2e block in `test/handoffs/handoffs.e2e-spec.ts` shows how a
      provider is exercised end-to-end with a fake; copy it for the new courier's flow.
+   - Sendii is the worked example: `infrastructure/sendii/` and [SENDII.md](SENDII.md).
 
 ## Rules worth keeping
 

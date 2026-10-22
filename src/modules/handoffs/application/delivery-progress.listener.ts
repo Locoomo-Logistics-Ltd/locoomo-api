@@ -95,10 +95,32 @@ export class DeliveryProgressListener
         // order. (Surcharges are recorded on the leg.)
         return;
 
+      case DeliveryEventType.RELEASED:
+      case DeliveryEventType.CANCELLED: {
+        // Before pickup only (a leg can't be cancelled later). If a courier
+        // had been assigned the order goes back to waiting; logistics then
+        // routes it to the next courier. A leg cancelled before anyone was
+        // assigned leaves the order as it is.
+        const [order] = await manager.query<{ status: string }[]>(
+          `SELECT status FROM orders WHERE id = $1`,
+          [notice.orderId],
+        );
+        if (order?.status === 'rider_assigned') {
+          await this.ordersService.markCourierReleased(
+            notice.orderId,
+            manager,
+            {
+              providerKey: notice.providerKey,
+              event: notice.event,
+              reason: notice.reason,
+            },
+          );
+        }
+        return;
+      }
+
       default:
-        // released / cancelled / returning / returned need order states
-        // that arrive with external couriers (phase 3) and returns
-        // (phase 5).
+        // returning / returned arrive with returns (phase 5).
         this.logger.warn(
           `Unhandled delivery event ${notice.event} for order ${notice.orderId}`,
         );

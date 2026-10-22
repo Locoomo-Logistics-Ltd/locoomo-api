@@ -14,6 +14,9 @@ export interface DeliveryEventNotice {
   // Set for in-house riders (their user id) — whose capacity slot to hold
   // or release; null for external couriers.
   courierUserId: string | null;
+  // Why the leg ended or was released, when known (e.g. a provider's
+  // cancel reason, or 'assign_timeout').
+  reason: string | null;
 }
 
 export interface DeliveryEventListener {
