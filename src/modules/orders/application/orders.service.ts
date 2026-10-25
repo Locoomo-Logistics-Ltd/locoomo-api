@@ -25,6 +25,12 @@ export interface CreateOrderFromPaidIntentFields {
   receiverPhone: string;
   parcelDescription: string;
   parcelSize: ParcelSize;
+  weightKg: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  handling: string[];
+  vehicleClass: string | null;
   amountKobo: number;
   destinationFeeKobo: number;
 }
@@ -126,17 +132,75 @@ export class OrdersService {
   // (no second party's code needed here — see conversation on why this
   // step differs from the rider handoffs), so this is a plain wrapper
   // around transition() with no extra guard beyond the status check.
+  // An external courier (not a Locoomo rider) accepted the job — same
+  // transition as assignRider, but there's no rider user to record; who is
+  // carrying it lives on the logistics delivery leg instead.
+  async markCourierAssigned(
+    orderId: string,
+    providerKey: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    return this.transition(
+      orderId,
+      OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+      OrderStatus.RIDER_ASSIGNED,
+      manager,
+      OrderEventType.RIDER_ASSIGNED,
+      { providerKey },
+    );
+  }
+
+  // The courier assigned to this order let it go before pickup (dropped
+  // the job, or the delivery was cancelled). The parcel is still on the
+  // origin shelf; the order waits for the next courier.
+  async markCourierReleased(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown> = {},
+  ): Promise<OrderEntity> {
+    assertLegalTransition(
+      OrderStatus.RIDER_ASSIGNED,
+      OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+    );
+    const [rows] = await manager.query<[OrderEntity[], number]>(
+      `UPDATE orders SET status = $1, "riderId" = NULL, "updatedAt" = now()
+        WHERE id = $2 AND status = $3
+        RETURNING *`,
+      [
+        OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+        orderId,
+        OrderStatus.RIDER_ASSIGNED,
+      ],
+    );
+    const order = rows[0];
+    if (!order) {
+      throw new IllegalOrderTransitionException(
+        orderId,
+        OrderStatus.RIDER_ASSIGNED,
+        OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+      );
+    }
+    await this.appendEvent(
+      manager,
+      orderId,
+      OrderEventType.COURIER_RELEASED,
+      eventPayload,
+    );
+    return order;
+  }
+
   async markReceivedAtOrigin(
     orderId: string,
     manager: EntityManager,
   ): Promise<OrderEntity> {
-    return this.transition(
+    const order = await this.transition(
       orderId,
       OrderStatus.AWAITING_DROP_OFF,
       OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
       manager,
       OrderEventType.PARCEL_RECEIVED_AT_ORIGIN,
     );
+    return this.placeOnShelf(order, order.originNodeId, manager);
   }
 
   // Narrow exports for handoffs' rider<->Node code confirmations. Both are
@@ -147,13 +211,14 @@ export class OrdersService {
     orderId: string,
     manager: EntityManager,
   ): Promise<OrderEntity> {
-    return this.transition(
+    const order = await this.transition(
       orderId,
       OrderStatus.RIDER_ASSIGNED,
       OrderStatus.IN_TRANSIT,
       manager,
       OrderEventType.PICKED_UP_BY_RIDER,
     );
+    return this.clearShelf(order, manager);
   }
 
   async markArrivedAtDestination(
@@ -177,13 +242,14 @@ export class OrdersService {
     orderId: string,
     manager: EntityManager,
   ): Promise<OrderEntity> {
-    return this.transition(
+    const order = await this.transition(
       orderId,
       OrderStatus.ARRIVED_AT_DESTINATION,
       OrderStatus.READY_FOR_COLLECTION,
       manager,
       OrderEventType.READY_FOR_COLLECTION,
     );
+    return this.placeOnShelf(order, order.destinationNodeId, manager);
   }
 
   // Narrow export for handoffs' final collection step. eventPayload carries
@@ -195,7 +261,7 @@ export class OrdersService {
     manager: EntityManager,
     eventPayload: Record<string, unknown> = {},
   ): Promise<OrderEntity> {
-    return this.transition(
+    const order = await this.transition(
       orderId,
       OrderStatus.READY_FOR_COLLECTION,
       OrderStatus.COMPLETED,
@@ -203,6 +269,124 @@ export class OrdersService {
       OrderEventType.COLLECTED_BY_RECEIVER,
       eventPayload,
     );
+    return this.clearShelf(order, manager);
+  }
+
+  // The courier couldn't complete the delivery and is bringing the parcel
+  // back to the origin Node. Recorded as both steps of the return (decided,
+  // then under way) — for an external courier they happen together.
+  async markReturning(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown> = {},
+  ): Promise<OrderEntity> {
+    await this.transition(
+      orderId,
+      OrderStatus.IN_TRANSIT,
+      OrderStatus.RETURN_INITIATED,
+      manager,
+      OrderEventType.RETURN_INITIATED,
+      eventPayload,
+    );
+    return this.transition(
+      orderId,
+      OrderStatus.RETURN_INITIATED,
+      OrderStatus.RETURN_IN_TRANSIT,
+      manager,
+      OrderEventType.RETURN_IN_TRANSIT,
+    );
+  }
+
+  // The courier handed the parcel back at the origin Node's counter.
+  async markReturnedToOrigin(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    return this.transition(
+      orderId,
+      OrderStatus.RETURN_IN_TRANSIT,
+      OrderStatus.RETURNED_TO_ORIGIN,
+      manager,
+      OrderEventType.RETURNED_TO_ORIGIN,
+    );
+  }
+
+  // Origin staff shelved the returned parcel — it gets a shelf number there
+  // again, and the sender is sent a collection code.
+  async markReadyForSenderCollection(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    const order = await this.transition(
+      orderId,
+      OrderStatus.RETURNED_TO_ORIGIN,
+      OrderStatus.READY_FOR_SENDER_COLLECTION,
+      manager,
+      OrderEventType.READY_FOR_SENDER_COLLECTION,
+    );
+    return this.placeOnShelf(order, order.originNodeId, manager);
+  }
+
+  async markCollectedBySender(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown> = {},
+  ): Promise<OrderEntity> {
+    const order = await this.transition(
+      orderId,
+      OrderStatus.READY_FOR_SENDER_COLLECTION,
+      OrderStatus.RETURN_COMPLETED,
+      manager,
+      OrderEventType.COLLECTED_BY_SENDER,
+      eventPayload,
+    );
+    return this.clearShelf(order, manager);
+  }
+
+  // Gives the parcel the lowest shelf number not currently in use at
+  // `nodeId`. The transaction-scoped advisory lock serialises concurrent
+  // assignments at the same Node (two drop-offs at once would otherwise both
+  // pick the same "lowest free" number); the unique index on
+  // (shelfNodeId, shelfNumber) is the backstop. Numbers are reused as soon
+  // as a parcel leaves, so they stay short.
+  private async placeOnShelf(
+    order: OrderEntity,
+    nodeId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    await manager.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`,
+      [nodeId],
+    );
+    const [rows] = await manager.query<[{ shelfNumber: number }[], number]>(
+      `UPDATE orders
+          SET "shelfNodeId" = $1,
+              "shelfNumber" = (
+                SELECT MIN(n)
+                  FROM generate_series(
+                         1,
+                         (SELECT COUNT(*) + 1 FROM orders WHERE "shelfNodeId" = $1)::int
+                       ) AS n
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM orders WHERE "shelfNodeId" = $1 AND "shelfNumber" = n
+                 )
+              )
+        WHERE id = $2
+        RETURNING "shelfNumber"`,
+      [nodeId, order.id],
+    );
+    return { ...order, shelfNodeId: nodeId, shelfNumber: rows[0].shelfNumber };
+  }
+
+  private async clearShelf(
+    order: OrderEntity,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    await manager.query(
+      `UPDATE orders SET "shelfNodeId" = NULL, "shelfNumber" = NULL WHERE id = $1`,
+      [order.id],
+    );
+    return { ...order, shelfNodeId: null, shelfNumber: null };
   }
 
   private async appendEvent(
@@ -232,6 +416,12 @@ export class OrdersService {
             receiverPhone: fields.receiverPhone,
             parcelDescription: fields.parcelDescription,
             parcelSize: fields.parcelSize,
+            weightKg: fields.weightKg,
+            lengthCm: fields.lengthCm,
+            widthCm: fields.widthCm,
+            heightCm: fields.heightCm,
+            handling: fields.handling,
+            vehicleClass: fields.vehicleClass,
             amountKobo: fields.amountKobo,
             destinationFeeKobo: fields.destinationFeeKobo,
             status: OrderStatus.AWAITING_DROP_OFF,

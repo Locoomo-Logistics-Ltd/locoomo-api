@@ -1,3 +1,7 @@
+import {
+  ParcelView,
+  toParcelView,
+} from '../../../../common/parcel/parcel-view';
 import { ParcelSize } from '../../../../common/parcel-size.enum';
 import { FeeBreakdown } from '../../domain/fee-breakdown';
 import { PaymentIntentStatus } from '../../domain/payment-intent-status.enum';
@@ -12,6 +16,8 @@ export class PaymentIntentResponseDto {
   receiverPhone!: string;
   parcelDescription!: string;
   parcelSize!: ParcelSize;
+  // Size, weight, dimensions, handling and the vehicle they need.
+  parcel!: ParcelView;
   feeBreakdown!: FeeBreakdown;
   amountKobo!: number;
   status!: PaymentIntentStatus;
@@ -31,6 +37,7 @@ export class PaymentIntentResponseDto {
     dto.receiverPhone = intent.receiverPhone;
     dto.parcelDescription = intent.parcelDescription;
     dto.parcelSize = intent.parcelSize;
+    dto.parcel = toParcelView(intent);
     dto.feeBreakdown = intent.feeBreakdown;
     dto.amountKobo = intent.amountKobo;
     dto.status = intent.status;

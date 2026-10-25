@@ -20,6 +20,12 @@ export class SmtpEmailSender implements NotificationSender {
       subject: message.subject,
       text: message.text,
       html: message.html,
+      attachments: message.attachments?.map((attachment) => ({
+        filename: attachment.filename,
+        content: Buffer.from(attachment.contentBase64, 'base64'),
+        contentType: attachment.contentType,
+        cid: attachment.contentId,
+      })),
     });
   }
 }

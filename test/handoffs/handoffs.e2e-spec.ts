@@ -4,7 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
 import { UserRole } from '../../src/common/auth/user-role.enum';
@@ -17,6 +17,7 @@ import { HandoffCodeType } from '../../src/modules/handoffs/domain/handoff-code-
 import { HandoffCodeEntity } from '../../src/modules/handoffs/infrastructure/entities/handoff-code.entity';
 import { NodeMembershipEntity } from '../../src/modules/node-operators/infrastructure/entities/node-membership.entity';
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
+import { OutboxEventStatus } from '../../src/modules/notifications/domain/outbox-event-status.enum';
 import { OutboxEventEntity } from '../../src/modules/notifications/infrastructure/entities/outbox-event.entity';
 import { OrderStatus } from '../../src/modules/orders/domain/order-status.enum';
 import { OrderEventEntity } from '../../src/modules/orders/infrastructure/entities/order-event.entity';
@@ -35,6 +36,29 @@ import { PricingRuleEntity } from '../../src/modules/payments/infrastructure/ent
 import { PaystackPaymentProvider } from '../../src/modules/payments/infrastructure/paystack-payment-provider';
 import { RiderStatus } from '../../src/modules/riders/domain/rider-status.enum';
 import { RiderProfileEntity } from '../../src/modules/riders/infrastructure/entities/rider-profile.entity';
+import { OutboxHandlerRegistry } from '../../src/modules/notifications/application/outbox-handler.registry';
+import { DeliveryEventsService } from '../../src/modules/logistics/application/delivery-events.service';
+import { DeliveryReconcilerService } from '../../src/modules/logistics/application/delivery-reconciler.service';
+import { LogisticsProviderRegistry } from '../../src/modules/logistics/application/logistics-provider.registry';
+import {
+  DeliveryEventType,
+  DeliveryLegStatus,
+  VehicleClass,
+} from '../../src/modules/logistics/domain/delivery-leg';
+import {
+  CreateDeliveryRequest,
+  CreateDeliveryResult,
+  HandoverCodes,
+  LogisticsProvider,
+  LogisticsProviderError,
+  ProviderCapabilities,
+  ProviderDeliverySnapshot,
+  ProviderWebhookEvent,
+  RoutePoint,
+  WalletBalance,
+} from '../../src/modules/logistics/domain/ports/logistics-provider.port';
+import { DeliveryLegEntity } from '../../src/modules/logistics/infrastructure/entities/delivery-leg.entity';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface ErrorBody {
   success: false;
@@ -112,6 +136,141 @@ class FakePaystackPaymentProvider implements PaymentProvider {
     if (tx) {
       tx.status = 'success';
     }
+  }
+}
+
+// Stands in for an external courier (Sendii-like): remote submission, its
+// own handover codes, progress reported by webhook and readable by polling.
+// Keeps its own view of each delivery, as a real provider does.
+class FakeCourierProvider implements LogisticsProvider {
+  readonly key = 'fake_courier';
+  readonly capabilities: ProviderCapabilities = {
+    vehicleClasses: [VehicleClass.MOTORBIKE, VehicleClass.CAR],
+    handover: 'provider_code',
+    updates: 'webhook',
+    remoteSubmission: true,
+    cancellableUntil: DeliveryLegStatus.ASSIGNED,
+    prepaidWallet: true,
+    surchargeHeadroomFactor: 0.6,
+  };
+  requests: CreateDeliveryRequest[] = [];
+  availableKobo = 10_000_000;
+  cancelled: string[] = [];
+  failNext: Error | null = null;
+  failCodes = false;
+  deliveries = new Map<
+    string,
+    { status: DeliveryLegStatus; sequence: number }
+  >();
+
+  createDelivery(
+    request: CreateDeliveryRequest,
+  ): Promise<CreateDeliveryResult> {
+    if (this.failNext) {
+      const error = this.failNext;
+      this.failNext = null;
+      return Promise.reject(error);
+    }
+    this.requests.push(request);
+    const externalId = `fake-${request.legId}`;
+    this.deliveries.set(externalId, {
+      status: DeliveryLegStatus.REQUESTED,
+      sequence: 1,
+    });
+    return Promise.resolve({
+      externalId,
+      status: DeliveryLegStatus.REQUESTED,
+      providerStatus: 'pending',
+      quotedKobo: 150000,
+      trackingUrl: null,
+      etaMinutes: 25,
+      distanceMeters: 9200,
+    });
+  }
+
+  // What the courier now says about a delivery (its own state moves on).
+  advance(externalId: string, status: DeliveryLegStatus): void {
+    const delivery = this.deliveries.get(externalId)!;
+    delivery.status = status;
+    delivery.sequence += 1;
+  }
+
+  cancel(externalId: string | null): Promise<void> {
+    if (externalId) {
+      this.cancelled.push(externalId);
+      this.advance(externalId, DeliveryLegStatus.CANCELLED);
+    }
+    return Promise.resolve();
+  }
+
+  getDelivery(externalId: string): Promise<ProviderDeliverySnapshot> {
+    const delivery = this.deliveries.get(externalId)!;
+    return Promise.resolve({
+      externalId,
+      status: delivery.status,
+      providerStatus: delivery.status,
+      sequence: delivery.sequence,
+      courier: {
+        name: 'Musa A.',
+        phone: '+2348031112222',
+        vehicle: 'motorbike',
+      },
+      trackingUrl: null,
+      actualKobo: null,
+      surchargeKobo: 0,
+      failureReason: null,
+    });
+  }
+
+  measured: string[] = [];
+
+  measureRoute(from: RoutePoint, to: RoutePoint) {
+    this.measured.push(`${from.address}→${to.address}`);
+    return Promise.resolve({ distanceMeters: 12_345 });
+  }
+
+  getBalanceKobo(): Promise<WalletBalance> {
+    return Promise.resolve({
+      availableKobo: this.availableKobo,
+      balanceKobo: this.availableKobo + 50_000,
+      heldKobo: 50_000,
+    });
+  }
+
+  getHandoverCodes(externalId: string): Promise<HandoverCodes> {
+    if (this.failCodes) {
+      return Promise.reject(
+        new LogisticsProviderError(this.key, 'getHandoverCodes', 'down', true),
+      );
+    }
+    const { status } = this.deliveries.get(externalId)!;
+    return Promise.resolve({
+      pickupCode: status === DeliveryLegStatus.ASSIGNED ? '111111' : null,
+      deliveryCode:
+        status === DeliveryLegStatus.PICKED_UP ||
+        status === DeliveryLegStatus.RETURNING
+          ? '222222'
+          : null,
+    });
+  }
+
+  verifyWebhook(_raw: Buffer, headers: Record<string, string | undefined>) {
+    return headers['x-fake-signature'] === 'valid';
+  }
+
+  parseWebhook(raw: Buffer): ProviderWebhookEvent {
+    const body = JSON.parse(raw.toString('utf8')) as {
+      id: string;
+      externalId: string | null;
+      event: DeliveryEventType | null;
+      status: DeliveryLegStatus;
+    };
+    return {
+      eventId: body.id,
+      externalId: body.externalId,
+      event: body.event,
+      snapshot: null,
+    };
   }
 }
 
@@ -232,6 +391,7 @@ describe('Handoffs (e2e)', () => {
         // without ever picking it up, so runtime consumption is much
         // higher than the test count naively suggests.
         capacity: 500,
+        ...NODE_CONTACT_FIELDS,
       })
       .expect(201);
     return (response.body as SuccessBody).data.id as string;
@@ -242,7 +402,8 @@ describe('Handoffs (e2e)', () => {
   // scan itself.
   async function createPaidOrder(
     consumerEmail: string,
-  ): Promise<{ id: string; trackingCode: string }> {
+    fromNodeId: string = originNodeId,
+  ): Promise<{ id: string; trackingCode: string; consumerCookie: string }> {
     const consumerCookie = await registerAndLogin(
       consumerEmail,
       UserRole.CONSUMER,
@@ -251,7 +412,7 @@ describe('Handoffs (e2e)', () => {
       .post('/api/v1/payments/intents')
       .set('Cookie', [consumerCookie])
       .send({
-        originNodeId,
+        originNodeId: fromNodeId,
         destinationNodeId,
         receiverFullName: 'Receiver Tester',
         receiverEmail: 'receiver@handoffs.e2e.test',
@@ -270,7 +431,11 @@ describe('Handoffs (e2e)', () => {
       .expect(200);
 
     const order = await orders.findOneByOrFail({ paymentIntentId: intentId });
-    return { id: order.id, trackingCode: order.trackingCode };
+    return {
+      id: order.id,
+      trackingCode: order.trackingCode,
+      consumerCookie,
+    };
   }
 
   // Skips straight to PARCEL_RECEIVED_AT_ORIGIN for suites (rider
@@ -487,6 +652,13 @@ describe('Handoffs (e2e)', () => {
           { pattern: nodeNamePattern },
         )
         .execute();
+      // delivery_legs reference orders too.
+      await orderEvents.query(
+        `DELETE FROM delivery_legs WHERE "orderId" IN (
+           SELECT id FROM orders WHERE "originNodeId" IN (
+             SELECT id FROM nodes WHERE name LIKE $1))`,
+        [nodeNamePattern],
+      );
       await orderEvents
         .createQueryBuilder()
         .delete()
@@ -511,6 +683,13 @@ describe('Handoffs (e2e)', () => {
           { pattern: nodeNamePattern },
         )
         .execute();
+      // Road distances learned from courier quotes reference nodes too.
+      await nodes.query(
+        `DELETE FROM node_route_distances
+          WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)
+             OR "destinationNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)`,
+        [nodeNamePattern],
+      );
       await nodes
         .createQueryBuilder()
         .delete()
@@ -1877,6 +2056,1551 @@ describe('Handoffs (e2e)', () => {
         .post(`/api/v1/handoffs/orders/${orderId}/collect`)
         .send({ code: '000000', identityConfirmed: true })
         .expect(401);
+    });
+  });
+
+  describe('counter flow: shelf numbers, scan lookup, queues', () => {
+    function dropOff(orderId: string): request.Test {
+      return request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/drop-off`)
+        .set('Cookie', [originOperatorCookie])
+        .expect(200);
+    }
+
+    it('gives each parcel on a shelf its own number, frees it at pickup, and reuses it', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'shelf-rider@handoffs.e2e.test',
+      );
+      const a = await createPaidOrder('shelf-a@handoffs.e2e.test');
+      const b = await createPaidOrder('shelf-b@handoffs.e2e.test');
+
+      const shelfA = ((await dropOff(a.id)).body as SuccessBody).data
+        .shelfNumber as number;
+      const shelfB = ((await dropOff(b.id)).body as SuccessBody).data
+        .shelfNumber as number;
+      expect(shelfA).toBeGreaterThanOrEqual(1);
+      expect(shelfB).not.toBe(shelfA);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${a.id}/accept`)
+        .set('Cookie', [riderCookie])
+        .expect(200);
+      await pickUp(a.id, riderCookie);
+      const pickedUp = await orders.findOneByOrFail({ id: a.id });
+      expect(pickedUp.shelfNodeId).toBeNull();
+      expect(pickedUp.shelfNumber).toBeNull();
+
+      const c = await createPaidOrder('shelf-c@handoffs.e2e.test');
+      const shelfC = ((await dropOff(c.id)).body as SuccessBody).data
+        .shelfNumber as number;
+      expect(shelfC).toBe(shelfA);
+      // Four accounts (password hashing) and three paid orders — slower
+      // than Jest's 5 s default on a loaded machine.
+    }, 20_000);
+
+    it('shelves the parcel at the destination on intake and frees it on collection', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'shelf-dest-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'shelf-dest@handoffs.e2e.test',
+        riderCookie,
+      );
+      const shelved = await orders.findOneByOrFail({ id: orderId });
+      expect(shelved.shelfNodeId).toBe(destinationNodeId);
+      expect(shelved.shelfNumber).toBeGreaterThanOrEqual(1);
+
+      const code = await extractLatestCollectionCode(receiverEmail);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(200);
+
+      const collected = await orders.findOneByOrFail({ id: orderId });
+      expect(collected.shelfNodeId).toBeNull();
+      expect(collected.shelfNumber).toBeNull();
+    });
+
+    it('finds a sloppily typed code at either Node, with the next action for that side', async () => {
+      const { cookie: riderCookie } = await createActiveRider(
+        'scan-rider@handoffs.e2e.test',
+      );
+      const orderId = await createAssignedOrder(
+        'scan-consumer@handoffs.e2e.test',
+        riderCookie,
+      );
+      const { trackingCode } = await orders.findOneByOrFail({ id: orderId });
+      // "LCM-4F2K-9XPT" typed as "4f2k 9xpt".
+      const typed = trackingCode.slice(4).replace('-', ' ').toLowerCase();
+
+      const atDestination = (
+        (
+          await request(app.getHttpServer())
+            .get(
+              `/api/v1/handoffs/orders/by-tracking-code/${encodeURIComponent(typed)}`,
+            )
+            .set('Cookie', [destinationOperatorCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data;
+      expect(atDestination.trackingCode).toBe(trackingCode);
+      expect(atDestination.myRole).toBe('destination');
+      expect(atDestination.nextAction).toBe('await_arrival');
+      expect(atDestination.shelfNumber).toBeNull();
+      expect(atDestination.receiverMasked).toBe('R. T. · ***5678');
+      expect(JSON.stringify(atDestination)).not.toContain('Receiver Tester');
+
+      const atOrigin = (
+        (
+          await request(app.getHttpServer())
+            .get(
+              `/api/v1/handoffs/orders/by-tracking-code/${encodeURIComponent(typed)}`,
+            )
+            .set('Cookie', [originOperatorCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data;
+      expect(atOrigin.myRole).toBe('origin');
+      expect(atOrigin.nextAction).toBe('hand_to_rider');
+      expect(atOrigin.shelfNumber).toEqual(expect.any(Number));
+    });
+
+    it('404s for input that cannot be a tracking code', async () => {
+      await request(app.getHttpServer())
+        .get('/api/v1/handoffs/orders/by-tracking-code/not-a-code')
+        .set('Cookie', [originOperatorCookie])
+        .expect(404);
+    });
+
+    it('filters to a work queue scoped to the side the Node plays', async () => {
+      const { id } = await createPaidOrder('queue-consumer@handoffs.e2e.test');
+      const ids = async (cookie: string, queue: string) =>
+        (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/handoffs/my-node/orders?queue=${queue}&limit=100`)
+              .set('Cookie', [cookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data.items as { id: string; nextAction: string }[];
+
+      const toReceive = await ids(originOperatorCookie, 'to_receive');
+      expect(toReceive.find((item) => item.id === id)?.nextAction).toBe(
+        'confirm_drop_off',
+      );
+      expect(
+        (await ids(destinationOperatorCookie, 'incoming')).map((i) => i.id),
+      ).not.toContain(id);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-node/orders?queue=everything')
+        .set('Cookie', [originOperatorCookie])
+        .expect(400);
+    });
+  });
+
+  describe('tracking emails and public tracking', () => {
+    async function latestEmail(to: string, subject: string) {
+      const event = await outboxEvents
+        .createQueryBuilder('o')
+        .where('o."eventType" = \'email\'')
+        .andWhere("o.payload ->> 'to' = :to", { to })
+        .andWhere("o.payload ->> 'subject' = :subject", { subject })
+        .orderBy('o."createdAt"', 'DESC')
+        .getOneOrFail();
+      return event.payload as {
+        text: string;
+        html: string;
+        attachments?: { contentId: string; contentType: string }[];
+      };
+    }
+
+    function tokenFrom(text: string): string {
+      const match = /\/track\/[^?\s]+\?t=([A-Za-z0-9_-]+)/.exec(text);
+      if (!match) {
+        throw new Error('No tracking link in email');
+      }
+      return match[1];
+    }
+
+    it('sends the sender their tracking code, label instructions, link and QR', async () => {
+      const consumerEmail = 'track-sender@handoffs.e2e.test';
+      const { trackingCode } = await createPaidOrder(consumerEmail);
+
+      const email = await latestEmail(
+        consumerEmail,
+        'Your Locoomo order is confirmed',
+      );
+      expect(email.text).toContain(`Tracking code: ${trackingCode}`);
+      expect(email.text).toContain('Write this clearly on the parcel');
+      expect(email.text).toContain(`/track/${trackingCode}?t=`);
+      expect(email.html).toContain('cid:tracking-qr');
+      expect(email.attachments?.[0]).toMatchObject({
+        contentId: 'tracking-qr',
+        contentType: 'image/png',
+      });
+    });
+
+    it('tells the receiver a parcel is on its way when it is dropped off', async () => {
+      const { id, trackingCode } = await createPaidOrder(
+        'track-dropoff@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${id}/drop-off`)
+        .set('Cookie', [originOperatorCookie])
+        .expect(200);
+
+      const email = await latestEmail(
+        receiverEmail,
+        'A parcel is on its way to you',
+      );
+      expect(email.text).toContain(trackingCode);
+      expect(email.text).toContain('ready for collection at');
+      expect(email.attachments).toHaveLength(1);
+    });
+
+    it("filters the sender's orders by status and shows each order's timeline", async () => {
+      const { id, consumerCookie } = await createPaidOrder(
+        'orders-filter@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${id}/drop-off`)
+        .set('Cookie', [originOperatorCookie])
+        .expect(200);
+
+      const list = async (status: string) =>
+        (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/orders?status=${status}`)
+              .set('Cookie', [consumerCookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data as { items: { id: string }[]; total: number };
+      expect(
+        (await list('awaiting_drop_off,parcel_received_at_origin')).items.map(
+          (o) => o.id,
+        ),
+      ).toEqual([id]);
+      expect((await list('return_in_transit,return_completed')).total).toBe(0);
+      await request(app.getHttpServer())
+        .get('/api/v1/orders?status=lost_in_space')
+        .set('Cookie', [consumerCookie])
+        .expect(400);
+
+      const timeline = (
+        (
+          await request(app.getHttpServer())
+            .get(`/api/v1/orders/${id}/timeline`)
+            .set('Cookie', [consumerCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data as unknown as { status: string; label: string; at: string }[];
+      expect(timeline.map((t) => t.status)).toEqual([
+        'order_placed',
+        'at_origin_station',
+      ]);
+      expect(timeline[1].label).toMatch(/^Dropped off at /);
+
+      const { consumerCookie: someoneElse } = await createPaidOrder(
+        'orders-filter-other@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .get(`/api/v1/orders/${id}/timeline`)
+        .set('Cookie', [someoneElse])
+        .expect(404);
+    });
+
+    it("gives the sender's order a tracking link and label instructions", async () => {
+      const { id, trackingCode, consumerCookie } = await createPaidOrder(
+        'track-orders-api@handoffs.e2e.test',
+      );
+
+      const data = (
+        (
+          await request(app.getHttpServer())
+            .get(`/api/v1/orders/${id}`)
+            .set('Cookie', [consumerCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data as {
+        trackingUrl: string;
+        labelInstructions: { lines: string[] };
+      };
+      expect(data.trackingUrl).toContain(`/track/${trackingCode}?t=`);
+      expect(data.labelInstructions.lines[0]).toBe(trackingCode);
+      expect(data.labelInstructions.lines[1]).toMatch(/^TO: /);
+    });
+
+    describe('GET /track/:trackingCode', () => {
+      let trackingCode: string;
+      let token: string;
+
+      beforeAll(async () => {
+        const order = await createPaidOrder('track-public@handoffs.e2e.test');
+        trackingCode = order.trackingCode;
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${order.id}/drop-off`)
+          .set('Cookie', [originOperatorCookie])
+          .expect(200);
+        token = tokenFrom(
+          (await latestEmail(receiverEmail, 'A parcel is on its way to you'))
+            .text,
+        );
+      });
+
+      it('shows status, timeline and destination with the link token — and nothing personal', async () => {
+        const data = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/track/${trackingCode}?t=${token}`)
+              .expect(200)
+          ).body as SuccessBody
+        ).data as {
+          status: string;
+          isFinal: boolean;
+          timeline: { status: string; label: string }[];
+          destination: { name: string; openingHours: unknown };
+          nextStep: string;
+        };
+
+        expect(data.status).toBe('at_origin_station');
+        expect(data.isFinal).toBe(false);
+        expect(data.timeline.map((entry) => entry.status)).toEqual([
+          'order_placed',
+          'at_origin_station',
+        ]);
+        expect(data.destination.name).toContain('destination');
+        expect(data.destination.openingHours).toEqual(
+          NODE_CONTACT_FIELDS.openingHours,
+        );
+        expect(data.nextStep).toEqual(expect.any(String));
+
+        const body = JSON.stringify(data);
+        for (const secret of [
+          'Receiver Tester',
+          receiverEmail,
+          '8012345678',
+          'shelf',
+          'amountKobo',
+        ]) {
+          expect(body).not.toContain(secret);
+        }
+      });
+
+      it('accepts the last four digits of the receiver phone instead of a token', async () => {
+        await request(app.getHttpServer())
+          .get(`/api/v1/track/${trackingCode.toLowerCase()}?phoneLast4=5678`)
+          .expect(200);
+      });
+
+      it('answers every failure with the same 404', async () => {
+        const responses = await Promise.all(
+          [
+            `/api/v1/track/${trackingCode}?t=${token.slice(0, -1)}x`,
+            `/api/v1/track/${trackingCode}?phoneLast4=0000`,
+            `/api/v1/track/LCM-0000-0000?t=${token}`,
+            `/api/v1/track/garbage?phoneLast4=5678`,
+          ].map((url) => request(app.getHttpServer()).get(url).expect(404)),
+        );
+        const messages = new Set(
+          responses.map(
+            (response) =>
+              (response.body as { error: { code: string } }).error.code,
+          ),
+        );
+        expect([...messages]).toEqual(['NOT_FOUND']);
+      });
+
+      it('requires exactly one of t or phoneLast4', async () => {
+        await request(app.getHttpServer())
+          .get(`/api/v1/track/${trackingCode}`)
+          .expect(400);
+        await request(app.getHttpServer())
+          .get(`/api/v1/track/${trackingCode}?t=${token}&phoneLast4=5678`)
+          .expect(400);
+      });
+
+      it('stops working 30 days after the parcel is collected', async () => {
+        const order = await createPaidOrder('track-expired@handoffs.e2e.test');
+        await orders.query(
+          `UPDATE orders SET status = 'completed', "updatedAt" = now() - interval '31 days'
+            WHERE id = $1`,
+          [order.id],
+        );
+
+        await request(app.getHttpServer())
+          .get(`/api/v1/track/${order.trackingCode}?phoneLast4=5678`)
+          .expect(404);
+      });
+    });
+  });
+
+  describe('external courier through the logistics layer', () => {
+    const courier = new FakeCourierProvider();
+    let courierOriginNodeId: string;
+    let courierOperatorCookie: string;
+    let dataSource: DataSource;
+    let legs: Repository<DeliveryLegEntity>;
+    let deliveryEvents: DeliveryEventsService;
+    let submit: (legId: string) => Promise<void>;
+
+    beforeAll(async () => {
+      dataSource = app.get(DataSource);
+      legs = dataSource.getRepository(DeliveryLegEntity);
+      deliveryEvents = app.get(DeliveryEventsService);
+      app.get(LogisticsProviderRegistry).register(courier);
+      const handler = app.get(OutboxHandlerRegistry).get('logistics.submit')!;
+      submit = (legId) => handler.handle({ legId });
+
+      courierOriginNodeId = await createNode('courier-origin');
+      courierOperatorCookie = await createNodeOperator(
+        'courier-operator@handoffs.e2e.test',
+        courierOriginNodeId,
+      );
+      // Preferred over in-house riders, but piloted on its own origin Node
+      // only — the rest of this suite keeps routing to the in-house pool.
+      await dataSource.query(
+        `INSERT INTO logistics_providers
+           (key, label, enabled, priority, "maxAttempts", "pilotNodeIds")
+         VALUES ('fake_courier', 'Fake Courier', true, 10, 1, $1)`,
+        [[courierOriginNodeId]],
+      );
+    });
+
+    afterAll(async () => {
+      await dataSource.query(
+        `DELETE FROM logistics_inbound_events WHERE "providerKey" = 'fake_courier'`,
+      );
+      await dataSource.query(
+        `DELETE FROM delivery_legs WHERE "providerKey" = 'fake_courier'`,
+      );
+      await dataSource.query(
+        `DELETE FROM logistics_providers WHERE key = 'fake_courier'`,
+      );
+    });
+
+    async function dropOffWithCourier(email: string) {
+      const order = await createPaidOrder(email, courierOriginNodeId);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${order.id}/drop-off`)
+        .set('Cookie', [courierOperatorCookie])
+        .expect(200);
+      const leg = await legs.findOneByOrFail({ orderId: order.id });
+      return { ...order, leg };
+    }
+
+    // What the courier reports about a delivery — applied the way webhook
+    // processing and reconciliation apply it.
+    function courierReports(
+      externalId: string,
+      status: DeliveryLegStatus,
+      snapshot: Partial<ProviderDeliverySnapshot> = {},
+    ): Promise<boolean> {
+      return dataSource.transaction((manager) =>
+        deliveryEvents.syncFromSnapshot(
+          'fake_courier',
+          {
+            externalId,
+            status,
+            providerStatus: status,
+            sequence: null,
+            courier: null,
+            trackingUrl: null,
+            actualKobo: null,
+            surchargeKobo: null,
+            failureReason: null,
+            ...snapshot,
+          },
+          manager,
+        ),
+      );
+    }
+
+    it('routes to the courier at drop-off, submits through the outbox, and keeps the order out of the rider pool', async () => {
+      const { id, trackingCode, leg } = await dropOffWithCourier(
+        'courier-route@handoffs.e2e.test',
+      );
+      expect(leg).toMatchObject({
+        providerKey: 'fake_courier',
+        status: 'requested',
+        externalId: null,
+      });
+
+      await submit(leg.id);
+      const submitted = courier.requests.find((r) => r.legId === leg.id)!;
+      expect(submitted.pickup.nodeId).toBe(courierOriginNodeId);
+      expect(submitted.dropoff.nodeId).toBe(destinationNodeId);
+      expect(submitted.pickup.contactPhone).toBe(
+        NODE_CONTACT_FIELDS.contactPhone,
+      );
+      expect(submitted.description).toContain(trackingCode);
+      expect(JSON.stringify(submitted)).not.toContain('Receiver Tester');
+      expect(await legs.findOneByOrFail({ id: leg.id })).toMatchObject({
+        externalId: `fake-${leg.id}`,
+        quotedKobo: 150000,
+      });
+
+      const { cookie: riderCookie } = await createActiveRider(
+        'courier-pool-rider@handoffs.e2e.test',
+      );
+      const pool = (
+        (
+          await request(app.getHttpServer())
+            .get(
+              `/api/v1/handoffs/available-orders?latitude=${riderLat}&longitude=${riderLng}&limit=100`,
+            )
+            .set('Cookie', [riderCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data.items as { id: string }[];
+      expect(pool.map((item) => item.id)).not.toContain(id);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${id}/accept`)
+        .set('Cookie', [riderCookie])
+        .expect(409);
+    });
+
+    it("moves the order on the courier's events — ignoring stale ones — and shows the courier to each audience", async () => {
+      const { id, trackingCode, consumerCookie, leg } =
+        await dropOffWithCourier('courier-progress@handoffs.e2e.test');
+      await submit(leg.id);
+      const externalId = `fake-${leg.id}`;
+      const slotsBefore = (
+        await nodes.findOneByOrFail({ id: courierOriginNodeId })
+      ).currentCount;
+
+      expect(
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 1,
+          courier: {
+            name: 'Musa A.',
+            phone: '+2348031112222',
+            vehicle: 'Motorbike',
+          },
+        }),
+      ).toBe(true);
+      const assigned = await orders.findOneByOrFail({ id });
+      expect(assigned.status).toBe('rider_assigned');
+      expect(assigned.riderId).toBeNull();
+
+      const atCounter = (
+        (
+          await request(app.getHttpServer())
+            .get(`/api/v1/handoffs/orders/by-tracking-code/${trackingCode}`)
+            .set('Cookie', [courierOperatorCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data as {
+        nextAction: string;
+        delivery: {
+          provider: string;
+          providerLabel: string;
+          handover: string;
+          courier: { phone?: string };
+        };
+      };
+      expect(atCounter.nextAction).toBe('hand_to_courier');
+      expect(atCounter.delivery).toMatchObject({
+        provider: 'fake_courier',
+        providerLabel: 'Fake Courier',
+        handover: 'give_code_to_courier',
+        courier: { name: 'Musa A.', phone: '+2348031112222' },
+      });
+
+      const forSender = (
+        (
+          await request(app.getHttpServer())
+            .get(`/api/v1/orders/${id}`)
+            .set('Cookie', [consumerCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data as { delivery: { courier: Record<string, unknown> } };
+      expect(forSender.delivery.courier.name).toBe('Musa A.');
+      expect(forSender.delivery.courier).not.toHaveProperty('phone');
+
+      await courierReports(externalId, DeliveryLegStatus.PICKED_UP, {
+        sequence: 2,
+      });
+      const pickedUp = await orders.findOneByOrFail({ id });
+      expect(pickedUp.status).toBe('in_transit');
+      expect(pickedUp.shelfNumber).toBeNull();
+      expect(
+        (await nodes.findOneByOrFail({ id: courierOriginNodeId })).currentCount,
+      ).toBe(slotsBefore - 1);
+
+      // A late redelivery of an older update changes nothing.
+      expect(
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 1,
+        }),
+      ).toBe(false);
+      expect((await orders.findOneByOrFail({ id })).status).toBe('in_transit');
+
+      await courierReports(externalId, DeliveryLegStatus.DELIVERED, {
+        sequence: 3,
+      });
+      expect((await orders.findOneByOrFail({ id })).status).toBe(
+        'arrived_at_destination',
+      );
+      const delivered = await legs.findOneByOrFail({ id: leg.id });
+      expect(delivered.status).toBe('delivered');
+      expect(delivered.endedAt).toBeInstanceOf(Date);
+    });
+
+    it('falls back to the in-house pool when the courier rejects the job', async () => {
+      const { id, leg } = await dropOffWithCourier(
+        'courier-fallback@handoffs.e2e.test',
+      );
+      courier.failNext = new LogisticsProviderError(
+        'fake_courier',
+        'createDelivery',
+        'INSUFFICIENT_BALANCE',
+        false,
+      );
+
+      await submit(leg.id);
+
+      const rejected = await legs.findOneByOrFail({ id: leg.id });
+      expect(rejected.status).toBe('cancelled');
+      expect(rejected.failureReason).toContain('INSUFFICIENT_BALANCE');
+      const fallback = await legs.findOneByOrFail({
+        orderId: id,
+        status: DeliveryLegStatus.REQUESTED,
+      });
+      expect(fallback).toMatchObject({
+        providerKey: 'in_house',
+        attemptNumber: 2,
+      });
+
+      const { cookie: riderCookie } = await createActiveRider(
+        'courier-fallback-rider@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${id}/accept`)
+        .set('Cookie', [riderCookie])
+        .expect(200);
+    });
+
+    it('hands the courier the vehicle the parcel needs and the most it may cost', async () => {
+      await dataSource.query(
+        `UPDATE logistics_providers SET "maxCostShare" = 0.75 WHERE key = 'fake_courier'`,
+      );
+      const { id, leg } = await dropOffWithCourier(
+        'courier-vehicle@handoffs.e2e.test',
+      );
+      await submit(leg.id);
+      await dataSource.query(
+        `UPDATE logistics_providers SET "maxCostShare" = NULL WHERE key = 'fake_courier'`,
+      );
+
+      const order = await orders.findOneByOrFail({ id });
+      const submitted = courier.requests.find((r) => r.legId === leg.id)!;
+      expect(order.vehicleClass).toBe('motorbike');
+      expect(submitted.vehicleClass).toBe('motorbike');
+      expect((await legs.findOneByOrFail({ id: leg.id })).vehicleClass).toBe(
+        'motorbike',
+      );
+      expect(submitted.maxCostKobo).toBe(
+        Math.floor((order.amountKobo - order.destinationFeeKobo) * 0.75),
+      );
+      // The road distance the courier measured is kept for future pricing.
+      const [route] = await dataSource.query<{ roadDistanceMeters: number }[]>(
+        `SELECT "roadDistanceMeters" FROM node_route_distances
+          WHERE "originNodeId" = $1 AND "destinationNodeId" = $2`,
+        [courierOriginNodeId, destinationNodeId],
+      );
+      expect(route.roadDistanceMeters).toBe(9200);
+    });
+
+    it('leaves the leg for the outbox to retry on a transient failure', async () => {
+      const { leg } = await dropOffWithCourier(
+        'courier-retry@handoffs.e2e.test',
+      );
+      courier.failNext = new LogisticsProviderError(
+        'fake_courier',
+        'createDelivery',
+        'timed out',
+        true,
+      );
+
+      await expect(submit(leg.id)).rejects.toThrow('timed out');
+      expect(await legs.findOneByOrFail({ id: leg.id })).toMatchObject({
+        status: 'requested',
+        externalId: null,
+      });
+
+      await submit(leg.id);
+      expect((await legs.findOneByOrFail({ id: leg.id })).externalId).toBe(
+        `fake-${leg.id}`,
+      );
+    });
+
+    describe('phase 3: webhooks, releases, timeouts, handovers, settlement', () => {
+      let processInbound: (inboundEventId: string) => Promise<void>;
+      let reconciler: DeliveryReconcilerService;
+
+      beforeAll(async () => {
+        const handler = app
+          .get(OutboxHandlerRegistry)
+          .get('logistics.process_inbound')!;
+        processInbound = (inboundEventId) => handler.handle({ inboundEventId });
+        reconciler = app.get(DeliveryReconcilerService);
+        await dataSource.query(
+          `UPDATE logistics_providers SET "assignTimeoutMinutes" = 20 WHERE key = 'fake_courier'`,
+        );
+      });
+
+      async function submittedCourierOrder(email: string) {
+        const order = await dropOffWithCourier(email);
+        await submit(order.leg.id);
+        return { ...order, externalId: `fake-${order.leg.id}` };
+      }
+
+      function postWebhook(body: Record<string, unknown>, signature = 'valid') {
+        return request(app.getHttpServer())
+          .post('/api/v1/logistics/webhooks/fake_courier')
+          .set('x-fake-signature', signature)
+          .set('Content-Type', 'application/json')
+          .send(JSON.stringify(body));
+      }
+
+      it('stores a signed webhook once, then applies what the courier says now', async () => {
+        const { id, externalId } = await submittedCourierOrder(
+          'courier-webhook@handoffs.e2e.test',
+        );
+        // The courier has moved on to picked_up; the webhook only says
+        // "assigned" — processing must apply the courier's current state.
+        courier.advance(externalId, DeliveryLegStatus.ASSIGNED);
+        courier.advance(externalId, DeliveryLegStatus.PICKED_UP);
+        const body = {
+          id: `wh-${externalId}`,
+          externalId,
+          event: DeliveryEventType.ASSIGNED,
+        };
+
+        await postWebhook(body).expect(200);
+        await postWebhook(body).expect(200); // redelivery
+        const stored = await dataSource.query<{ id: string }[]>(
+          `SELECT id FROM logistics_inbound_events WHERE "eventId" = $1`,
+          [body.id],
+        );
+        expect(stored).toHaveLength(1);
+
+        await processInbound(stored[0].id);
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'in_transit',
+        );
+        const [processed] = await dataSource.query<{ processedAt: Date }[]>(
+          `SELECT "processedAt" FROM logistics_inbound_events WHERE id = $1`,
+          [stored[0].id],
+        );
+        expect(processed.processedAt).toBeInstanceOf(Date);
+      });
+
+      it('rejects an unsigned webhook and one for an unknown courier', async () => {
+        await postWebhook(
+          { id: 'wh-x', externalId: 'x', event: 'assigned' },
+          'forged',
+        ).expect(401);
+        await request(app.getHttpServer())
+          .post('/api/v1/logistics/webhooks/no_such_courier')
+          .set('Content-Type', 'application/json')
+          .send('{}')
+          .expect(404);
+      });
+
+      it('puts the order back to waiting when the courier drops the job before pickup', async () => {
+        const { id, externalId, leg } = await submittedCourierOrder(
+          'courier-release@handoffs.e2e.test',
+        );
+        courier.advance(externalId, DeliveryLegStatus.ASSIGNED);
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 2,
+        });
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'rider_assigned',
+        );
+
+        await courierReports(externalId, DeliveryLegStatus.REQUESTED, {
+          sequence: 3,
+        });
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'parcel_received_at_origin',
+        );
+        const released = await legs.findOneByOrFail({ id: leg.id });
+        expect(released.status).toBe('requested');
+        expect(released.courierName).toBeNull();
+        expect(
+          await orderEvents.countBy({ orderId: id, type: 'courier_released' }),
+        ).toBe(1);
+      });
+
+      it('re-routes to the in-house pool when the courier cancels (no rider found)', async () => {
+        const { id, externalId, leg } = await submittedCourierOrder(
+          'courier-cancel@handoffs.e2e.test',
+        );
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 2,
+        });
+        await courierReports(externalId, DeliveryLegStatus.CANCELLED, {
+          sequence: 3,
+          failureReason: 'no_rider_found',
+        });
+
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'parcel_received_at_origin',
+        );
+        expect(await legs.findOneByOrFail({ id: leg.id })).toMatchObject({
+          status: 'cancelled',
+          failureReason: 'no_rider_found',
+        });
+        // fake_courier allows one attempt per order — next is in-house.
+        expect(
+          await legs.findOneByOrFail({
+            orderId: id,
+            status: DeliveryLegStatus.REQUESTED,
+          }),
+        ).toMatchObject({ providerKey: 'in_house' });
+      });
+
+      it('gives up on a courier that finds no rider in time, and polls deliveries that went quiet', async () => {
+        const waiting = await submittedCourierOrder(
+          'courier-timeout@handoffs.e2e.test',
+        );
+        await legs.query(
+          `UPDATE delivery_legs SET "createdAt" = now() - interval '30 minutes' WHERE id = $1`,
+          [waiting.leg.id],
+        );
+        const quiet = await submittedCourierOrder(
+          'courier-quiet@handoffs.e2e.test',
+        );
+        await courierReports(quiet.externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 2,
+        });
+        courier.advance(quiet.externalId, DeliveryLegStatus.ASSIGNED);
+        courier.advance(quiet.externalId, DeliveryLegStatus.PICKED_UP);
+        await legs.query(
+          `UPDATE delivery_legs SET "updatedAt" = now() - interval '10 minutes' WHERE id = $1`,
+          [quiet.leg.id],
+        );
+
+        await reconciler.runOnce();
+
+        expect(courier.cancelled).toContain(waiting.externalId);
+        expect(
+          await legs.findOneByOrFail({ id: waiting.leg.id }),
+        ).toMatchObject({
+          status: 'cancelled',
+          failureReason: 'assign_timeout',
+        });
+        expect(
+          await legs.findOneByOrFail({
+            orderId: waiting.id,
+            status: DeliveryLegStatus.REQUESTED,
+          }),
+        ).toMatchObject({ providerKey: 'in_house' });
+        expect((await orders.findOneByOrFail({ id: quiet.id })).status).toBe(
+          'in_transit',
+        );
+      });
+
+      it('gives Node staff the right live code for each side of the handover', async () => {
+        const { id, externalId } = await submittedCourierOrder(
+          'courier-codes@handoffs.e2e.test',
+        );
+        const handover = (cookie: string) =>
+          request(app.getHttpServer())
+            .get(`/api/v1/handoffs/orders/${id}/courier-handover`)
+            .set('Cookie', [cookie]);
+
+        // No courier yet.
+        await handover(courierOperatorCookie).expect(409);
+
+        courier.advance(externalId, DeliveryLegStatus.ASSIGNED);
+        await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+          sequence: 2,
+          courier: {
+            name: 'Musa A.',
+            phone: '+2348031112222',
+            vehicle: 'motorbike',
+          },
+        });
+        const pickup = await handover(courierOperatorCookie).expect(200);
+        expect(pickup.headers['cache-control']).toBe('no-store');
+        expect((pickup.body as SuccessBody).data).toMatchObject({
+          kind: 'pickup',
+          code: '111111',
+          providerLabel: 'Fake Courier',
+          courier: { name: 'Musa A.' },
+        });
+        // The destination has nothing to give until the parcel is on its way.
+        await handover(destinationOperatorCookie).expect(409);
+
+        courier.advance(externalId, DeliveryLegStatus.PICKED_UP);
+        await courierReports(externalId, DeliveryLegStatus.PICKED_UP, {
+          sequence: 3,
+        });
+        const delivery = await handover(destinationOperatorCookie).expect(200);
+        expect((delivery.body as SuccessBody).data).toMatchObject({
+          kind: 'delivery',
+          code: '222222',
+        });
+
+        courier.failCodes = true;
+        const failed = await handover(destinationOperatorCookie).expect(502);
+        courier.failCodes = false;
+        expect((failed.body as { error: { code: string } }).error.code).toBe(
+          'LOGISTICS_PROVIDER_ERROR',
+        );
+      });
+
+      it('settles a courier-delivered order with a non-payable courier allocation instead of a rider share', async () => {
+        const { id, externalId } = await submittedCourierOrder(
+          'courier-settle@handoffs.e2e.test',
+        );
+        await courierReports(externalId, DeliveryLegStatus.DELIVERED, {
+          sequence: 9,
+        });
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/intake`)
+          .set('Cookie', [destinationOperatorCookie])
+          .expect(200);
+        const code = await extractLatestCollectionCode(receiverEmail);
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/collect`)
+          .set('Cookie', [destinationOperatorCookie])
+          .send({ code, identityConfirmed: true })
+          .expect(200);
+
+        const entries = await revenueSplitEntries.findBy({ orderId: id });
+        expect(entries.map((e) => e.partyType).sort()).toEqual([
+          'courier_allocation',
+          'destination_node',
+          'node',
+          'platform',
+        ]);
+        const allocation = entries.find(
+          (e) => (e.partyType as string) === 'courier_allocation',
+        )!;
+        expect(allocation.partyId).toBeNull();
+        expect(allocation.payoutStatus).toBe('not_payable');
+
+        const refused = await request(app.getHttpServer())
+          .patch(
+            `/api/v1/admin/revenue-split/entries/${allocation.id}/mark-paid`,
+          )
+          .set('Cookie', [adminCookie])
+          .expect(409);
+        expect((refused.body as { error: { code: string } }).error.code).toBe(
+          'REVENUE_SPLIT_NOT_PAYABLE',
+        );
+      });
+
+      it('brings a failed delivery back to the origin station for the sender to collect', async () => {
+        const senderEmail = 'courier-return@handoffs.e2e.test';
+        const { id, trackingCode, externalId, leg } =
+          await submittedCourierOrder(senderEmail);
+        await courierReports(externalId, DeliveryLegStatus.PICKED_UP, {
+          sequence: 2,
+        });
+        const slotsAfterPickup = (
+          await nodes.findOneByOrFail({ id: courierOriginNodeId })
+        ).currentCount;
+
+        // The courier gives up on the destination and heads back.
+        courier.advance(externalId, DeliveryLegStatus.RETURNING);
+        await courierReports(externalId, DeliveryLegStatus.RETURNING, {
+          sequence: 3,
+        });
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'return_in_transit',
+        );
+        expect(
+          (await orderEvents.findBy({ orderId: id })).map((e) => e.type),
+        ).toEqual(
+          expect.arrayContaining(['return_initiated', 'return_in_transit']),
+        );
+        const emails = await outboxEvents
+          .createQueryBuilder('o')
+          .where("o.payload ->> 'subject' IN (:...subjects)", {
+            subjects: [
+              'Your parcel is being returned',
+              'Your parcel could not be delivered',
+            ],
+          })
+          .andWhere("o.payload ->> 'text' LIKE :code", {
+            code: `%${trackingCode}%`,
+          })
+          .getMany();
+        expect(emails.map((e) => e.payload.to).sort()).toEqual(
+          [receiverEmail, senderEmail].sort(),
+        );
+
+        // The origin station reads the returning courier its code.
+        const scan = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/handoffs/orders/by-tracking-code/${trackingCode}`)
+              .set('Cookie', [courierOperatorCookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(scan).toMatchObject({
+          myRole: 'origin',
+          nextAction: 'receive_from_courier',
+        });
+        const handover = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/handoffs/orders/${id}/courier-handover`)
+              .set('Cookie', [courierOperatorCookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(handover).toMatchObject({
+          kind: 'return_delivery',
+          code: '222222',
+        });
+
+        const publicView = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/track/${trackingCode}?phoneLast4=5678`)
+              .expect(200)
+          ).body as SuccessBody
+        ).data as {
+          status: string;
+          courierLabel: string;
+          origin: { address?: string };
+        };
+        expect(publicView.status).toBe('returning_to_sender');
+        expect(publicView.courierLabel).toBe('Fake Courier');
+        expect(publicView.origin.address).toBeDefined();
+
+        // Back at the origin counter: it takes a slot again.
+        courier.advance(externalId, DeliveryLegStatus.RETURNED);
+        await courierReports(externalId, DeliveryLegStatus.RETURNED, {
+          sequence: 4,
+        });
+        expect((await orders.findOneByOrFail({ id })).status).toBe(
+          'returned_to_origin',
+        );
+        expect((await legs.findOneByOrFail({ id: leg.id })).status).toBe(
+          'returned',
+        );
+        expect(
+          (await nodes.findOneByOrFail({ id: courierOriginNodeId }))
+            .currentCount,
+        ).toBe(slotsAfterPickup + 1);
+
+        // Only the origin may shelve it; the destination gets a 404.
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/return-intake`)
+          .set('Cookie', [destinationOperatorCookie])
+          .expect(404);
+        const intake = (
+          (
+            await request(app.getHttpServer())
+              .post(`/api/v1/handoffs/orders/${id}/return-intake`)
+              .set('Cookie', [courierOperatorCookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(intake).toMatchObject({
+          status: 'ready_for_sender_collection',
+          shelfNumber: expect.any(Number) as number,
+        });
+
+        // The sender's code is emailed to the sender; a resend replaces it.
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/collection-code/resend`)
+          .set('Cookie', [courierOperatorCookie])
+          .expect(200);
+        const code = await extractLatestCollectionCode(senderEmail);
+
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${id}/return-collect`)
+          .set('Cookie', [courierOperatorCookie])
+          .send({
+            code: code === '000000' ? '111111' : '000000',
+            identityConfirmed: true,
+          })
+          .expect(401);
+        const collected = (
+          (
+            await request(app.getHttpServer())
+              .post(`/api/v1/handoffs/orders/${id}/return-collect`)
+              .set('Cookie', [courierOperatorCookie])
+              .send({ code, identityConfirmed: true })
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(collected).toMatchObject({
+          status: 'return_completed',
+          shelfNumber: null,
+        });
+        expect(
+          (await nodes.findOneByOrFail({ id: courierOriginNodeId }))
+            .currentCount,
+        ).toBe(slotsAfterPickup);
+        // Never delivered, so nothing to split.
+        expect(await revenueSplitEntries.countBy({ orderId: id })).toBe(0);
+
+        const finalView = (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/track/${trackingCode}?phoneLast4=5678`)
+              .expect(200)
+          ).body as SuccessBody
+        ).data;
+        expect(finalView).toMatchObject({
+          status: 'return_completed',
+          isFinal: true,
+        });
+      }, 20_000);
+
+      describe('admin logistics', () => {
+        const admin = (req: request.Test) => req.set('Cookie', [adminCookie]);
+        const api = '/api/v1/admin/logistics';
+
+        it('lists couriers with routing settings and whether their adapter is running', async () => {
+          const providers = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(`${api}/providers`),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as unknown as {
+            key: string;
+            registered: boolean;
+            activeDeliveries: number;
+          }[];
+          expect(providers.find((p) => p.key === 'in_house')).toMatchObject({
+            registered: true,
+          });
+          expect(providers.find((p) => p.key === 'fake_courier')).toMatchObject(
+            {
+              registered: true,
+            },
+          );
+          // No SENDII_API_KEY adapter under NODE_ENV=test.
+          expect(providers.find((p) => p.key === 'sendii')).toMatchObject({
+            registered: false,
+          });
+
+          await request(app.getHttpServer())
+            .get(`${api}/providers`)
+            .set('Cookie', [courierOperatorCookie])
+            .expect(403);
+        });
+
+        it('updates routing settings, validating them, and refuses to switch off in-house riders', async () => {
+          const updated = (
+            (
+              await admin(
+                request(app.getHttpServer()).patch(
+                  `${api}/providers/fake_courier`,
+                ),
+              )
+                .send({
+                  maxAttempts: 2,
+                  lowBalanceAlertNaira: 20000,
+                  maxCostShare: null,
+                })
+                .expect(200)
+            ).body as SuccessBody
+          ).data;
+          expect(updated).toMatchObject({
+            maxAttempts: 2,
+            lowBalanceAlertKobo: 2_000_000,
+            maxCostShare: null,
+            // untouched
+            pilotNodeIds: [courierOriginNodeId],
+          });
+
+          await admin(
+            request(app.getHttpServer()).patch(`${api}/providers/fake_courier`),
+          )
+            .send({ minDistanceKm: 50, maxDistanceKm: 10 })
+            .expect(400);
+          await admin(
+            request(app.getHttpServer()).patch(`${api}/providers/fake_courier`),
+          )
+            .send({ pilotNodeIds: ['00000000-0000-0000-0000-000000000000'] })
+            .expect(400);
+          const refused = await admin(
+            request(app.getHttpServer()).patch(`${api}/providers/in_house`),
+          )
+            .send({ enabled: false })
+            .expect(409);
+          expect((refused.body as { error: { code: string } }).error.code).toBe(
+            'ILLEGAL_DELIVERY_ACTION',
+          );
+
+          await admin(
+            request(app.getHttpServer()).patch(`${api}/providers/fake_courier`),
+          )
+            .send({ maxAttempts: 1, lowBalanceAlertNaira: null })
+            .expect(200);
+        });
+
+        it('reads and edits vehicle rules', async () => {
+          const rules = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(`${api}/vehicle-rules`),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as unknown as { vehicleClass: string; maxWeightKg: number }[];
+          expect(rules.map((r) => r.vehicleClass)).toEqual([
+            'bicycle',
+            'motorbike',
+            'car',
+            'van',
+          ]);
+          expect(rules.find((r) => r.vehicleClass === 'car')?.maxWeightKg).toBe(
+            50,
+          );
+
+          const edited = (
+            (
+              await admin(
+                request(app.getHttpServer()).patch(`${api}/vehicle-rules/car`),
+              )
+                .send({ maxWeightKg: 60 })
+                .expect(200)
+            ).body as SuccessBody
+          ).data;
+          expect(edited).toMatchObject({
+            vehicleClass: 'car',
+            maxWeightKg: 60,
+          });
+          await admin(
+            request(app.getHttpServer()).patch(`${api}/vehicle-rules/car`),
+          )
+            .send({ maxWeightKg: 50 })
+            .expect(200);
+          await admin(
+            request(app.getHttpServer()).patch(
+              `${api}/vehicle-rules/hovercraft`,
+            ),
+          )
+            .send({ enabled: true })
+            .expect(404);
+        });
+
+        it('lists deliveries with filters, and retries one the courier never received', async () => {
+          const { leg } = await dropOffWithCourier(
+            'admin-retry@handoffs.e2e.test',
+          );
+
+          const listed = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(
+                  `${api}/deliveries?provider=fake_courier&status=requested&limit=100`,
+                ),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as { items: { id: string; orderTrackingCode: string }[] };
+          expect(listed.items.map((i) => i.id)).toContain(leg.id);
+
+          await admin(
+            request(app.getHttpServer()).post(
+              `${api}/deliveries/${leg.id}/retry`,
+            ),
+          ).expect(200);
+          const queued = await outboxEvents
+            .createQueryBuilder('o')
+            .where(`o."eventType" = 'logistics.submit'`)
+            .andWhere(`o.payload ->> 'legId' = :legId`, { legId: leg.id })
+            .getCount();
+          expect(queued).toBe(2); // the original submission + the retry
+
+          await submit(leg.id);
+          await admin(
+            request(app.getHttpServer()).post(
+              `${api}/deliveries/${leg.id}/retry`,
+            ),
+          ).expect(409); // the courier has it now
+        });
+
+        it("finds one order's deliveries by order id or a sloppily typed tracking code", async () => {
+          const { id, trackingCode, leg } = await dropOffWithCourier(
+            'admin-find@handoffs.e2e.test',
+          );
+          const find = async (q: string) =>
+            (
+              (
+                await admin(
+                  request(app.getHttpServer()).get(`${api}/deliveries?${q}`),
+                ).expect(200)
+              ).body as SuccessBody
+            ).data as { items: { id: string; orderTrackingCode: string }[] };
+
+          expect((await find(`orderId=${id}`)).items.map((i) => i.id)).toEqual([
+            leg.id,
+          ]);
+          const typed = trackingCode.slice(4).replace('-', ' ').toLowerCase();
+          expect(
+            (await find(`trackingCode=${encodeURIComponent(typed)}`)).items.map(
+              (i) => i.id,
+            ),
+          ).toEqual([leg.id]);
+          expect((await find('trackingCode=garbage')).items).toEqual([]);
+        });
+
+        it('moves a delivery from the courier to Locoomo riders on demand', async () => {
+          const { id, externalId, leg } = await submittedCourierOrder(
+            'admin-fallback@handoffs.e2e.test',
+          );
+          await courierReports(externalId, DeliveryLegStatus.ASSIGNED, {
+            sequence: 2,
+          });
+
+          await admin(
+            request(app.getHttpServer()).post(
+              `${api}/deliveries/${leg.id}/fallback`,
+            ),
+          ).expect(200);
+
+          expect(courier.cancelled).toContain(externalId);
+          expect(await legs.findOneByOrFail({ id: leg.id })).toMatchObject({
+            status: 'cancelled',
+            failureReason: 'admin_fallback',
+          });
+          expect(
+            await legs.findOneByOrFail({
+              orderId: id,
+              status: DeliveryLegStatus.REQUESTED,
+            }),
+          ).toMatchObject({ providerKey: 'in_house' });
+          expect((await orders.findOneByOrFail({ id })).status).toBe(
+            'parcel_received_at_origin',
+          );
+        });
+
+        it('refuses to take a delivery back after pickup', async () => {
+          const { externalId, leg } = await submittedCourierOrder(
+            'admin-fallback-late@handoffs.e2e.test',
+          );
+          await courierReports(externalId, DeliveryLegStatus.PICKED_UP, {
+            sequence: 2,
+          });
+          await admin(
+            request(app.getHttpServer()).post(
+              `${api}/deliveries/${leg.id}/fallback`,
+            ),
+          ).expect(409);
+        });
+
+        it('reconciles a delivery with its courier on demand', async () => {
+          const { id, externalId, leg } = await submittedCourierOrder(
+            'admin-reconcile@handoffs.e2e.test',
+          );
+          courier.advance(externalId, DeliveryLegStatus.ASSIGNED);
+
+          const row = (
+            (
+              await admin(
+                request(app.getHttpServer()).post(
+                  `${api}/deliveries/${leg.id}/reconcile`,
+                ),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data;
+          expect(row).toMatchObject({
+            status: 'assigned',
+            orderStatus: 'rider_assigned',
+          });
+          expect((await orders.findOneByOrFail({ id })).status).toBe(
+            'rider_assigned',
+          );
+        });
+
+        it("shows a prepaid courier's wallet, with headroom for in-flight surcharges", async () => {
+          await dataSource.query(
+            `UPDATE logistics_providers SET "lowBalanceAlertKobo" = 1000000 WHERE key = 'fake_courier'`,
+          );
+          courier.availableKobo = 1_200_000;
+
+          const wallet = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(
+                  `${api}/providers/fake_courier/wallet`,
+                ),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as {
+            availableKobo: number;
+            reservedForSurchargesKobo: number;
+            freeKobo: number;
+            lowBalance: boolean;
+          };
+          expect(wallet.availableKobo).toBe(1_200_000);
+          expect(wallet.reservedForSurchargesKobo).toBeGreaterThan(0);
+          expect(wallet.freeKobo).toBe(
+            wallet.availableKobo - wallet.reservedForSurchargesKobo,
+          );
+          expect(wallet.lowBalance).toBe(wallet.freeKobo < 1_000_000);
+
+          courier.availableKobo = 10_000_000;
+          await dataSource.query(
+            `UPDATE logistics_providers SET "lowBalanceAlertKobo" = NULL WHERE key = 'fake_courier'`,
+          );
+          // In-house riders have no wallet.
+          await admin(
+            request(app.getHttpServer()).get(
+              `${api}/providers/in_house/wallet`,
+            ),
+          ).expect(404);
+        });
+
+        it('refreshes road distances between Nodes in the background (the "Refresh routes" button)', async () => {
+          await outboxEvents.delete({ eventType: 'logistics.refresh_routes' });
+          const started = (
+            (
+              await admin(
+                request(app.getHttpServer()).post(
+                  `${api}/route-distances/refresh`,
+                ),
+              )
+                .send({})
+                .expect(202)
+            ).body as SuccessBody
+          ).data as { queued: boolean; providerKey: string; pairs: number };
+          expect(started).toMatchObject({
+            queued: true,
+            providerKey: 'fake_courier',
+          });
+          expect(started.pairs).toBeGreaterThan(0);
+
+          // A second press while it runs doesn't queue another.
+          const again = (
+            (
+              await admin(
+                request(app.getHttpServer()).post(
+                  `${api}/route-distances/refresh`,
+                ),
+              )
+                .send({})
+                .expect(202)
+            ).body as SuccessBody
+          ).data;
+          expect(again).toMatchObject({ queued: false, alreadyRunning: true });
+
+          // Run the background job to completion (it re-queues itself per chunk).
+          const handler = app
+            .get(OutboxHandlerRegistry)
+            .get('logistics.refresh_routes')!;
+          for (let runs = 0; runs < 50; runs++) {
+            const next = await outboxEvents.findOne({
+              where: {
+                eventType: 'logistics.refresh_routes',
+                status: OutboxEventStatus.PENDING,
+              },
+              order: { createdAt: 'ASC' },
+            });
+            if (!next) break;
+            await handler.handle(next.payload);
+            await outboxEvents.update(next.id, {
+              status: OutboxEventStatus.SENT,
+            });
+          }
+
+          const status = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(`${api}/route-distances`),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as {
+            refreshRunning: boolean;
+            eligiblePairs: number;
+            measuredPairs: number;
+            routes: {
+              originNodeId: string;
+              destinationNodeId: string;
+              roadDistanceKm: number;
+            }[];
+          };
+          expect(status.refreshRunning).toBe(false);
+          expect(status.eligiblePairs).toBe(started.pairs);
+          expect(status.measuredPairs).toBe(status.eligiblePairs);
+          const route = status.routes.find(
+            (r) =>
+              r.originNodeId === originNodeId &&
+              r.destinationNodeId === destinationNodeId,
+          );
+          expect(route?.roadDistanceKm).toBe(12.35);
+        });
+
+        it('keeps the road distance from a quote refused for being over the cost cap', async () => {
+          await nodes.query(
+            `DELETE FROM node_route_distances WHERE "originNodeId" = $1 AND "destinationNodeId" = $2`,
+            [courierOriginNodeId, destinationNodeId],
+          );
+          const { leg } = await dropOffWithCourier(
+            'admin-cap-distance@handoffs.e2e.test',
+          );
+          courier.failNext = new LogisticsProviderError(
+            'fake_courier',
+            'createDelivery',
+            'QUOTE_ABOVE_LIMIT: quoted 900000 kobo, limit 300000 kobo',
+            false,
+            8_800,
+          );
+          await submit(leg.id);
+
+          const [route] = await dataSource.query<
+            { roadDistanceMeters: number }[]
+          >(
+            `SELECT "roadDistanceMeters" FROM node_route_distances
+              WHERE "originNodeId" = $1 AND "destinationNodeId" = $2`,
+            [courierOriginNodeId, destinationNodeId],
+          );
+          expect(route.roadDistanceMeters).toBe(8_800);
+        });
+
+        it('reports courier economics per order with totals', async () => {
+          const report = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(
+                  `${api}/economics?provider=fake_courier&limit=100`,
+                ),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as {
+            items: {
+              orderTrackingCode: string;
+              courierCostKobo: number;
+              courierAllocationKobo: number;
+              marginKobo: number;
+              allocationEstimated: boolean;
+              orderStatus: string;
+            }[];
+            totals: { orders: number; marginKobo: number };
+          };
+          expect(report.totals.orders).toBe(report.items.length);
+          expect(report.items.length).toBeGreaterThan(0);
+          for (const row of report.items) {
+            expect(row.marginKobo).toBe(
+              row.courierAllocationKobo - row.courierCostKobo,
+            );
+          }
+          // The order settled earlier in this suite has its allocation recorded.
+          expect(
+            report.items.some(
+              (row) =>
+                row.orderStatus === 'completed' && !row.allocationEstimated,
+            ),
+          ).toBe(true);
+        });
+      });
     });
   });
 });

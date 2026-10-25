@@ -1,3 +1,4 @@
+import type { OpeningHours } from '../../../../common/opening-hours/opening-hours';
 import { NodeOnboardingType } from '../../domain/node-onboarding-type.enum';
 import { NodeStatus } from '../../domain/node-status.enum';
 import { NodeEntity } from '../../infrastructure/entities/node.entity';
@@ -15,6 +16,9 @@ export class NodeResponseDto {
   status!: NodeStatus;
   onboardingType!: NodeOnboardingType;
   operatingHours!: string | null;
+  openingHours!: OpeningHours | null;
+  contactPhone!: string | null;
+  locationCheck!: string | null;
   isPubliclyVisible!: boolean;
   createdAt!: Date;
 
@@ -32,6 +36,9 @@ export class NodeResponseDto {
     dto.status = node.status;
     dto.onboardingType = node.onboardingType;
     dto.operatingHours = node.operatingHours;
+    dto.openingHours = node.openingHours ?? null;
+    dto.contactPhone = node.contactPhone ?? null;
+    dto.locationCheck = node.locationCheck ?? null;
     dto.isPubliclyVisible = node.isPubliclyVisible;
     dto.createdAt = node.createdAt;
     return dto;

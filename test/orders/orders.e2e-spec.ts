@@ -26,6 +26,7 @@ import {
 import { PaymentIntentEntity } from '../../src/modules/payments/infrastructure/entities/payment-intent.entity';
 import { PricingRuleEntity } from '../../src/modules/payments/infrastructure/entities/pricing-rule.entity';
 import { PaystackPaymentProvider } from '../../src/modules/payments/infrastructure/paystack-payment-provider';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface ErrorBody {
   success: false;
@@ -168,6 +169,7 @@ describe('Orders (e2e)', () => {
         latitude: 6.45,
         longitude: 3.47,
         capacity: 30,
+        ...NODE_CONTACT_FIELDS,
       })
       .expect(201);
     return (response.body as SuccessBody).data.id as string;
@@ -254,6 +256,13 @@ describe('Orders (e2e)', () => {
     // FK-ordered: order_events -> orders -> payment_intents -> nodes ->
     // pricing_rules -> users, wrapped so app.close() always runs.
     try {
+      // delivery_legs reference orders too.
+      await orderEvents.query(
+        `DELETE FROM delivery_legs WHERE "orderId" IN (
+           SELECT id FROM orders WHERE "originNodeId" IN (
+             SELECT id FROM nodes WHERE name LIKE $1))`,
+        [nodeNamePattern],
+      );
       await orderEvents
         .createQueryBuilder()
         .delete()

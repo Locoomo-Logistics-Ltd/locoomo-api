@@ -59,16 +59,15 @@ export class ConfirmCollectionService {
             // Same transaction, same idempotency guard as the COMPLETED
             // transition itself — an order can't reach COMPLETED without
             // its revenue split being recorded atomically alongside it.
-            // Non-null riderId: guaranteed by the guarded state machine,
-            // same justification as ConfirmHandoffService's capacity
-            // release (RIDER_ASSIGNED, which sets riderId, is required
-            // before every later transition).
+            // riderId is null when an external courier carried the parcel;
+            // the rider share is then recorded as a non-payable courier
+            // allocation (pilot settlement — see RecordRevenueSplitService).
             await this.recordRevenueSplitService.record(
               {
                 orderId: order.id,
                 amountKobo: order.amountKobo,
                 destinationFeeKobo: order.destinationFeeKobo,
-                riderId: order.riderId!,
+                riderId: order.riderId,
                 originNodeId: order.originNodeId,
                 destinationNodeId: order.destinationNodeId,
               },
@@ -81,7 +80,8 @@ export class ConfirmCollectionService {
 
     if (alreadyProcessed) {
       const [row] = await this.dataSource.query<OrderTransitionResult[]>(
-        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId"
+        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId",
+                "shelfNumber"
            FROM orders WHERE id = $1`,
         [orderId],
       );

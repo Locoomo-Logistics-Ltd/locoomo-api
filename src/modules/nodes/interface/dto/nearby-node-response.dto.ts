@@ -1,3 +1,4 @@
+import type { OpeningHours } from '../../../../common/opening-hours/opening-hours';
 import { NodeOnboardingType } from '../../domain/node-onboarding-type.enum';
 import { NodeStatus } from '../../domain/node-status.enum';
 import { NodeEntity } from '../../infrastructure/entities/node.entity';
@@ -15,6 +16,8 @@ export class NearbyNodeResponseDto {
   status!: NodeStatus;
   onboardingType!: NodeOnboardingType;
   operatingHours!: string | null;
+  openingHours!: OpeningHours | null;
+  contactPhone!: string | null;
   createdAt!: Date;
   distanceMeters!: number;
 
@@ -34,6 +37,8 @@ export class NearbyNodeResponseDto {
     dto.status = row.status;
     dto.onboardingType = row.onboardingType;
     dto.operatingHours = row.operatingHours;
+    dto.openingHours = row.openingHours ?? null;
+    dto.contactPhone = row.contactPhone ?? null;
     dto.createdAt = row.createdAt;
     dto.distanceMeters = row.distance;
     return dto;

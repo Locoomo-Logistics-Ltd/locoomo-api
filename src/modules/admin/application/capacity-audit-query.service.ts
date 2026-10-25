@@ -57,9 +57,10 @@ export class CapacityAuditQueryService {
   private async auditNodes(): Promise<NodeCapacityMismatchRow[]> {
     // Expected: PaymentIntents currently holding an origin-capacity slot —
     // still PENDING (not yet paid, not yet expired), or PAID with an Order
-    // that hasn't reached IN_TRANSIT yet (rider pickup is what releases the
-    // slot — see ConfirmHandoffService's RIDER_PICKUP branch). EXPIRED/FAILED
-    // intents and orders already IN_TRANSIT or later never hold a slot.
+    // that hasn't reached IN_TRANSIT yet (courier pickup is what releases the
+    // slot — see DeliveryProgressListener). A returned parcel takes a slot
+    // back when it reaches the origin again, until the sender collects it.
+    // EXPIRED/FAILED intents and other orders never hold a slot.
     return this.dataSource.query<NodeCapacityMismatchRow[]>(
       `WITH held AS (
          SELECT "originNodeId" AS "nodeId", COUNT(*) AS held
@@ -71,7 +72,8 @@ export class CapacityAuditQueryService {
            FROM payment_intents pi
            JOIN orders o ON o."paymentIntentId" = pi.id
           WHERE pi.status = 'paid'
-            AND o.status IN ('awaiting_drop_off', 'parcel_received_at_origin', 'rider_assigned')
+            AND o.status IN ('awaiting_drop_off', 'parcel_received_at_origin', 'rider_assigned',
+                             'returned_to_origin', 'ready_for_sender_collection')
           GROUP BY pi."originNodeId"
        ), expected AS (
          SELECT "nodeId", SUM(held)::int AS "expectedCount" FROM held GROUP BY "nodeId"

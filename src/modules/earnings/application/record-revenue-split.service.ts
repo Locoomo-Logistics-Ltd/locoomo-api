@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { RevenueSplitNotConfiguredException } from '../domain/exceptions/revenue-split-not-configured.exception';
 import { RevenueSplitPartyType } from '../domain/party-type.enum';
+import { PayoutStatus } from '../domain/payout-status.enum';
 import { calculateSplit } from '../domain/split-calculator';
 import { RevenueSplitEntryEntity } from '../infrastructure/entities/revenue-split-entry.entity';
 import { RevenueSplitRuleEntity } from '../infrastructure/entities/revenue-split-rule.entity';
@@ -10,7 +11,9 @@ export interface RecordRevenueSplitFields {
   orderId: string;
   amountKobo: number;
   destinationFeeKobo: number;
-  riderId: string;
+  // null when an external courier carried the parcel (no Locoomo rider) —
+  // the rider share then becomes a COURIER_ALLOCATION entry.
+  riderId: string | null;
   originNodeId: string;
   destinationNodeId: string;
 }
@@ -52,13 +55,22 @@ export class RecordRevenueSplitService {
 
     const repo = manager.getRepository(RevenueSplitEntryEntity);
     await repo.save([
-      repo.create({
-        orderId: fields.orderId,
-        partyType: RevenueSplitPartyType.RIDER,
-        partyId: fields.riderId,
-        amountKobo: shares.riderShareKobo,
-        splitRuleId: rule.id,
-      }),
+      fields.riderId
+        ? repo.create({
+            orderId: fields.orderId,
+            partyType: RevenueSplitPartyType.RIDER,
+            partyId: fields.riderId,
+            amountKobo: shares.riderShareKobo,
+            splitRuleId: rule.id,
+          })
+        : repo.create({
+            orderId: fields.orderId,
+            partyType: RevenueSplitPartyType.COURIER_ALLOCATION,
+            partyId: null,
+            amountKobo: shares.riderShareKobo,
+            splitRuleId: rule.id,
+            payoutStatus: PayoutStatus.NOT_PAYABLE,
+          }),
       repo.create({
         orderId: fields.orderId,
         partyType: RevenueSplitPartyType.NODE,

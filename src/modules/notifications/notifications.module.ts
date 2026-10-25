@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Env } from '../../config/env.validation';
+import { EmailOutboxHandler } from './application/email-outbox.handler';
+import { OutboxHandlerRegistry } from './application/outbox-handler.registry';
 import { OutboxPollerService } from './application/outbox-poller.service';
 import { OutboxService } from './application/outbox.service';
 import { OutboxEventEntity } from './infrastructure/entities/outbox-event.entity';
@@ -38,11 +40,15 @@ import { SmtpEmailSender } from './infrastructure/smtp-email-sender';
       inject: [ConfigService, SmtpEmailSender, ResendApiEmailSender],
     },
     OutboxService,
+    OutboxHandlerRegistry,
+    EmailOutboxHandler,
     OutboxPollerService,
   ],
   // Exported so any module (identity today; orders/disputes/admin later) can
   // enqueue a best-effort notification through this service — never by
   // reaching into notifications' domain/infrastructure directly.
-  exports: [OutboxService],
+  // OutboxHandlerRegistry is exported so a module with its own event type
+  // can register the handler that delivers it (see OutboxHandler).
+  exports: [OutboxService, OutboxHandlerRegistry],
 })
 export class NotificationsModule {}

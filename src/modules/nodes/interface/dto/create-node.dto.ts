@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsInt,
   IsLatitude,
@@ -11,6 +12,12 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IsOpeningHours } from '../../../../common/opening-hours/opening-hours';
+import type { OpeningHours } from '../../../../common/opening-hours/opening-hours';
+import {
+  IsPhoneE164,
+  NormalizePhone,
+} from '../../../../common/phone/phone-number';
 import { NodeOnboardingType } from '../../domain/node-onboarding-type.enum';
 
 const ADMIN_CREATABLE_ONBOARDING_TYPES = [
@@ -60,14 +67,31 @@ export class CreateNodeDto {
   @Max(100000)
   capacity!: number;
 
+  // Legacy free-text hours — use openingHours.
   @IsOptional()
   @IsString()
   @MaxLength(255)
   operatingHours?: string;
+
+  // Counter phone couriers call — any common Nigerian format is accepted and
+  // stored as E.164.
+  @NormalizePhone()
+  @IsPhoneE164()
+  contactPhone!: string;
+
+  @IsOpeningHours()
+  openingHours!: OpeningHours;
 
   @IsOptional()
   @IsIn(ADMIN_CREATABLE_ONBOARDING_TYPES, {
     message: `onboardingType must be one of: ${ADMIN_CREATABLE_ONBOARDING_TYPES.join(', ')}`,
   })
   onboardingType?: NodeOnboardingType;
+
+  // Admin-only escape hatch: keep the given pin even if it disagrees with
+  // where the address geocodes to (new estates and informal addresses Google
+  // doesn't know). Recorded as locationCheck "admin_override".
+  @IsOptional()
+  @IsBoolean()
+  forceLocation?: boolean;
 }

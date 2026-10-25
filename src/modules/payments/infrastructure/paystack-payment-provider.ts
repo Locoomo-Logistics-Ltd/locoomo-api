@@ -11,6 +11,11 @@ import {
   PaymentVerificationResult,
   PaymentWebhookEvent,
 } from '../domain/ports/payment-provider.port';
+import {
+  PAYSTACK_READ_POLICY,
+  PAYSTACK_WRITE_POLICY,
+  paystackRequest,
+} from './paystack-http';
 
 interface PaystackInitializeResponse {
   status: boolean;
@@ -38,8 +43,6 @@ interface PaystackRefundResponse {
 
 @Injectable()
 export class PaystackPaymentProvider implements PaymentProvider {
-  private readonly baseUrl = 'https://api.paystack.co';
-
   constructor(private readonly configService: ConfigService<Env, true>) {}
 
   private get secretKey(): string {
@@ -49,44 +52,49 @@ export class PaystackPaymentProvider implements PaymentProvider {
   async initialize(
     params: PaymentInitializeParams,
   ): Promise<PaymentInitializeResult> {
-    const response = await fetch(`${this.baseUrl}/transaction/initialize`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.secretKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email: params.email,
-        amount: params.amountKobo,
-        reference: params.reference,
-        callback_url: params.callbackUrl,
-        currency: 'NGN',
-        metadata: {
-          consumer_id: params.metadata.consumerId,
-          origin_node_id: params.metadata.originNodeId,
-          destination_node_id: params.metadata.destinationNodeId,
-          custom_fields: [
-            {
-              display_name: 'Consumer ID',
-              variable_name: 'consumer_id',
-              value: params.metadata.consumerId,
+    const { response, body } =
+      await paystackRequest<PaystackInitializeResponse>(
+        'initialize',
+        '/transaction/initialize',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email: params.email,
+            amount: params.amountKobo,
+            reference: params.reference,
+            callback_url: params.callbackUrl,
+            currency: 'NGN',
+            metadata: {
+              consumer_id: params.metadata.consumerId,
+              origin_node_id: params.metadata.originNodeId,
+              destination_node_id: params.metadata.destinationNodeId,
+              custom_fields: [
+                {
+                  display_name: 'Consumer ID',
+                  variable_name: 'consumer_id',
+                  value: params.metadata.consumerId,
+                },
+                {
+                  display_name: 'Origin Node',
+                  variable_name: 'origin_node',
+                  value: `${params.metadata.originNodeName} (${params.metadata.originNodeId})`,
+                },
+                {
+                  display_name: 'Destination Node',
+                  variable_name: 'destination_node',
+                  value: `${params.metadata.destinationNodeName} (${params.metadata.destinationNodeId})`,
+                },
+              ],
             },
-            {
-              display_name: 'Origin Node',
-              variable_name: 'origin_node',
-              value: `${params.metadata.originNodeName} (${params.metadata.originNodeId})`,
-            },
-            {
-              display_name: 'Destination Node',
-              variable_name: 'destination_node',
-              value: `${params.metadata.destinationNodeName} (${params.metadata.destinationNodeId})`,
-            },
-          ],
+          }),
         },
-      }),
-    });
+        PAYSTACK_WRITE_POLICY,
+      );
 
-    const body = (await response.json()) as PaystackInitializeResponse;
     if (!response.ok || !body.status) {
       throw new PaymentProviderException(
         'paystack',
@@ -102,12 +110,12 @@ export class PaystackPaymentProvider implements PaymentProvider {
   }
 
   async verify(providerReference: string): Promise<PaymentVerificationResult> {
-    const response = await fetch(
-      `${this.baseUrl}/transaction/verify/${encodeURIComponent(providerReference)}`,
+    const { response, body } = await paystackRequest<PaystackVerifyResponse>(
+      'verify',
+      `/transaction/verify/${encodeURIComponent(providerReference)}`,
       { headers: { Authorization: `Bearer ${this.secretKey}` } },
+      PAYSTACK_READ_POLICY,
     );
-
-    const body = (await response.json()) as PaystackVerifyResponse;
     if (!response.ok || !body.status) {
       throw new PaymentProviderException(
         'paystack',
@@ -134,19 +142,22 @@ export class PaystackPaymentProvider implements PaymentProvider {
     providerReference: string,
     amountKobo?: number,
   ): Promise<PaymentRefundResult> {
-    const response = await fetch(`${this.baseUrl}/refund`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.secretKey}`,
-        'Content-Type': 'application/json',
+    const { response, body } = await paystackRequest<PaystackRefundResponse>(
+      'refund',
+      '/refund',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.secretKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          transaction: providerReference,
+          ...(amountKobo !== undefined ? { amount: amountKobo } : {}),
+        }),
       },
-      body: JSON.stringify({
-        transaction: providerReference,
-        ...(amountKobo !== undefined ? { amount: amountKobo } : {}),
-      }),
-    });
-
-    const body = (await response.json()) as PaystackRefundResponse;
+      PAYSTACK_WRITE_POLICY,
+    );
     if (!response.ok || !body.status) {
       throw new PaymentProviderException(
         'paystack',

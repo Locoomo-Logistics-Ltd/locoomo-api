@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
+import type { OpeningHours } from '../../../common/opening-hours/opening-hours';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { EntityNotFoundException } from '../../../common/exceptions';
+import { NodeLocationCheck } from '../domain/node-location-check';
 import { NodeOnboardingType } from '../domain/node-onboarding-type.enum';
 import { NodeStatus } from '../domain/node-status.enum';
 import { NodeEntity } from '../infrastructure/entities/node.entity';
@@ -11,6 +13,10 @@ import { NearbyNodeResponseDto } from '../interface/dto/nearby-node-response.dto
 import { NearbyNodesQueryDto } from '../interface/dto/nearby-nodes-query.dto';
 import { NodeQueryDto } from '../interface/dto/node-query.dto';
 import { UpdateNodeDto } from '../interface/dto/update-node.dto';
+import {
+  NodeLocationInput,
+  NodeLocationVerifierService,
+} from './node-location-verifier.service';
 
 export interface CreateNodeOptions {
   // Passed by node-operators' future self-registration flow so Node
@@ -21,6 +27,10 @@ export interface CreateNodeOptions {
   // authorship is itself the trust gate. The self-registration flow passes
   // PENDING explicitly; it's never client-settable through CreateNodeDto.
   status?: NodeStatus;
+  // Pass when the pin was already checked (checkLocation) before opening the
+  // caller's transaction — keeps the geocoding HTTP call out of it.
+  // Otherwise create() checks it itself.
+  locationCheck?: NodeLocationCheck;
 }
 
 @Injectable()
@@ -30,7 +40,28 @@ export class NodesService {
     private readonly nodes: Repository<NodeEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly locationVerifier: NodeLocationVerifierService,
   ) {}
+
+  // Checks the map pin against the address — throws
+  // NodeLocationMismatchException (400) when they clearly disagree, else
+  // reports VERIFIED/UNVERIFIED (see NodeLocationVerifierService).
+  // forceLocation is the Admin override and skips the lookup entirely.
+  // Public so node-operators can run it before opening its own transaction.
+  async checkLocation(
+    input: Omit<NodeLocationInput, 'country'> & {
+      country?: string;
+      forceLocation?: boolean;
+    },
+  ): Promise<NodeLocationCheck> {
+    if (input.forceLocation) {
+      return NodeLocationCheck.ADMIN_OVERRIDE;
+    }
+    return this.locationVerifier.verify({
+      ...input,
+      country: input.country ?? 'Nigeria',
+    });
+  }
 
   // A single INSERT (not a plain repo.save followed by a raw UPDATE) — since
   // `location` is NOT NULL and isn't TypeORM-mapped, a two-step write would
@@ -40,6 +71,8 @@ export class NodesService {
     dto: CreateNodeDto,
     options: CreateNodeOptions = {},
   ): Promise<NodeEntity> {
+    const locationCheck =
+      options.locationCheck ?? (await this.checkLocation(dto));
     const runner = options.manager ?? this.dataSource.manager;
 
     // manager.query() on an INSERT ... RETURNING resolves to a flat rows
@@ -49,11 +82,14 @@ export class NodesService {
     const [row] = await runner.query<NodeEntity[]>(
       `INSERT INTO nodes
          (name, address, city, state, country, latitude, longitude, capacity,
-          status, "onboardingType", "operatingHours", location)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-               ST_SetSRID(ST_MakePoint($7, $6), 4326)::geography)
+          status, "onboardingType", "operatingHours", "openingHours",
+          "contactPhone", "locationCheck", "locationCheckedAt", location)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+               now(), ST_SetSRID(ST_MakePoint($7, $6), 4326)::geography)
        RETURNING id, name, address, city, state, country, latitude, longitude,
                  capacity, status, "onboardingType", "operatingHours",
+                 "openingHours", "contactPhone", "locationCheck",
+                 "locationCheckedAt", "isPubliclyVisible",
                  "createdAt", "updatedAt"`,
       [
         dto.name,
@@ -67,6 +103,9 @@ export class NodesService {
         options.status ?? NodeStatus.ACTIVE,
         dto.onboardingType ?? NodeOnboardingType.FIELD_RECRUITED,
         dto.operatingHours ?? null,
+        dto.openingHours,
+        dto.contactPhone,
+        locationCheck,
       ],
     );
 
@@ -90,12 +129,16 @@ export class NodesService {
       longitude: number;
       capacity: number;
       operatingHours?: string;
+      openingHours: OpeningHours;
+      contactPhone: string;
     },
     manager: EntityManager,
+    // From checkLocation(), run by the caller before its transaction began.
+    locationCheck: NodeLocationCheck,
   ): Promise<NodeEntity> {
     return this.create(
       { ...dto, onboardingType: NodeOnboardingType.PORTAL },
-      { manager, status: NodeStatus.PENDING },
+      { manager, status: NodeStatus.PENDING, locationCheck },
     );
   }
 
@@ -119,6 +162,30 @@ export class NodesService {
     }
   }
 
+  // Narrow cross-module write for node-operators' SetNodeContactService —
+  // owner-editable fields only, so the caller never needs UpdateNodeDto
+  // (which also carries Admin-only fields like status and capacity).
+  async setContactDetails(
+    nodeId: string,
+    details: { contactPhone?: string; openingHours?: OpeningHours },
+  ): Promise<void> {
+    const changes: Partial<NodeEntity> = {};
+    if (details.contactPhone !== undefined) {
+      changes.contactPhone = details.contactPhone;
+    }
+    if (details.openingHours !== undefined) {
+      changes.openingHours = details.openingHours;
+    }
+
+    const exists = await this.nodes.existsBy({ id: nodeId });
+    if (!exists) {
+      throw new EntityNotFoundException('Node', nodeId);
+    }
+    if (Object.keys(changes).length > 0) {
+      await this.nodes.update(nodeId, changes);
+    }
+  }
+
   // manager: passed by node-operators' Admin-approval flow so Node.status
   // flips to ACTIVE in the same transaction as User.status — same
   // manager-passing convention as create().
@@ -133,6 +200,7 @@ export class NodesService {
     if (!node) {
       throw new EntityNotFoundException('Node', id);
     }
+    const previous = { ...node };
 
     node.name = dto.name ?? node.name;
     node.address = dto.address ?? node.address;
@@ -143,7 +211,25 @@ export class NodesService {
     node.longitude = dto.longitude ?? node.longitude;
     node.capacity = dto.capacity ?? node.capacity;
     node.operatingHours = dto.operatingHours ?? node.operatingHours;
+    node.openingHours = dto.openingHours ?? node.openingHours;
+    node.contactPhone = dto.contactPhone ?? node.contactPhone;
     node.status = dto.status ?? node.status;
+
+    // Re-check only when something the check depends on actually changed —
+    // a status-only update (Admin approval, which runs inside a transaction)
+    // never makes a geocoding call.
+    const locationChanged = (
+      ['address', 'city', 'state', 'country', 'latitude', 'longitude'] as const
+    ).some(
+      (field) => dto[field] !== undefined && dto[field] !== previous[field],
+    );
+    if (locationChanged || dto.forceLocation) {
+      node.locationCheck = await this.checkLocation({
+        ...node,
+        forceLocation: dto.forceLocation,
+      });
+      node.locationCheckedAt = new Date();
+    }
 
     const saved = await repo.save(node);
 
@@ -212,7 +298,7 @@ export class NodesService {
     >(
       `SELECT id, name, address, city, state, country, latitude, longitude,
               capacity, status, "onboardingType", "operatingHours",
-              "createdAt", "updatedAt",
+              "openingHours", "contactPhone", "createdAt", "updatedAt",
               ST_Distance(location, ${origin}) AS distance
          FROM nodes
         WHERE status = $3
@@ -277,6 +363,20 @@ export class NodesService {
     return true;
   }
 
+  // A returned parcel coming back onto the origin Node's shelf. Unlike
+  // reserveCapacitySlot this never refuses: the parcel is physically back
+  // whether or not the Node is full, so the count may exceed capacity (the
+  // Node simply stops being offered for new drop-offs until it frees up).
+  async holdReturnedParcel(
+    nodeId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE nodes SET "currentCount" = "currentCount" + 1 WHERE id = $1`,
+      [nodeId],
+    );
+  }
+
   // Releases a hold taken by reserveCapacitySlot — payment failure, DRAFT
   // expiry, or (later) order cancellation. A single atomic UPDATE is already
   // race-safe without FOR UPDATE; `manager` is optional so the expiry
@@ -302,6 +402,13 @@ export class NodesService {
     await runner.query(
       `UPDATE nodes SET location = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography WHERE id = $3`,
       [longitude, latitude, id],
+    );
+    // Road distances couriers measured to/from this Node were for the old
+    // pin — drop them so pricing falls back to the estimate until the
+    // routes are measured again (admin "Refresh routes").
+    await runner.query(
+      `DELETE FROM node_route_distances WHERE "originNodeId" = $1 OR "destinationNodeId" = $1`,
+      [id],
     );
   }
 }

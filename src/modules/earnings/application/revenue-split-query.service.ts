@@ -108,6 +108,7 @@ export class RevenueSplitQueryService {
                 WHEN 'rider' THEN u.email
                 WHEN 'node' THEN n.name
                 WHEN 'destination_node' THEN n.name
+                WHEN 'courier_allocation' THEN 'Courier allocation (not payable)'
                 ELSE 'Platform'
               END AS "partyLabel",
               e."amountKobo", e."payoutStatus", e."paidAt", e."paidByAdminId",

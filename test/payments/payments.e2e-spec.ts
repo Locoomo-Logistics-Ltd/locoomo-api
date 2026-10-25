@@ -27,6 +27,7 @@ import {
 import { PaymentIntentEntity } from '../../src/modules/payments/infrastructure/entities/payment-intent.entity';
 import { PricingRuleEntity } from '../../src/modules/payments/infrastructure/entities/pricing-rule.entity';
 import { PaystackPaymentProvider } from '../../src/modules/payments/infrastructure/paystack-payment-provider';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface ErrorBody {
   success: false;
@@ -169,7 +170,14 @@ describe('Payments (e2e)', () => {
     return accessCookie.split(';')[0];
   }
 
-  async function createNode(name: string, capacity: number): Promise<string> {
+  async function createNode(
+    name: string,
+    capacity: number,
+    location: { latitude: number; longitude: number } = {
+      latitude: 6.45,
+      longitude: 3.47,
+    },
+  ): Promise<string> {
     const response = await asAdmin(
       request(app.getHttpServer()).post('/api/v1/nodes'),
     )
@@ -178,9 +186,9 @@ describe('Payments (e2e)', () => {
         address: '1 Test Avenue',
         city: 'Lagos',
         state: 'Lagos',
-        latitude: 6.45,
-        longitude: 3.47,
+        ...location,
         capacity,
+        ...NODE_CONTACT_FIELDS,
       })
       .expect(201);
     return (response.body as SuccessBody).data.id as string;
@@ -302,6 +310,12 @@ describe('Payments (e2e)', () => {
           },
         )
         .execute();
+      await nodes.query(
+        `DELETE FROM node_route_distances
+          WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)
+             OR "destinationNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)`,
+        [nodeNamePattern],
+      );
       await nodes
         .createQueryBuilder()
         .delete()
@@ -527,6 +541,216 @@ describe('Payments (e2e)', () => {
       // (the parcel is genuinely on its way), unlike the expiry case above.
       const node = await nodes.findOneBy({ id: recoverNodeId });
       expect(node?.currentCount).toBe(1);
+    });
+  });
+
+  describe('parcel details, vehicles and quotes', () => {
+    let consumerCookie: string;
+    let farNodeId: string;
+
+    beforeAll(async () => {
+      consumerCookie = await registerAndLoginConsumer(
+        'quotes@payments.e2e.test',
+      );
+      // ~5 km north of the shared origin.
+      farNodeId = await createNode('far', 30, {
+        latitude: 6.495,
+        longitude: 3.47,
+      });
+    });
+
+    function quote(body: Record<string, unknown>, cookie = consumerCookie) {
+      return request(app.getHttpServer())
+        .post('/api/v1/delivery-quotes')
+        .set('Cookie', [cookie])
+        .send({ originNodeId, destinationNodeId: farNodeId, ...body });
+    }
+
+    interface QuoteData {
+      amountKobo: number;
+      vehicleClass: string;
+      distanceKm: number;
+      estimatedDeliveryMinutes: number;
+      feeBreakdown: {
+        totalKobo: number;
+        deliveryFeeKobo: number;
+        distanceSource: string;
+        straightLineKm: number;
+        vehicleClass: string;
+      };
+    }
+
+    it('serves the checkout form its options and the vehicles available', async () => {
+      const data = (
+        (
+          await request(app.getHttpServer())
+            .get('/api/v1/delivery-options')
+            .set('Cookie', [consumerCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data as {
+        parcelSizes: string[];
+        handlingFlags: string[];
+        vehicles: { vehicleClass: string; maxWeightKg: number }[];
+      };
+      expect(data.parcelSizes).toEqual([
+        'small',
+        'medium',
+        'large',
+        'extra_large',
+      ]);
+      expect(data.handlingFlags).toContain('fragile');
+      // Bicycle and van are seeded disabled.
+      expect(data.vehicles.map((v) => v.vehicleClass)).toEqual([
+        'motorbike',
+        'car',
+      ]);
+      expect(data.vehicles[0].maxWeightKg).toBe(20);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/delivery-options')
+        .expect(401);
+    });
+
+    it('prices a small parcel for a motorbike over an estimated road distance', async () => {
+      const data = (
+        (await quote({ parcelSize: 'small' }).expect(200)).body as SuccessBody
+      ).data as unknown as QuoteData;
+
+      expect(data.vehicleClass).toBe('motorbike');
+      expect(data.amountKobo).toBe(data.feeBreakdown.totalKobo);
+      expect(data.feeBreakdown.distanceSource).toBe('estimate');
+      // Road km = straight line × the rule's factor (1.4 for new rules).
+      expect(data.distanceKm).toBeCloseTo(
+        data.feeBreakdown.straightLineKm * 1.4,
+        1,
+      );
+      expect(data.estimatedDeliveryMinutes % 5).toBe(0);
+    });
+
+    it('moves large or heavy parcels up to a car, at a higher price', async () => {
+      const small = (
+        (await quote({ parcelSize: 'small' }).expect(200)).body as SuccessBody
+      ).data as unknown as QuoteData;
+      const large = (
+        (await quote({ parcelSize: 'large' }).expect(200)).body as SuccessBody
+      ).data as unknown as QuoteData;
+      const heavy = (
+        (await quote({ parcelSize: 'small', weightKg: 25 }).expect(200))
+          .body as SuccessBody
+      ).data as unknown as QuoteData;
+
+      expect(large.vehicleClass).toBe('car');
+      expect(heavy.vehicleClass).toBe('car');
+      expect(large.feeBreakdown.deliveryFeeKobo).toBeGreaterThan(
+        small.feeBreakdown.deliveryFeeKobo * 2,
+      );
+    });
+
+    it('refuses a parcel no vehicle can carry with 422 NO_DELIVERY_OPTION', async () => {
+      const response = await quote({
+        parcelSize: 'large',
+        weightKg: 80,
+      }).expect(422);
+      expect((response.body as ErrorBody).error.code).toBe(
+        'NO_DELIVERY_OPTION',
+      );
+    });
+
+    it('validates the parcel details', async () => {
+      await quote({ parcelSize: 'small', lengthCm: 30 }).expect(400); // all three or none
+      await quote({ parcelSize: 'small', handling: ['explosive'] }).expect(400);
+      await quote({ parcelSize: 'small', weightKg: 1.25 }).expect(400); // 1 decimal
+    });
+
+    it('prefers a road distance a courier has measured for the pair', async () => {
+      await nodes.query(
+        `INSERT INTO node_route_distances ("originNodeId", "destinationNodeId", "roadDistanceMeters", source)
+         VALUES ($1, $2, 9200, 'test')`,
+        [originNodeId, farNodeId],
+      );
+      const data = (
+        (await quote({ parcelSize: 'small' }).expect(200)).body as SuccessBody
+      ).data as unknown as QuoteData;
+      expect(data.feeBreakdown.distanceSource).toBe('route');
+      expect(data.distanceKm).toBe(9.2);
+    });
+
+    it('records the parcel details and vehicle on the payment intent', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/payments/intents')
+        .set('Cookie', [consumerCookie])
+        .send({
+          originNodeId,
+          destinationNodeId: farNodeId,
+          receiverFullName: 'Receiver Tester',
+          receiverEmail: 'receiver@payments.e2e.test',
+          receiverPhone: '+2348012345678',
+          parcelDescription: 'A floor lamp',
+          parcelSize: 'medium',
+          weightKg: 6.5,
+          lengthCm: 100,
+          widthCm: 30,
+          heightCm: 30,
+          handling: ['fragile', 'keep_upright'],
+        })
+        .expect(201);
+
+      const data = (response.body as SuccessBody).data as {
+        amountKobo: number;
+        parcel: Record<string, unknown>;
+        feeBreakdown: { vehicleClass: string; totalKobo: number };
+      };
+      expect(data.parcel).toEqual({
+        parcelSize: 'medium',
+        weightKg: 6.5,
+        lengthCm: 100,
+        widthCm: 30,
+        heightCm: 30,
+        handling: ['fragile', 'keep_upright'],
+        vehicleClass: 'car', // 100 cm is too long for a motorbike
+      });
+      expect(data.feeBreakdown.vehicleClass).toBe('car');
+      expect(data.amountKobo).toBe(data.feeBreakdown.totalKobo);
+    });
+
+    it('lets an Admin set per-vehicle rates and the road-distance factor', async () => {
+      const created = await asAdmin(
+        request(app.getHttpServer()).post('/api/v1/admin/pricing'),
+      )
+        .send({
+          baseFeeNaira: 1100,
+          perKmRateNaira: 320,
+          destinationFeeNaira: 300,
+          roadDistanceFactor: 1.5,
+          vehicleRates: { car: { baseFeeNaira: 2500, perKmRateNaira: 780 } },
+        })
+        .expect(201);
+      expect((created.body as SuccessBody).data).toMatchObject({
+        roadDistanceFactor: 1.5,
+        vehicleRates: { car: { baseFeeKobo: 250000, perKmRateKobo: 78000 } },
+      });
+
+      const car = (
+        (await quote({ parcelSize: 'large' }).expect(200)).body as SuccessBody
+      ).data as unknown as QuoteData & {
+        feeBreakdown: { baseFeeKobo: number; perKmRateKobo: number };
+      };
+      expect(car.feeBreakdown).toMatchObject({
+        baseFeeKobo: 250000,
+        perKmRateKobo: 78000,
+        // 9.2 road-km measured for this pair: ₦2,500 + 9.2 × ₦780.
+        deliveryFeeKobo: 250000 + Math.round(78000 * 9.2),
+      });
+
+      await asAdmin(request(app.getHttpServer()).post('/api/v1/admin/pricing'))
+        .send({
+          baseFeeNaira: 1100,
+          perKmRateNaira: 320,
+          destinationFeeNaira: 300,
+          vehicleRates: { boat: { baseFeeNaira: 1, perKmRateNaira: 1 } },
+        })
+        .expect(400);
     });
   });
 });

@@ -11,7 +11,7 @@ jobs:
 
     services:
       postgres:
-        image: postgis/postgis:16-3.4-alpine
+        image: postgis/postgis:18-3.6-alpine
         env:
           POSTGRES_USER: locoomo
           POSTGRES_PASSWORD: locoomo
@@ -30,6 +30,7 @@ jobs:
       # Throwaway — this environment never talks to anything real, never reused
       # anywhere else. A real deploy generates its own.
       JWT_ACCESS_SECRET: e0609cac03248e49f765fa258b1336915cad335f3e2cb616a28f1b077d706886
+      TRACKING_LINK_SECRET: 3f1c2a7e9b8d4c6f0a5e1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6a
       CORS_ORIGIN: http://localhost:5173
       FRONTEND_URL: http://localhost:5173
       # Never actually connected to — tests do enqueue real outbox rows

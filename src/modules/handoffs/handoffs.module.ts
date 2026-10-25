@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { LogisticsModule } from '../logistics/logistics.module';
+import { TrackingModule } from '../tracking/tracking.module';
 import { IdempotencyModule } from '../../common/idempotency/idempotency.module';
 import { EarningsModule } from '../earnings/earnings.module';
 import { NodeOperatorsModule } from '../node-operators/node-operators.module';
@@ -15,6 +17,12 @@ import { ConfirmHandoffService } from './application/confirm-handoff.service';
 import { ConfirmIntakeService } from './application/confirm-intake.service';
 import { HandoffCodeIssuerService } from './application/handoff-code-issuer.service';
 import { HandoffCodeValidatorService } from './application/handoff-code-validator.service';
+import { CourierHandoverQueryService } from './application/courier-handover-query.service';
+import { DeliveryProgressListener } from './application/delivery-progress.listener';
+import { ReturnCollectionService } from './application/return-collection.service';
+import { ReturnIntakeService } from './application/return-intake.service';
+import { ReturnNotificationService } from './application/return-notification.service';
+import { ReceiverNotificationService } from './application/receiver-notification.service';
 import { ListMyNodeOrdersService } from './application/list-my-node-orders.service';
 import { ListMyOrdersService } from './application/list-my-orders.service';
 import { OrderLookupService } from './application/order-lookup.service';
@@ -35,6 +43,9 @@ import { HandoffsController } from './interface/handoffs.controller';
     // IdempotencyModule: every scan/confirm endpoint (decision #5).
     // NotificationsModule: OutboxService.enqueueEmail (collection code).
     // EarningsModule: RecordRevenueSplitService, on order completion.
+    // TrackingModule: tracking code/QR/link block in receiver emails.
+    // LogisticsModule: delivery legs — dispatch at drop-off, in-house
+    // claims/handovers, and the delivery events that move the order.
     OrdersModule,
     RidersModule,
     NodeOperatorsModule,
@@ -42,6 +53,8 @@ import { HandoffsController } from './interface/handoffs.controller';
     IdempotencyModule,
     NotificationsModule,
     EarningsModule,
+    TrackingModule,
+    LogisticsModule,
   ],
   controllers: [HandoffsController],
   providers: [
@@ -58,6 +71,12 @@ import { HandoffsController } from './interface/handoffs.controller';
     ConfirmCollectionService,
     ListMyOrdersService,
     ListMyNodeOrdersService,
+    ReceiverNotificationService,
+    ReturnNotificationService,
+    ReturnIntakeService,
+    ReturnCollectionService,
+    DeliveryProgressListener,
+    CourierHandoverQueryService,
   ],
 })
 export class HandoffsModule {}

@@ -2,12 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
-import { OutboxService } from '../../notifications/application/outbox.service';
 import { OrdersService } from '../../orders/application/orders.service';
 import { HandoffCodeType } from '../domain/handoff-code-type.enum';
 import { OrderTransitionResult } from '../domain/order-transition-result';
 import { HandoffCodeIssuerService } from './handoff-code-issuer.service';
 import { OrderLookupService } from './order-lookup.service';
+import { ReceiverNotificationService } from './receiver-notification.service';
 
 const IDEMPOTENCY_SCOPE = 'handoffs.confirm-intake';
 
@@ -33,7 +33,7 @@ export class ConfirmIntakeService {
     private readonly ordersService: OrdersService,
     private readonly idempotencyService: IdempotencyService,
     private readonly handoffCodeIssuerService: HandoffCodeIssuerService,
-    private readonly outboxService: OutboxService,
+    private readonly receiverNotificationService: ReceiverNotificationService,
   ) {}
 
   async confirm(
@@ -63,21 +63,10 @@ export class ConfirmIntakeService {
               null,
               COLLECTION_CODE_TTL_MINUTES,
             );
-            await this.outboxService.enqueueEmail(
-              {
-                to: order.receiverEmail,
-                subject: 'Your Locoomo parcel is ready for collection',
-                text:
-                  `Your parcel (${order.parcelDescription}) has arrived and is ready for collection.\n\n` +
-                  `Your collection code is: ${issued.code}\n` +
-                  `Give this code to the Node operator, along with your name, to collect your parcel. ` +
-                  `The code expires in ${COLLECTION_CODE_TTL_MINUTES} minutes.`,
-                html:
-                  `<p>Your parcel (${order.parcelDescription}) has arrived and is ready for collection.</p>` +
-                  `<p>Your collection code is: <strong>${issued.code}</strong></p>` +
-                  `<p>Give this code to the Node operator, along with your name, to collect your parcel. ` +
-                  `The code expires in ${COLLECTION_CODE_TTL_MINUTES} minutes.</p>`,
-              },
+            await this.receiverNotificationService.enqueueReadyForCollection(
+              order,
+              issued.code,
+              COLLECTION_CODE_TTL_MINUTES,
               manager,
             );
             return order;
@@ -87,7 +76,8 @@ export class ConfirmIntakeService {
 
     if (alreadyProcessed) {
       const [row] = await this.dataSource.query<OrderTransitionResult[]>(
-        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId"
+        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId",
+                "shelfNumber"
            FROM orders WHERE id = $1`,
         [orderId],
       );

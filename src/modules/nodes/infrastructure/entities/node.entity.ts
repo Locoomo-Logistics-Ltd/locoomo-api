@@ -6,6 +6,8 @@ import {
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { OpeningHours } from '../../../../common/opening-hours/opening-hours';
+import { NodeLocationCheck } from '../../domain/node-location-check';
 import { NodeOnboardingType } from '../../domain/node-onboarding-type.enum';
 import { NodeStatus } from '../../domain/node-status.enum';
 
@@ -64,8 +66,30 @@ export class NodeEntity {
   @Column({ type: 'enum', enum: NodeOnboardingType })
   onboardingType!: NodeOnboardingType;
 
+  // Legacy free-text hours — superseded by openingHours, kept readable until
+  // every client has switched over.
   @Column({ type: 'varchar', nullable: true })
   operatingHours!: string | null;
+
+  // Structured weekly hours (common/opening-hours) — machine-checkable, so
+  // dispatch can tell whether a Node will be open when a courier arrives.
+  // Required for new Nodes; NULL only on Nodes created before it existed.
+  @Column({ type: 'jsonb', nullable: true })
+  openingHours!: OpeningHours | null;
+
+  // Counter phone couriers call on arrival, E.164. Required for new Nodes;
+  // backfilled from the owner's phone for existing ones.
+  @Column({ type: 'varchar', nullable: true })
+  contactPhone!: string | null;
+
+  // Result of checking the map pin against the address (see
+  // NodeLocationVerifierService). Plain varchar, not a Postgres enum, so a
+  // new outcome doesn't need an ALTER TYPE. NULL = never checked.
+  @Column({ type: 'varchar', nullable: true })
+  locationCheck!: NodeLocationCheck | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  locationCheckedAt!: Date | null;
 
   // Owner-toggled (NodeOperatorsModule's SetNodeVisibilityService) — false
   // excludes the Node from GET /nodes and GET /nodes/nearby for non-Admin
