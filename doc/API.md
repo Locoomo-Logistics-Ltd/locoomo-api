@@ -1184,6 +1184,11 @@ Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin), `404 NOT_FOUND`
 
 **Requires an authenticated Admin session.** Adds a new pricing rule, effective
 immediately Rules are append-only: this never edits an existing rule, it adds a new one that becomes "current."
+
+An environment with no pricing rule gets a **default one on deploy** (migration
+`SeedDefaultPricingRule`): motorbike ₦1,100 + ₦320 per road-km, car ₦2,500 + ₦780 per
+road-km, destination fee ₦300, road factor 1.4 — the placeholder rates below. It's skipped
+if any rule already exists; post a new rule here to change prices.
 Historical orders keep referencing whichever rule was current when their fee was
 calculated, so past orders stay explainable even after rates change.
 
