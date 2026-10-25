@@ -33,8 +33,16 @@ endpoints — is separate per environment.
    This registers `https://api.example.com/api/v1/logistics/webhooks/sendii` and prints
    `SENDII_WEBHOOK_SECRET=whsec_…` **once** — set it in the environment and restart.
    `npm run sendii:webhook -- list | test <id> | delete <id>` manage it afterwards.
-   Local development: expose the API with a tunnel (`cloudflared tunnel --url
-   http://localhost:3000` or ngrok) and register the tunnel URL with a sandbox key.
+   **Local development** (sandbox key only): with the API running, `npm run sendii:tunnel`
+   opens a free Cloudflare quick tunnel (`https://*.trycloudflare.com`, needs
+   [`cloudflared`](https://github.com/cloudflare/cloudflared/releases), no account),
+   registers it with Sendii, writes `SENDII_WEBHOOK_SECRET` to `.env`, and removes the
+   endpoint again on Ctrl-C. Restart the API after it starts, then
+   `npm run sendii:webhook -- test <id>` should show `ping delivered HTTP 200` in Sendii's
+   event log. The URL changes every run (the script re-registers each time). Don't leave it
+   running unattended — it makes your local API public.
+   Verified 2026-10-25: Sendii's signature is HMAC-SHA512 keyed with the **full** `whsec_…`
+   secret; a real `delivery.assigned` webhook was accepted, stored and processed.
    Without a webhook secret, progress still arrives — just later, through polling every
    few minutes.
 3. **Wallet** — live: fund it by bank transfer to the dedicated account shown in Sendii's

@@ -31,7 +31,8 @@
     "migration:run:prod": "node dist/database/run-migrations.js",
     "seed:admin": "ts-node -r tsconfig-paths/register src/database/seed-admin.ts",
     "seed:admin:prod": "node dist/database/seed-admin.js",
-    "sendii:webhook": "ts-node -r tsconfig-paths/register src/scripts/sendii-webhook.ts"
+    "sendii:webhook": "ts-node -r tsconfig-paths/register src/scripts/sendii-webhook.ts",
+    "sendii:tunnel": "bash scripts/sendii-dev-tunnel.sh"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
