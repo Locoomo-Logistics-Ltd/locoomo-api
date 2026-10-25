@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgis/postgis:16-3.4-alpine
+    image: postgis/postgis:18-3.6-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: locoomo
@@ -12,7 +12,7 @@ services:
       # setup differs, just keep .env's DATABASE_URL in sync.
       - '5434:5432'
     volumes:
-      - locoomo_postgres_data:/var/lib/postgresql/data
+      - locoomo_postgres_data:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U locoomo -d locoomo']
       interval: 5s

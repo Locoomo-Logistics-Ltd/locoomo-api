@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EntityNotFoundException } from '../../../common/exceptions';
 import { UserLookupService } from '../../identity/application/user-lookup.service';
+import { RevenueSplitNotPayableException } from '../domain/exceptions/revenue-split-not-payable.exception';
 import { PayoutStatus } from '../domain/payout-status.enum';
 import { RevenueSplitEntryEntity } from '../infrastructure/entities/revenue-split-entry.entity';
 import { MarkRevenueSplitPaidResult } from '../interface/dto/mark-revenue-split-paid-response.dto';
@@ -26,6 +27,10 @@ export class MarkRevenueSplitPaidService {
     const entry = await this.entries.findOneBy({ id: entryId });
     if (!entry) {
       throw new EntityNotFoundException('RevenueSplitEntry', entryId);
+    }
+
+    if (entry.payoutStatus === PayoutStatus.NOT_PAYABLE) {
+      throw new RevenueSplitNotPayableException(entryId);
     }
 
     if (entry.payoutStatus === PayoutStatus.PAID) {

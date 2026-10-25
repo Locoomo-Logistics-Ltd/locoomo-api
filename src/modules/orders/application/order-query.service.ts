@@ -42,21 +42,28 @@ export class OrderQueryService {
 
   async findMine(
     consumerId: string,
-    query: PaginationQueryDto,
+    query: PaginationQueryDto & { status?: string[] },
   ): Promise<PaginatedResultDto<OrderWithNodeNames>> {
     const offset = (query.page - 1) * query.limit;
+    const statusFilter = query.status?.length ? `AND o.status = ANY($4)` : '';
+    const countFilter = query.status?.length ? `AND status = ANY($2)` : '';
 
     const items = await this.dataSource.query<OrderWithNodeNames[]>(
       `${SELECT_WITH_NODE_NAMES}
-        WHERE o."consumerId" = $1
+        WHERE o."consumerId" = $1 ${statusFilter}
         ORDER BY o."createdAt" DESC
         LIMIT $2 OFFSET $3`,
-      [consumerId, query.limit, offset],
+      [
+        consumerId,
+        query.limit,
+        offset,
+        ...(query.status?.length ? [query.status] : []),
+      ],
     );
 
     const [{ total }] = await this.dataSource.query<{ total: number }[]>(
-      `SELECT COUNT(*)::int AS total FROM orders WHERE "consumerId" = $1`,
-      [consumerId],
+      `SELECT COUNT(*)::int AS total FROM orders WHERE "consumerId" = $1 ${countFilter}`,
+      [consumerId, ...(query.status?.length ? [query.status] : [])],
     );
 
     return new PaginatedResultDto(items, query.page, query.limit, total);

@@ -10,6 +10,7 @@ export class OrderTransitionResponseDto {
   status!: string;
   originNodeId!: string;
   destinationNodeId!: string;
+  shelfNumber!: number | null;
 
   static fromResult(order: OrderTransitionResult): OrderTransitionResponseDto {
     const dto = new OrderTransitionResponseDto();
@@ -18,6 +19,7 @@ export class OrderTransitionResponseDto {
     dto.status = order.status;
     dto.originNodeId = order.originNodeId;
     dto.destinationNodeId = order.destinationNodeId;
+    dto.shelfNumber = order.shelfNumber ?? null;
     return dto;
   }
 }

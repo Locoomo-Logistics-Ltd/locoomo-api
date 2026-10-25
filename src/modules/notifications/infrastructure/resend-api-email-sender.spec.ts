@@ -47,6 +47,38 @@ describe('ResendApiEmailSender', () => {
     });
   });
 
+  it("sends inline attachments with Resend's snake_case fields", async () => {
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+
+    await new ResendApiEmailSender(configService).sendEmail({
+      to: 'ada@example.com',
+      subject: 'Your parcel',
+      html: '<img src="cid:qr">',
+      attachments: [
+        {
+          filename: 'qr.png',
+          contentBase64: 'cG5n',
+          contentType: 'image/png',
+          contentId: 'qr',
+        },
+      ],
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string) as {
+      attachments: unknown[];
+    };
+    expect(body.attachments).toEqual([
+      {
+        filename: 'qr.png',
+        content: 'cG5n',
+        content_type: 'image/png',
+        content_id: 'qr',
+      },
+    ]);
+  });
+
   it('throws when Resend responds with a non-2xx status instead of swallowing it', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue(
       new Response('{"message":"invalid API key"}', {

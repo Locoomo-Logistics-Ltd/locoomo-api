@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+// An optional secret/key: unset, or an empty value in .env, both mean
+// "not configured".
+const optionalString = () =>
+  z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().min(1).optional(),
+  );
+
 // Grows as each module is added — don't pre-declare vars nothing reads yet.
 export const envSchema = z
   .object({
@@ -47,6 +55,24 @@ export const envSchema = z
     // secret is needed since we only ever verify a client-obtained ID token
     // server-side, never do a server-side code exchange.
     GOOGLE_CLIENT_ID: z.string().min(1),
+    // Signs the public tracking links put in emails (tracking module) —
+    // knowing a tracking code alone isn't enough to view a parcel. Rotating
+    // it invalidates every link already sent. Generate like JWT_ACCESS_SECRET.
+    TRACKING_LINK_SECRET: z.string().min(32),
+    // Sendii courier (logistics/infrastructure/sendii). Key prefix picks the
+    // environment: sk_test_… sandbox, sk_live_… live. Optional — without it
+    // the Sendii adapter isn't registered and orders route to other couriers.
+    SENDII_API_KEY: optionalString(),
+    // whsec_… signing secret of the webhook endpoint registered with Sendii
+    // (shown once at registration — see `npm run sendii:webhook`).
+    SENDII_WEBHOOK_SECRET: optionalString(),
+    SENDII_BASE_URL: z.url().default('https://api.sendii.ng/partner/v1'),
+    // Google Maps Platform key with the Geocoding API enabled (and billing on
+    // the project — Google rejects keys without it). Used to check a Node's
+    // map pin against its address (nodes/infrastructure/google-geocoder.ts).
+    // Optional: without it every check is recorded as "unverified" instead
+    // of blocking Node creation. An empty value counts as unset.
+    GOOGLE_MAPS_API_KEY: optionalString(),
   })
   .refine(
     (config) =>

@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Env } from '../../../config/env.validation';
-import { EntityNotFoundException } from '../../../common/exceptions';
 import { UserLookupService } from '../../identity/application/user-lookup.service';
 import { NodesService } from '../../nodes/application/nodes.service';
 import { NodeCapacityUnavailableException } from '../domain/exceptions/node-capacity-unavailable.exception';
@@ -13,14 +12,14 @@ import { PaymentProviderName } from '../domain/payment-provider-name.enum';
 import { PaymentIntentEntity } from '../infrastructure/entities/payment-intent.entity';
 import { PaymentProviderRegistry } from '../infrastructure/payment-provider.registry';
 import { CreatePaymentIntentDto } from '../interface/dto/create-payment-intent.dto';
-import { PricingService } from './pricing.service';
+import { DeliveryQuoteService } from './delivery-quote.service';
 
 @Injectable()
 export class CreatePaymentIntentService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly nodesService: NodesService,
-    private readonly pricingService: PricingService,
+    private readonly deliveryQuoteService: DeliveryQuoteService,
     private readonly paymentProviderRegistry: PaymentProviderRegistry,
     private readonly userLookupService: UserLookupService,
     private readonly configService: ConfigService<Env, true>,
@@ -39,32 +38,8 @@ export class CreatePaymentIntentService {
     // Active-only lookups (isAdmin: false) — a consumer can only book
     // against Nodes that are actually open for business, same guard
     // findNearby already applies.
-    const originNode = await this.nodesService.findOne(dto.originNodeId, false);
-    const destinationNode = await this.nodesService.findOne(
-      dto.destinationNodeId,
-      false,
-    );
-
-    // Consumer-initiated bookings (the default) can never target a private
-    // Node, either as origin or destination — hidden as not-found, same as
-    // any other Node a caller shouldn't be able to probe the existence of
-    // (decision: search filtering alone is UX, not enforcement). Operator
-    // dispatch (node-operators' DispatchParcelService) explicitly opts out —
-    // a private Node dispatching its own parcels, or receiving as a
-    // destination, is exactly the point of being private.
-    if (options.restrictToPublicNodes ?? true) {
-      if (!originNode.isPubliclyVisible) {
-        throw new EntityNotFoundException('Node', dto.originNodeId);
-      }
-      if (!destinationNode.isPubliclyVisible) {
-        throw new EntityNotFoundException('Node', dto.destinationNodeId);
-      }
-    }
-
-    const feeBreakdown = await this.pricingService.calculateFee(
-      originNode,
-      destinationNode,
-    );
+    const { originNode, destinationNode, feeBreakdown } =
+      await this.deliveryQuoteService.quote(dto, dto, options);
 
     const intent = await this.dataSource.transaction(async (manager) => {
       // Capacity is enforced here, atomically, at booking time (decision:
@@ -91,6 +66,12 @@ export class CreatePaymentIntentService {
           receiverPhone: dto.receiverPhone,
           parcelDescription: dto.parcelDescription,
           parcelSize: dto.parcelSize,
+          weightKg: dto.weightKg ?? null,
+          lengthCm: dto.lengthCm ?? null,
+          widthCm: dto.widthCm ?? null,
+          heightCm: dto.heightCm ?? null,
+          handling: dto.handling ?? [],
+          vehicleClass: feeBreakdown.vehicleClass,
           feeBreakdown,
           amountKobo: feeBreakdown.totalKobo,
           status: PaymentIntentStatus.PENDING,

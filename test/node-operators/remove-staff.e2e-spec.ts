@@ -29,6 +29,7 @@ import {
 import { PaymentIntentEntity } from '../../src/modules/payments/infrastructure/entities/payment-intent.entity';
 import { PricingRuleEntity } from '../../src/modules/payments/infrastructure/entities/pricing-rule.entity';
 import { PaystackPaymentProvider } from '../../src/modules/payments/infrastructure/paystack-payment-provider';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface ErrorBody {
   success: false;
@@ -160,6 +161,7 @@ describe('Node staff removal (e2e)', () => {
         latitude: 6.45,
         longitude: 3.47,
         capacity: 30,
+        ...NODE_CONTACT_FIELDS,
       })
       .expect(201);
 

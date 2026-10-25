@@ -9,6 +9,7 @@ import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
 import { UserRole } from '../../src/common/auth/user-role.enum';
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface ErrorBody {
   success: false;
@@ -41,6 +42,7 @@ describe('Nodes (e2e)', () => {
       latitude: 6.45,
       longitude: 3.47,
       capacity: 50,
+      ...NODE_CONTACT_FIELDS,
       ...overrides,
     };
   }
@@ -82,6 +84,12 @@ describe('Nodes (e2e)', () => {
   });
 
   afterAll(async () => {
+    await nodes.query(
+      `DELETE FROM node_route_distances
+        WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)
+           OR "destinationNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)`,
+      [`${namePrefix}%`],
+    );
     await nodes
       .createQueryBuilder()
       .delete()
@@ -118,6 +126,56 @@ describe('Nodes (e2e)', () => {
         .expect(400);
 
       expect((response.body as ErrorBody).error.code).toBe('VALIDATION_FAILED');
+    });
+
+    it('rejects a create without contactPhone or openingHours', async () => {
+      const withoutPhone: Record<string, unknown> = baseNodePayload('no-phone');
+      delete withoutPhone.contactPhone;
+      const withoutHours: Record<string, unknown> = baseNodePayload('no-hours');
+      delete withoutHours.openingHours;
+
+      for (const payload of [withoutPhone, withoutHours]) {
+        const response = await asAdmin(
+          request(app.getHttpServer()).post('/api/v1/nodes'),
+        )
+          .send(payload)
+          .expect(400);
+        expect((response.body as ErrorBody).error.code).toBe(
+          'VALIDATION_FAILED',
+        );
+      }
+    });
+
+    it('rejects an invalid contactPhone', async () => {
+      await asAdmin(request(app.getHttpServer()).post('/api/v1/nodes'))
+        .send(baseNodePayload('bad-phone', { contactPhone: '12345' }))
+        .expect(400);
+    });
+
+    it('rejects malformed openingHours with a readable reason', async () => {
+      const response = await asAdmin(
+        request(app.getHttpServer()).post('/api/v1/nodes'),
+      )
+        .send(
+          baseNodePayload('bad-hours', {
+            openingHours: { mon: [{ open: '18:00', close: '08:00' }] },
+          }),
+        )
+        .expect(400);
+
+      expect(JSON.stringify(response.body)).toContain('closes before it opens');
+    });
+
+    it('stores a local-format contactPhone as E.164 and returns openingHours', async () => {
+      const response = await asAdmin(
+        request(app.getHttpServer()).post('/api/v1/nodes'),
+      )
+        .send(baseNodePayload('contact', { contactPhone: '0803 123 4567' }))
+        .expect(201);
+
+      const data = (response.body as SuccessBody).data;
+      expect(data.contactPhone).toBe('+2348031234567');
+      expect(data.openingHours).toEqual(NODE_CONTACT_FIELDS.openingHours);
     });
 
     it('rejects an out-of-range latitude', async () => {
@@ -239,6 +297,34 @@ describe('Nodes (e2e)', () => {
       const data = (response.body as SuccessBody).data;
       expect(data.capacity).toBe(200);
       expect(data.status).toBe('suspended');
+    });
+
+    it('forgets courier-measured road distances when the pin moves', async () => {
+      const a = await createActiveNode('route-a');
+      const b = await createActiveNode('route-b', { latitude: 6.5 });
+      await nodes.query(
+        `INSERT INTO node_route_distances ("originNodeId", "destinationNodeId", "roadDistanceMeters", source)
+         VALUES ($1, $2, 9000, 'test'), ($2, $1, 9100, 'test')`,
+        [a, b],
+      );
+
+      await asAdmin(request(app.getHttpServer()).patch(`/api/v1/nodes/${a}`))
+        .send({ capacity: 60 })
+        .expect(200);
+      const [{ kept }] = await nodes.query<{ kept: number }[]>(
+        `SELECT COUNT(*)::int AS kept FROM node_route_distances WHERE "originNodeId" = $1 OR "destinationNodeId" = $1`,
+        [a],
+      );
+      expect(kept).toBe(2); // not a location change
+
+      await asAdmin(request(app.getHttpServer()).patch(`/api/v1/nodes/${a}`))
+        .send({ latitude: 6.46 })
+        .expect(200);
+      const [{ left }] = await nodes.query<{ left: number }[]>(
+        `SELECT COUNT(*)::int AS left FROM node_route_distances WHERE "originNodeId" = $1 OR "destinationNodeId" = $1`,
+        [a],
+      );
+      expect(left).toBe(0);
     });
 
     it('re-syncs the spatial location when latitude/longitude change', async () => {

@@ -10,6 +10,12 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IsOpeningHours } from '../../../../common/opening-hours/opening-hours';
+import type { OpeningHours } from '../../../../common/opening-hours/opening-hours';
+import {
+  IsPhoneE164,
+  NormalizePhone,
+} from '../../../../common/phone/phone-number';
 
 // Same shape as nodes' CreateNodeDto minus `onboardingType` — that's forced
 // server-side to `portal` (OnboardNodeService), never client-settable here.
@@ -53,8 +59,18 @@ export class OnboardNodeDto {
   @Max(100000)
   capacity!: number;
 
+  // Legacy free-text hours — use openingHours.
   @IsOptional()
   @IsString()
   @MaxLength(255)
   operatingHours?: string;
+
+  // Counter phone couriers call — any common Nigerian format is accepted and
+  // stored as E.164.
+  @NormalizePhone()
+  @IsPhoneE164()
+  contactPhone!: string;
+
+  @IsOpeningHours()
+  openingHours!: OpeningHours;
 }

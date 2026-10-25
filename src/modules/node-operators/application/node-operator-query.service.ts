@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { OpeningHours } from '../../../common/opening-hours/opening-hours';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
@@ -36,6 +37,8 @@ export interface NodeOperatorProfileRow {
   status: string;
   onboardingType: string;
   operatingHours: string | null;
+  openingHours: OpeningHours | null;
+  contactPhone: string | null;
   isPubliclyVisible: boolean;
   createdAt: Date;
 }
@@ -54,7 +57,7 @@ const NODE_MEMBERSHIP_COLUMNS = `
   m."payoutAccountName", m."payoutAccountVerifiedAt",
   n.id, n.name, n.address, n.city, n.state, n.country, n.latitude, n.longitude,
   n.capacity, n.status, n."onboardingType", n."operatingHours",
-  n."isPubliclyVisible", n."createdAt"`;
+  n."openingHours", n."contactPhone", n."isPubliclyVisible", n."createdAt"`;
 
 // `node-operators` has no TypeORM relation to UserEntity/NodeEntity (see the
 // entity comment — a cross-module `@ManyToOne` would need to import their

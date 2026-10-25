@@ -18,6 +18,7 @@ import { OutboxPollerService } from '../../src/modules/notifications/application
 import { EmailMessage } from '../../src/modules/notifications/domain/email-message';
 import { NotificationSender } from '../../src/modules/notifications/domain/notification-sender.port';
 import { NOTIFICATION_SENDER } from '../../src/modules/notifications/infrastructure/notification-sender.token';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface ErrorBody {
   success: false;
@@ -117,6 +118,7 @@ describe('Node staff invite (e2e)', () => {
         latitude: 6.45,
         longitude: 3.47,
         capacity: 30,
+        ...NODE_CONTACT_FIELDS,
       })
       .expect(201);
 
@@ -265,6 +267,7 @@ describe('Node staff invite (e2e)', () => {
           latitude: 6.46,
           longitude: 3.48,
           capacity: 20,
+          ...NODE_CONTACT_FIELDS,
         })
         .expect(201);
       const pendingNodeId = (

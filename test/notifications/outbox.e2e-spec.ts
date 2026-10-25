@@ -1,8 +1,11 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
+import { DataSource, Repository } from 'typeorm';
 import { AppModule } from '../../src/app.module';
+import { Env } from '../../src/config/env.validation';
+import { OutboxHandlerRegistry } from '../../src/modules/notifications/application/outbox-handler.registry';
 import { OutboxPollerService } from '../../src/modules/notifications/application/outbox-poller.service';
 import { OutboxService } from '../../src/modules/notifications/application/outbox.service';
 import { EmailMessage } from '../../src/modules/notifications/domain/email-message';
@@ -30,6 +33,9 @@ describe('Outbox / notification poller (e2e)', () => {
   let poller: OutboxPollerService;
   let outboxEvents: Repository<OutboxEventEntity>;
   let fakeSender: FakeNotificationSender;
+  let registry: OutboxHandlerRegistry;
+  let dataSource: DataSource;
+  let configService: ConfigService<Env, true>;
   const createdIds: string[] = [];
 
   beforeAll(async () => {
@@ -48,6 +54,9 @@ describe('Outbox / notification poller (e2e)', () => {
     outboxService = moduleFixture.get(OutboxService);
     poller = moduleFixture.get(OutboxPollerService);
     outboxEvents = moduleFixture.get(getRepositoryToken(OutboxEventEntity));
+    registry = moduleFixture.get(OutboxHandlerRegistry);
+    dataSource = moduleFixture.get(DataSource);
+    configService = moduleFixture.get(ConfigService);
 
     // Other e2e suites (register, password reset, ...) enqueue real rows
     // against this same table and never drain them — the automatic
@@ -152,5 +161,86 @@ describe('Outbox / notification poller (e2e)', () => {
       (message) => message.to === 'concurrent@outbox.e2e.test',
     ).length;
     expect(sentCount).toBe(1);
+  });
+
+  it('delivers a non-email event type through its registered handler', async () => {
+    const handled: Record<string, unknown>[] = [];
+    registry.register('test.custom', {
+      handle: (payload) => {
+        handled.push(payload);
+        return Promise.resolve();
+      },
+    });
+
+    const created = await outboxService.enqueue('test.custom', {
+      orderId: 'abc',
+    });
+    createdIds.push(created.id);
+
+    await poller.poll();
+
+    expect(handled).toEqual([{ orderId: 'abc' }]);
+    const stored = await outboxEvents.findOneByOrFail({ id: created.id });
+    expect(stored.status).toBe(OutboxEventStatus.SENT);
+  });
+
+  it('rejects registering two handlers for the same event type', () => {
+    const handler = { handle: () => Promise.resolve() };
+    registry.register('test.duplicate', handler);
+    expect(() => registry.register('test.duplicate', handler)).toThrow(
+      /already registered/,
+    );
+  });
+
+  it('counts an event type with no handler as a failed attempt', async () => {
+    const created = await outboxService.enqueue('test.nobody-handles-this', {});
+    createdIds.push(created.id);
+
+    await poller.poll();
+
+    const stored = await outboxEvents.findOneByOrFail({ id: created.id });
+    expect(stored.status).toBe(OutboxEventStatus.PENDING);
+    expect(stored.attempts).toBe(1);
+    expect(stored.lastError).toContain('Unknown outbox event type');
+  });
+
+  it('does not hand the same row to a second instance while a handler is still running', async () => {
+    // A separate poller instance stands in for a second app process — it
+    // has its own in-memory isPolling flag, so only the database claim
+    // (SKIP LOCKED + lease) can stop it picking up the in-flight row.
+    const secondInstance = new OutboxPollerService(
+      outboxEvents,
+      dataSource,
+      registry,
+      configService,
+    );
+
+    let calls = 0;
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => (markStarted = resolve));
+    registry.register('test.slow', {
+      handle: async () => {
+        calls += 1;
+        markStarted();
+        await released;
+      },
+    });
+
+    const created = await outboxService.enqueue('test.slow', {});
+    createdIds.push(created.id);
+
+    const firstPoll = poller.poll();
+    await started;
+    await secondInstance.poll();
+    expect(calls).toBe(1);
+
+    release();
+    await firstPoll;
+
+    const stored = await outboxEvents.findOneByOrFail({ id: created.id });
+    expect(stored.status).toBe(OutboxEventStatus.SENT);
+    expect(calls).toBe(1);
   });
 });

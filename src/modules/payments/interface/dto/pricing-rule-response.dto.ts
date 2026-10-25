@@ -12,6 +12,17 @@ export class PricingRuleResponseDto {
   perKmRateKobo!: number;
   destinationFeeNaira!: number;
   destinationFeeKobo!: number;
+  roadDistanceFactor!: number;
+  // Explicit per-vehicle overrides only; others use the default multipliers.
+  vehicleRates!: Record<
+    string,
+    {
+      baseFeeNaira: number;
+      baseFeeKobo: number;
+      perKmRateNaira: number;
+      perKmRateKobo: number;
+    }
+  >;
   effectiveFrom!: Date;
   createdByAdminId!: string;
 
@@ -24,6 +35,18 @@ export class PricingRuleResponseDto {
     dto.perKmRateKobo = rule.perKmRateKobo;
     dto.destinationFeeNaira = koboToNaira(rule.destinationFeeKobo);
     dto.destinationFeeKobo = rule.destinationFeeKobo;
+    dto.roadDistanceFactor = rule.roadDistanceFactor;
+    dto.vehicleRates = Object.fromEntries(
+      Object.entries(rule.vehicleRates ?? {}).map(([vehicleClass, rate]) => [
+        vehicleClass,
+        {
+          baseFeeNaira: koboToNaira(rate!.baseFeeKobo),
+          baseFeeKobo: rate!.baseFeeKobo,
+          perKmRateNaira: koboToNaira(rate!.perKmRateKobo),
+          perKmRateKobo: rate!.perKmRateKobo,
+        },
+      ]),
+    );
     dto.effectiveFrom = rule.effectiveFrom;
     dto.createdByAdminId = rule.createdByAdminId;
     return dto;

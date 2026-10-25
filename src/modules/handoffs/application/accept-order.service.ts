@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { OrdersService } from '../../orders/application/orders.service';
+import { DeliveryEventsService } from '../../logistics/application/delivery-events.service';
 import { RiderCapacityService } from '../../riders/application/rider-capacity.service';
 import { RiderCapacityUnavailableException } from '../domain/exceptions/rider-capacity-unavailable.exception';
 import { OrderTransitionResult } from '../domain/order-transition-result';
@@ -16,7 +16,7 @@ export class AcceptOrderService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly riderCapacityService: RiderCapacityService,
-    private readonly ordersService: OrdersService,
+    private readonly deliveryEventsService: DeliveryEventsService,
   ) {}
 
   async accept(
@@ -36,7 +36,20 @@ export class AcceptOrderService {
       // OrdersService throws IllegalOrderTransitionException, which rolls
       // back the capacity reservation above along with everything else in
       // this transaction — no manual compensating release needed.
-      return this.ordersService.assignRider(orderId, riderId, manager);
+      // Claims the order's in-house delivery leg; the order itself moves to
+      // RIDER_ASSIGNED via DeliveryProgressListener, in this transaction.
+      await this.deliveryEventsService.assignInHouseRider(
+        orderId,
+        riderId,
+        manager,
+      );
+      const [order] = await manager.query<OrderTransitionResult[]>(
+        `SELECT id, "trackingCode", status, "originNodeId", "destinationNodeId",
+                "shelfNumber"
+           FROM orders WHERE id = $1`,
+        [orderId],
+      );
+      return order;
     });
   }
 }

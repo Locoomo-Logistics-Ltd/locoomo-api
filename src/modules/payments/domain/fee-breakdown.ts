@@ -1,13 +1,17 @@
-// Snapshotted onto a PaymentIntent at creation and never recomputed — see
-// PricingService. All amounts are integer kobo (Paystack's minor unit);
-// nothing in this codebase stores money as a float.
+// Snapshot of how an order's price was worked out, stored on the payment
+// intent at checkout. baseFeeKobo/perKmRateKobo are the rates actually
+// applied for vehicleClass (not necessarily the rule's motorbike rate).
 export interface FeeBreakdown {
   pricingRuleId: string;
+  vehicleClass: string;
   baseFeeKobo: number;
   perKmRateKobo: number;
-  // Flat, paid entirely to the destination Node on order completion — not
-  // part of the rider/origin-Node/platform split. See RevenueSplitPartyType.
-  destinationFeeKobo: number;
+  // Road distance used for pricing: measured by a courier for this Node
+  // pair ('route'), or straight line × the rule's factor ('estimate').
   distanceKm: number;
+  distanceSource: 'route' | 'estimate';
+  straightLineKm: number;
+  deliveryFeeKobo: number;
+  destinationFeeKobo: number;
   totalKobo: number;
 }

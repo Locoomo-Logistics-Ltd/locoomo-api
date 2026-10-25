@@ -1,4 +1,5 @@
 import { Controller, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { Public } from '../../../common/auth/decorators/public.decorator';
 import { HandlePaymentWebhookService } from '../application/handle-payment-webhook.service';
@@ -6,6 +7,11 @@ import { PaymentProviderName } from '../domain/payment-provider-name.enum';
 
 // Path is hardcoded in bootstrap.ts's raw-body middleware registration —
 // keep the two in sync if this ever moves.
+// Exempt from the global per-IP throttle: provider webhooks arrive in bursts
+// from a small set of provider IPs, and a 429 here just makes the provider
+// back off and redeliver hours later. The HMAC signature check is the
+// protection on this route, not rate limiting.
+@SkipThrottle()
 @Controller('payments/webhooks')
 export class PaymentWebhooksController {
   constructor(

@@ -1,5 +1,10 @@
+import { DeliveryQuoteService } from './application/delivery-quote.service';
+import { DeliveryOptionsController } from './interface/delivery-options.controller';
+import { DeliveryQuotesController } from './interface/delivery-quotes.controller';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { LogisticsModule } from '../logistics/logistics.module';
+import { TrackingModule } from '../tracking/tracking.module';
 import { IdempotencyModule } from '../../common/idempotency/idempotency.module';
 import { IdentityModule } from '../identity/identity.module';
 import { NodesModule } from '../nodes/nodes.module';
@@ -30,15 +35,22 @@ import { PricingController } from './interface/pricing.controller';
     IdentityModule,
     NotificationsModule,
     OrdersModule,
+    TrackingModule,
+    // LogisticsModule: vehicle selection, route distances, and whether a
+    // courier serves a route — for quoting and checkout.
+    LogisticsModule,
   ],
   controllers: [
     PaymentIntentsController,
     PaymentWebhooksController,
     PricingController,
     BanksController,
+    DeliveryQuotesController,
+    DeliveryOptionsController,
   ],
   providers: [
     PricingService,
+    DeliveryQuoteService,
     AdminPricingService,
     CreatePaymentIntentService,
     PaymentIntentQueryService,

@@ -35,4 +35,10 @@ RUN addgroup -S nodejs && adduser -S nestjs -G nodejs
 USER nestjs
 
 EXPOSE 3000
-CMD ["node", "dist/main"]
+# Migrate, then start. Pending migrations are applied before the app boots
+# (an app on a schema it doesn't expect fails in confusing ways), and a
+# failed migration stops the deploy here — the app never starts, so Railway
+# keeps the previous version serving. `exec` makes node PID 1 so it gets
+# Railway's SIGTERM on shutdown. Set SKIP_MIGRATIONS=true to start without
+# migrating (e.g. when migrations run as a separate pre-deploy step).
+CMD ["sh", "-c", "if [ \"$SKIP_MIGRATIONS\" != \"true\" ]; then node dist/database/run-migrations.js || exit 1; fi; exec node dist/main"]

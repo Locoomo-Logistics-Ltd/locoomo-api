@@ -27,6 +27,18 @@ export class AdminPricingService {
         baseFeeKobo: nairaToKobo(dto.baseFeeNaira),
         perKmRateKobo: nairaToKobo(dto.perKmRateNaira),
         destinationFeeKobo: nairaToKobo(dto.destinationFeeNaira),
+        ...(dto.roadDistanceFactor !== undefined
+          ? { roadDistanceFactor: dto.roadDistanceFactor }
+          : {}),
+        vehicleRates: Object.fromEntries(
+          Object.entries(dto.vehicleRates ?? {}).map(([vehicleClass, rate]) => [
+            vehicleClass,
+            {
+              baseFeeKobo: nairaToKobo(rate.baseFeeNaira),
+              perKmRateKobo: nairaToKobo(rate.perKmRateNaira),
+            },
+          ]),
+        ),
         createdByAdminId: adminId,
       }),
     );

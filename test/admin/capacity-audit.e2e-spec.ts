@@ -14,6 +14,7 @@ import { UserEntity } from '../../src/modules/identity/infrastructure/entities/u
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
 import { RiderStatus } from '../../src/modules/riders/domain/rider-status.enum';
 import { RiderProfileEntity } from '../../src/modules/riders/infrastructure/entities/rider-profile.entity';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 interface SuccessBody {
   success: true;
@@ -89,6 +90,7 @@ describe('Admin capacity audit (e2e)', () => {
         latitude: 6.45,
         longitude: 3.47,
         capacity: 30,
+        ...NODE_CONTACT_FIELDS,
       })
       .expect(201);
     const nodeId = (response.body as { data: { id: string } }).data.id;
