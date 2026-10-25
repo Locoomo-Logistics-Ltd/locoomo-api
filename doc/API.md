@@ -557,6 +557,25 @@ failed pickups.
 Node objects carry the outcome as `locationCheck`: `verified`, `unverified`,
 `admin_override`, or `null` for Nodes created before the check existed.
 
+#### Map pin picker — the frontend's own Google Maps key
+
+Wherever a Node's location is entered (Admin `POST /nodes`, operator onboarding, `PATCH
+/nodes/:id`), the frontend shows a Google map / Places search so `latitude`/`longitude`
+come from a dropped pin, not typing. That uses a **browser key owned by the frontend** — the
+API never sees it and you never send it to the API:
+
+| | Frontend (map, pin picker, Places autocomplete) | API (location check above) |
+|---|---|---|
+| Key lives in | the frontend app's own config | `GOOGLE_MAPS_API_KEY` in the API's environment |
+| Application restriction | **HTTP referrers** — your app's domains only (e.g. `https://app.locoomo.com/*`, plus `http://localhost:5173/*` for dev) | **None** (Google rejects referrer-restricted keys for server-side APIs; Railway has no fixed outbound IP) |
+| API restriction | Maps JavaScript API, Places API | Geocoding API only |
+
+Use two separate keys. A browser key is visible in the page source; the referrer
+restriction is what stops it being reused elsewhere, which is also why it can't work for
+the API. Send the API the coordinates from the pin plus the address as the user typed (or
+as Places formatted) it — the API re-checks one against the other.
+
+#### Opening hours
 
 An object keyed by day — `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun` — each an
 array of `{ "open": "HH:mm", "close": "HH:mm" }` intervals in **Nigerian local time**
