@@ -20,12 +20,19 @@ import {
   AdminProviderView,
 } from '../application/admin-logistics.service';
 import {
+  RouteDistanceStatus,
+  RouteRefreshService,
+  RouteRefreshStarted,
+} from '../application/route-refresh.service';
+import {
   CourierWallet,
   CourierWalletService,
 } from '../application/courier-wallet.service';
 import {
   EconomicsQueryDto,
   ListDeliveriesQueryDto,
+  RefreshRoutesDto,
+  RouteDistancesQueryDto,
   UpdateLogisticsProviderDto,
   UpdateVehicleRuleDto,
 } from './dto/admin-logistics.dto';
@@ -36,6 +43,7 @@ export class AdminLogisticsController {
   constructor(
     private readonly adminLogisticsService: AdminLogisticsService,
     private readonly courierWalletService: CourierWalletService,
+    private readonly routeRefreshService: RouteRefreshService,
   ) {}
 
   @Get('providers')
@@ -96,6 +104,25 @@ export class AdminLogisticsController {
   @HttpCode(HttpStatus.OK)
   reconcile(@Param('id', ParseUUIDPipe) id: string): Promise<AdminDeliveryRow> {
     return this.adminLogisticsService.reconcile(id);
+  }
+
+  // The "Refresh routes" button: measure real road distances between all
+  // Node pairs in the background (202 — poll GET route-distances).
+  @Post('route-distances/refresh')
+  @HttpCode(HttpStatus.ACCEPTED)
+  refreshRoutes(@Body() dto: RefreshRoutesDto): Promise<RouteRefreshStarted> {
+    return this.routeRefreshService.start({
+      includePending: dto.includePending ?? false,
+    });
+  }
+
+  @Get('route-distances')
+  routeDistances(
+    @Query() query: RouteDistancesQueryDto,
+  ): Promise<RouteDistanceStatus> {
+    return this.routeRefreshService.status({
+      includePending: query.includePending ?? false,
+    });
   }
 
   @Get('economics')

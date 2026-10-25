@@ -136,6 +136,20 @@ export class ListDeliveriesQueryDto extends PaginationQueryDto {
   to?: string;
 }
 
+export class RefreshRoutesDto {
+  // Also measure between Nodes still awaiting approval (pilot prep).
+  @IsOptional()
+  @IsBoolean()
+  includePending?: boolean;
+}
+
+export class RouteDistancesQueryDto {
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  includePending?: boolean;
+}
+
 export class EconomicsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()

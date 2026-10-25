@@ -64,7 +64,11 @@ endpoints — is separate per environment.
    limits), `maxCostShare` (0.75), `lowBalanceAlertNaira` (₦50,000).
 
 Before enabling a station, check it has a `contactPhone` (Sendii requires one for the
-destination) and correct coordinates.
+destination) and correct coordinates — then press **Refresh routes**
+(`POST /api/v1/admin/logistics/route-distances/refresh`, with `includePending: true` before
+approval) so its prices use Sendii's real road distances from the first order. It's free
+(quotes book nothing); fixing a station's pin later discards its distances, so press it
+again afterwards.
 
 ## Vehicles and cost cap
 

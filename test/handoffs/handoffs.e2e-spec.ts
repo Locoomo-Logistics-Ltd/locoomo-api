@@ -17,6 +17,7 @@ import { HandoffCodeType } from '../../src/modules/handoffs/domain/handoff-code-
 import { HandoffCodeEntity } from '../../src/modules/handoffs/infrastructure/entities/handoff-code.entity';
 import { NodeMembershipEntity } from '../../src/modules/node-operators/infrastructure/entities/node-membership.entity';
 import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node.entity';
+import { OutboxEventStatus } from '../../src/modules/notifications/domain/outbox-event-status.enum';
 import { OutboxEventEntity } from '../../src/modules/notifications/infrastructure/entities/outbox-event.entity';
 import { OrderStatus } from '../../src/modules/orders/domain/order-status.enum';
 import { OrderEventEntity } from '../../src/modules/orders/infrastructure/entities/order-event.entity';
@@ -53,6 +54,7 @@ import {
   ProviderCapabilities,
   ProviderDeliverySnapshot,
   ProviderWebhookEvent,
+  RoutePoint,
   WalletBalance,
 } from '../../src/modules/logistics/domain/ports/logistics-provider.port';
 import { DeliveryLegEntity } from '../../src/modules/logistics/infrastructure/entities/delivery-leg.entity';
@@ -218,6 +220,13 @@ class FakeCourierProvider implements LogisticsProvider {
       surchargeKobo: 0,
       failureReason: null,
     });
+  }
+
+  measured: string[] = [];
+
+  measureRoute(from: RoutePoint, to: RoutePoint) {
+    this.measured.push(`${from.address}→${to.address}`);
+    return Promise.resolve({ distanceMeters: 12_345 });
   }
 
   getBalanceKobo(): Promise<WalletBalance> {
@@ -3371,6 +3380,112 @@ describe('Handoffs (e2e)', () => {
               `${api}/providers/in_house/wallet`,
             ),
           ).expect(404);
+        });
+
+        it('refreshes road distances between Nodes in the background (the "Refresh routes" button)', async () => {
+          await outboxEvents.delete({ eventType: 'logistics.refresh_routes' });
+          const started = (
+            (
+              await admin(
+                request(app.getHttpServer()).post(
+                  `${api}/route-distances/refresh`,
+                ),
+              )
+                .send({})
+                .expect(202)
+            ).body as SuccessBody
+          ).data as { queued: boolean; providerKey: string; pairs: number };
+          expect(started).toMatchObject({
+            queued: true,
+            providerKey: 'fake_courier',
+          });
+          expect(started.pairs).toBeGreaterThan(0);
+
+          // A second press while it runs doesn't queue another.
+          const again = (
+            (
+              await admin(
+                request(app.getHttpServer()).post(
+                  `${api}/route-distances/refresh`,
+                ),
+              )
+                .send({})
+                .expect(202)
+            ).body as SuccessBody
+          ).data;
+          expect(again).toMatchObject({ queued: false, alreadyRunning: true });
+
+          // Run the background job to completion (it re-queues itself per chunk).
+          const handler = app
+            .get(OutboxHandlerRegistry)
+            .get('logistics.refresh_routes')!;
+          for (let runs = 0; runs < 50; runs++) {
+            const next = await outboxEvents.findOne({
+              where: {
+                eventType: 'logistics.refresh_routes',
+                status: OutboxEventStatus.PENDING,
+              },
+              order: { createdAt: 'ASC' },
+            });
+            if (!next) break;
+            await handler.handle(next.payload);
+            await outboxEvents.update(next.id, {
+              status: OutboxEventStatus.SENT,
+            });
+          }
+
+          const status = (
+            (
+              await admin(
+                request(app.getHttpServer()).get(`${api}/route-distances`),
+              ).expect(200)
+            ).body as SuccessBody
+          ).data as {
+            refreshRunning: boolean;
+            eligiblePairs: number;
+            measuredPairs: number;
+            routes: {
+              originNodeId: string;
+              destinationNodeId: string;
+              roadDistanceKm: number;
+            }[];
+          };
+          expect(status.refreshRunning).toBe(false);
+          expect(status.eligiblePairs).toBe(started.pairs);
+          expect(status.measuredPairs).toBe(status.eligiblePairs);
+          const route = status.routes.find(
+            (r) =>
+              r.originNodeId === originNodeId &&
+              r.destinationNodeId === destinationNodeId,
+          );
+          expect(route?.roadDistanceKm).toBe(12.35);
+        });
+
+        it('keeps the road distance from a quote refused for being over the cost cap', async () => {
+          await nodes.query(
+            `DELETE FROM node_route_distances WHERE "originNodeId" = $1 AND "destinationNodeId" = $2`,
+            [courierOriginNodeId, destinationNodeId],
+          );
+          const { leg } = await dropOffWithCourier(
+            'admin-cap-distance@handoffs.e2e.test',
+          );
+          courier.failNext = new LogisticsProviderError(
+            'fake_courier',
+            'createDelivery',
+            'QUOTE_ABOVE_LIMIT: quoted 900000 kobo, limit 300000 kobo',
+            false,
+            8_800,
+          );
+          await submit(leg.id);
+
+          const [route] = await dataSource.query<
+            { roadDistanceMeters: number }[]
+          >(
+            `SELECT "roadDistanceMeters" FROM node_route_distances
+              WHERE "originNodeId" = $1 AND "destinationNodeId" = $2`,
+            [courierOriginNodeId, destinationNodeId],
+          );
+          expect(route.roadDistanceMeters).toBe(8_800);
         });
 
         it('reports courier economics per order with totals', async () => {

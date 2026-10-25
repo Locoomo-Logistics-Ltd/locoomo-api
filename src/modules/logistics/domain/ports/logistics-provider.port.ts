@@ -117,6 +117,9 @@ export interface ProviderCapabilities {
   // Prepaid wallets only: the most surcharges can add to a delivery, as a
   // share of its fee — the headroom kept for in-flight deliveries.
   surchargeHeadroomFactor?: number;
+  // measureRoute providers: minimum gap between calls to stay inside the
+  // provider's rate limit (Sendii: 30 quotes/min).
+  measureRoutePacingMs?: number;
 }
 
 export interface LogisticsProvider {
@@ -137,6 +140,20 @@ export interface LogisticsProvider {
   ): boolean;
   parseWebhook?(rawBody: Buffer): ProviderWebhookEvent;
   getBalanceKobo?(): Promise<WalletBalance>;
+  // Road distance between two points as the provider would drive it, without
+  // booking anything (Sendii: a free quote). null when the provider won't
+  // serve the trip (out of range) — not an error.
+  measureRoute?(
+    from: RoutePoint,
+    to: RoutePoint,
+  ): Promise<{ distanceMeters: number } | null>;
+}
+
+export interface RoutePoint {
+  latitude: number;
+  longitude: number;
+  address: string;
+  city: string;
 }
 
 export interface WalletBalance {
@@ -154,6 +171,9 @@ export class LogisticsProviderError extends Error {
     // false = retrying the same call won't help (rejected request, no
     // balance, service disabled) — move on to the next provider instead.
     readonly retryable: boolean,
+    // Road distance the provider measured before refusing (e.g. a quote
+    // above the cost cap) — still worth keeping for pricing.
+    readonly measuredDistanceMeters?: number,
   ) {
     super(`${providerKey} ${operation} failed: ${detail}`);
     this.name = 'LogisticsProviderError';

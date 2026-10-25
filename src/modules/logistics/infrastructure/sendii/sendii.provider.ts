@@ -17,6 +17,7 @@ import {
   ProviderCapabilities,
   ProviderDeliverySnapshot,
   ProviderWebhookEvent,
+  RoutePoint,
   WalletBalance,
 } from '../../domain/ports/logistics-provider.port';
 import type {
@@ -89,6 +90,8 @@ export class SendiiProvider implements LogisticsProvider, OnModuleInit {
     cancellableUntil: DeliveryLegStatus.REQUESTED,
     prepaidWallet: true,
     surchargeHeadroomFactor: MAX_SURCHARGE_FACTOR,
+    // 30 quotes/min.
+    measureRoutePacingMs: 2_100,
   };
   private readonly logger = new Logger(SendiiProvider.name);
 
@@ -153,6 +156,7 @@ export class SendiiProvider implements LogisticsProvider, OnModuleInit {
         'createDelivery',
         `QUOTE_ABOVE_LIMIT: quoted ${feeKobo} kobo, limit ${request.maxCostKobo} kobo`,
         false,
+        quote.distance_m,
       );
     }
 
@@ -227,6 +231,35 @@ export class SendiiProvider implements LogisticsProvider, OnModuleInit {
         'delivery can no longer be cancelled',
         false,
       );
+    }
+  }
+
+  // A quote books nothing and costs nothing — its distance_m is Sendii's
+  // road distance for the trip. Refused trips (under 100 m, over 80 km,
+  // outside Nigeria) are null.
+  async measureRoute(
+    from: RoutePoint,
+    to: RoutePoint,
+  ): Promise<{ distanceMeters: number } | null> {
+    try {
+      const quote = await this.call<SendiiQuote>('measureRoute', '/quote', {
+        query: {
+          pickup_lat: from.latitude,
+          pickup_lng: from.longitude,
+          pickup_address: this.addressOf(from),
+          dropoff_lat: to.latitude,
+          dropoff_lng: to.longitude,
+          dropoff_address: this.addressOf(to),
+          vehicle_type: 'motorbike',
+        },
+        policy: SENDII_READ_POLICY,
+      });
+      return { distanceMeters: quote.distance_m };
+    } catch (error) {
+      if (error instanceof LogisticsProviderError && !error.retryable) {
+        return null;
+      }
+      throw error;
     }
   }
 
@@ -345,7 +378,7 @@ export class SendiiProvider implements LogisticsProvider, OnModuleInit {
     }
   }
 
-  private addressOf(stop: { name: string; address: string; city: string }) {
+  private addressOf(stop: { address: string; city: string }) {
     return `${stop.address}, ${stop.city}`.slice(0, ADDRESS_MAX);
   }
 

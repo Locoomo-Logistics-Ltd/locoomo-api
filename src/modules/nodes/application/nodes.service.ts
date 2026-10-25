@@ -403,5 +403,12 @@ export class NodesService {
       `UPDATE nodes SET location = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography WHERE id = $3`,
       [longitude, latitude, id],
     );
+    // Road distances couriers measured to/from this Node were for the old
+    // pin — drop them so pricing falls back to the estimate until the
+    // routes are measured again (admin "Refresh routes").
+    await runner.query(
+      `DELETE FROM node_route_distances WHERE "originNodeId" = $1 OR "destinationNodeId" = $1`,
+      [id],
+    );
   }
 }

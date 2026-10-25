@@ -168,6 +168,17 @@ export class DeliveryDispatchService implements OnModuleInit {
       if (!(error instanceof LogisticsProviderError) || error.retryable) {
         throw error;
       }
+      // A refusal can still carry the road distance (e.g. quote above the
+      // cost cap) — keep it, so this route prices correctly from now on.
+      if (error.measuredDistanceMeters) {
+        const request = await this.buildRequest(leg, this.dataSource.manager);
+        await this.routeDistanceService.record(
+          request.pickup.nodeId,
+          request.dropoff.nodeId,
+          error.measuredDistanceMeters,
+          leg.providerKey,
+        );
+      }
       this.logger.warn(
         `Leg ${leg.id} rejected by ${leg.providerKey}, re-routing order ${leg.orderId}: ${error.message}`,
       );

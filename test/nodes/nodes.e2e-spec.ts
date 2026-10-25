@@ -84,6 +84,12 @@ describe('Nodes (e2e)', () => {
   });
 
   afterAll(async () => {
+    await nodes.query(
+      `DELETE FROM node_route_distances
+        WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)
+           OR "destinationNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)`,
+      [`${namePrefix}%`],
+    );
     await nodes
       .createQueryBuilder()
       .delete()
@@ -291,6 +297,34 @@ describe('Nodes (e2e)', () => {
       const data = (response.body as SuccessBody).data;
       expect(data.capacity).toBe(200);
       expect(data.status).toBe('suspended');
+    });
+
+    it('forgets courier-measured road distances when the pin moves', async () => {
+      const a = await createActiveNode('route-a');
+      const b = await createActiveNode('route-b', { latitude: 6.5 });
+      await nodes.query(
+        `INSERT INTO node_route_distances ("originNodeId", "destinationNodeId", "roadDistanceMeters", source)
+         VALUES ($1, $2, 9000, 'test'), ($2, $1, 9100, 'test')`,
+        [a, b],
+      );
+
+      await asAdmin(request(app.getHttpServer()).patch(`/api/v1/nodes/${a}`))
+        .send({ capacity: 60 })
+        .expect(200);
+      const [{ kept }] = await nodes.query<{ kept: number }[]>(
+        `SELECT COUNT(*)::int AS kept FROM node_route_distances WHERE "originNodeId" = $1 OR "destinationNodeId" = $1`,
+        [a],
+      );
+      expect(kept).toBe(2); // not a location change
+
+      await asAdmin(request(app.getHttpServer()).patch(`/api/v1/nodes/${a}`))
+        .send({ latitude: 6.46 })
+        .expect(200);
+      const [{ left }] = await nodes.query<{ left: number }[]>(
+        `SELECT COUNT(*)::int AS left FROM node_route_distances WHERE "originNodeId" = $1 OR "destinationNodeId" = $1`,
+        [a],
+      );
+      expect(left).toBe(0);
     });
 
     it('re-syncs the spatial location when latitude/longitude change', async () => {

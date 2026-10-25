@@ -277,6 +277,50 @@ describe('SendiiProvider', () => {
     });
   });
 
+  describe('measureRoute', () => {
+    const from = {
+      latitude: 6.5,
+      longitude: 3.37,
+      address: '1 Herbert Macaulay Way',
+      city: 'Lagos',
+    };
+    const to = {
+      latitude: 6.44,
+      longitude: 3.47,
+      address: '45 Admiralty Way',
+      city: 'Lagos',
+    };
+
+    it('returns the road distance from a (free) motorbike quote', async () => {
+      fetchSpy.mockResolvedValueOnce(quote());
+
+      await expect(provider().measureRoute(from, to)).resolves.toEqual({
+        distanceMeters: 9200,
+      });
+      const url = new URL(fetchSpy.mock.calls[0][0] as string);
+      expect(url.pathname).toBe('/partner/v1/quote');
+      expect(url.searchParams.get('vehicle_type')).toBe('motorbike');
+    });
+
+    it('returns null for a trip Sendii refuses (e.g. over 80 km), and throws when it is down', async () => {
+      fetchSpy.mockResolvedValueOnce(fail(400, 'VALIDATION_ERROR'));
+      await expect(provider().measureRoute(from, to)).resolves.toBeNull();
+
+      fetchSpy.mockResolvedValue(fail(503, 'INTERNAL_ERROR'));
+      await expect(provider().measureRoute(from, to)).rejects.toMatchObject({
+        retryable: true,
+      });
+    });
+  });
+
+  it('carries the measured distance on a refusal over the cost cap', async () => {
+    fetchSpy.mockResolvedValueOnce(quote());
+    const error = await provider()
+      .createDelivery({ ...request, maxCostKobo: 100_000 })
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ measuredDistanceMeters: 9200 });
+  });
+
   it('reports a cancel after pickup as non-retryable', async () => {
     fetchSpy.mockResolvedValueOnce(fail(409, 'CONFLICT'));
     await expect(provider().cancel('del_1')).rejects.toMatchObject({

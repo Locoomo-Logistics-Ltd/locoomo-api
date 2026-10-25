@@ -1286,8 +1286,9 @@ A delivery's price depends on **the vehicle the parcel needs** and **the road di
    (Bicycle and van classes exist but are switched off.) Anything bigger or heavier is
    refused with `422 NO_DELIVERY_OPTION`.
 2. **Distance** — road kilometres between the two Nodes: measured by a courier for that
-   pair when known (`distanceSource: "route"`), otherwise the straight line × the pricing
-   rule's factor (`"estimate"`).
+   pair when known (`distanceSource: "route"` — Admins measure all pairs with the "Refresh
+   routes" button, and every courier booking refines them), otherwise the straight line ×
+   the pricing rule's factor (`"estimate"`).
 3. **Fee** — the vehicle's base fee + per-km rate × distance (see
    [`POST /admin/pricing`](#post-apiv1adminpricing)), plus the destination Node's flat fee.
 
@@ -2420,6 +2421,34 @@ progress but nothing heard for 30+ minutes), `from` / `to` (ISO dates). Each row
 
 Each returns the delivery row. Errors: `404`, `409 ILLEGAL_DELIVERY_ACTION` (not applicable
 in the delivery's state — the message says why), `502 LOGISTICS_PROVIDER_ERROR`.
+
+### `POST /api/v1/admin/logistics/route-distances/refresh` — the "Refresh routes" button
+
+Measures the real road distance between every pair of active Nodes (both directions —
+one-way roads make them differ) with a courier that can do it for free (Sendii quotes), so
+prices use road kilometres instead of the straight-line estimate. Runs in the background,
+paced to the courier's rate limit (Sendii: ~2 s per pair). Body (optional):
+`{ "includePending": true }` to also measure Nodes still awaiting approval — useful before
+a pilot.
+
+Response `202`, `data`:
+
+```json
+{ "queued": true, "alreadyRunning": false, "providerKey": "sendii", "pairs": 42, "estimatedSeconds": 89 }
+```
+
+Pressing it again while a refresh runs returns `queued: false, alreadyRunning: true`.
+Re-run it after adding or approving Nodes; moving a Node's pin discards that Node's measured
+distances automatically (they were for the old pin). Errors: `409 ILLEGAL_DELIVERY_ACTION`
+when no courier that can measure routes is running (Sendii needs `SENDII_API_KEY`).
+
+### `GET /api/v1/admin/logistics/route-distances`
+
+Coverage for that button: `measuringProvider`, `refreshRunning`, `eligiblePairs`,
+`measuredPairs`, `lastMeasuredAt`, and `routes[]` — each pair's `originNodeName`,
+`destinationNodeName`, `straightLineKm`, `roadDistanceKm` (`null` = not measured yet, or the
+courier won't serve it), `source`, `updatedAt`. Query `includePending=true` to include
+pending Nodes.
 
 ### `GET /api/v1/admin/logistics/economics`
 

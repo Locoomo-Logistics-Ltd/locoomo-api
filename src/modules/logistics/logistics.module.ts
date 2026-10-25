@@ -11,6 +11,7 @@ import { DeliveryEventBus } from './application/delivery-event-bus';
 import { DeliveryEventsService } from './application/delivery-events.service';
 import { DeliveryQueryService } from './application/delivery-query.service';
 import { LogisticsProviderRegistry } from './application/logistics-provider.registry';
+import { RouteRefreshService } from './application/route-refresh.service';
 import { RouteDistanceService } from './application/route-distance.service';
 import { VehicleSelectionService } from './application/vehicle-selection.service';
 import { LogisticsRouterService } from './application/logistics-router.service';
@@ -54,6 +55,7 @@ import { CourierWebhooksController } from './interface/courier-webhooks.controll
     RouteDistanceService,
     CourierWalletService,
     AdminLogisticsService,
+    RouteRefreshService,
   ],
   controllers: [CourierWebhooksController, AdminLogisticsController],
   exports: [
