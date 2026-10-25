@@ -4,8 +4,9 @@ What the frontend needs to consume this API: base URL, auth flow, response shape
 codes, and endpoint-by-endpoint request/response contracts. Kept current as endpoints
 ship — if something you need isn't here, it isn't built yet.
 
-Upcoming courier integration, Node-app scan flow and public tracking page: see the draft
-contract in [LOGISTICS_API.md](LOGISTICS_API.md) — not live yet, sections move here as they ship.
+Building a logistics screen (price preview, Node counter, handovers, rider app, returns,
+public tracking, courier admin)? Start with [LOGISTICS_API.md](LOGISTICS_API.md) — the
+flow-by-flow guide with full request and response samples and TypeScript types.
 
 ## Base URL and versioning
 
