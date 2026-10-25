@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { EntityNotFoundException } from '../../../common/exceptions';
 import { OutboxService } from '../../notifications/application/outbox.service';
+import { normalizeTrackingCode } from '../../orders/application/tracking-code-input';
 import { IllegalDeliveryActionException } from '../domain/exceptions/illegal-delivery-action.exception';
 import { LogisticsProviderUnavailableException } from '../domain/exceptions/logistics-provider-unavailable.exception';
 import { LogisticsProviderError } from '../domain/ports/logistics-provider.port';
@@ -264,6 +265,14 @@ export class AdminLogisticsService {
       params.push(value);
       return `$${params.length}`;
     };
+    if (query.orderId) conditions.push(`l."orderId" = ${param(query.orderId)}`);
+    if (query.trackingCode !== undefined) {
+      // An unparseable code matches nothing rather than everything.
+      const code = normalizeTrackingCode(query.trackingCode) ?? '';
+      conditions.push(
+        `l."orderId" IN (SELECT id FROM orders WHERE "trackingCode" = ${param(code)})`,
+      );
+    }
     if (query.status) conditions.push(`l.status = ${param(query.status)}`);
     if (query.provider)
       conditions.push(`l."providerKey" = ${param(query.provider)}`);

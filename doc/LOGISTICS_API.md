@@ -1,11 +1,8 @@
 # Logistics & Courier API — Frontend Contract (DRAFT)
 
-> **Status: draft contract, nothing here is live yet.** This describes the API surface the
-> courier integration (Sendii first, more couriers later) and the public tracking page will
-> add, so frontend work can start in parallel. Every endpoint is tagged with the delivery
-> phase it ships in. Field names and shapes are intended to be final, but may still change
-> until the phase ships — when it does, the section moves into [API.md](API.md) and is
-> removed from here.
+> **Status: superseded — everything in this draft has shipped.** The live contract is
+> [API.md](API.md); start from its [Screens → endpoints](API.md#screens--endpoints) map.
+> This file is kept for the design rationale (concepts, status vocabulary).
 
 Everything in [API.md](API.md) still applies: same base URL (`{API_ORIGIN}/api/v1`), same
 cookie auth (`credentials: 'include'`), same `{ success, data | error }` envelope, branch on

@@ -15,14 +15,25 @@ export class VehicleSelectionService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async vehicleFor(parcel: ParcelToCarry): Promise<VehicleClass | null> {
-    const rules = await this.dataSource.query<VehicleClassRule[]>(
+    return chooseVehicleClass(await this.rules(), parcel);
+  }
+
+  // The enabled classes, smallest first — what checkout can offer.
+  async enabledRules(): Promise<VehicleClassRule[]> {
+    return (await this.rules())
+      .filter((rule) => rule.enabled)
+      .sort((a, b) => a.rank - b.rank);
+  }
+
+  private async rules(): Promise<VehicleClassRule[]> {
+    const rows = await this.dataSource.query<VehicleClassRule[]>(
       `SELECT "vehicleClass", rank, enabled, "parcelSizes", "maxWeightKg",
               "maxLongestSideCm"
          FROM vehicle_class_rules`,
     );
-    return chooseVehicleClass(
-      rules.map((rule) => ({ ...rule, maxWeightKg: Number(rule.maxWeightKg) })),
-      parcel,
-    );
+    return rows.map((rule) => ({
+      ...rule,
+      maxWeightKg: Number(rule.maxWeightKg),
+    }));
   }
 }

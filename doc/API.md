@@ -140,6 +140,56 @@ backend greps logs for.
 | 503 | `PRICING_NOT_CONFIGURED` | No Admin-configured pricing rule exists yet — an ops/config gap, not something the consumer caused; surface as "orders temporarily unavailable" |
 | 503 | `REVENUE_SPLIT_NOT_CONFIGURED` | `POST /handoffs/orders/:id/collect` — no Admin-configured revenue-split rule exists yet, so the order can't complete without its earnings going untracked. Same ops/config gap as `PRICING_NOT_CONFIGURED`, not something the operator or receiver caused |
 
+## Screens → endpoints
+
+Where each courier-era screen gets its data. Everything listed is live; details are in the
+endpoint sections below.
+
+**Price preview (sender checkout)**
+1. `GET /nodes/nearby` — pick drop-off and collection stations.
+2. `GET /delivery-options` — parcel sizes, handling flags, input limits and what each vehicle
+   carries, to build the parcel form (don't hard-code them; Admins change vehicle rules).
+3. `POST /delivery-quotes` — the price, vehicle and rough delivery time; re-call whenever
+   stations or parcel details change. `422 NO_DELIVERY_OPTION` → ask for different details.
+4. `POST /payments/intents` — same body plus receiver details; charges exactly the quote.
+   Node staff dispatching their own parcel use `POST /node-operators/nodes/:nodeId/dispatch`.
+
+**Handover code (Node app)**
+1. Scan or type the parcel → `GET /handoffs/orders/by-tracking-code/:code` → read
+   `nextAction` and `delivery.handover`.
+2. `hand_to_rider` / `receive_from_rider` (Locoomo rider): the rider shows their code (from
+   `POST /handoffs/orders/:id/request-code` in the rider app) → staff enter it in
+   `POST /handoffs/orders/:id/confirm-handoff`.
+3. `hand_to_courier` / `receive_from_courier` (external courier, also a returning one):
+   `GET /handoffs/orders/:id/courier-handover` → read `code` out → poll
+   `by-tracking-code` every 3–5 s until `nextAction` changes.
+4. Work lists: `GET /handoffs/my-node/orders?queue=to_receive|to_dispatch|incoming|to_collect`.
+
+**Returns**
+- Sender: `GET /orders?status=return_initiated,return_in_transit,returned_to_origin,ready_for_sender_collection,return_completed`
+  for a Returns tab; `GET /orders/:id/timeline` for the history; `GET /orders/:id` for the
+  origin station details to collect from.
+- Origin Node: `nextAction` `receive_from_courier` (`courier-handover`, `kind:
+  "return_delivery"`) → `return_intake` (`POST /handoffs/orders/:id/return-intake`) →
+  `hand_to_sender` (`POST /handoffs/orders/:id/return-collect`);
+  `POST /handoffs/orders/:id/collection-code/resend` re-sends the sender's code.
+- Public: `GET /track/:trackingCode` shows `returning_to_sender` / `returned_to_sender` /
+  `return_completed`.
+
+**Admin (couriers and deliveries)** — all under `/admin/logistics`
+- Couriers: `GET /providers`, `PATCH /providers/:key` (switch on/off, pilot stations, cost
+  cap, …), `GET /providers/:key/wallet`.
+- Vehicles: `GET /vehicle-rules`, `PATCH /vehicle-rules/:vehicleClass`.
+- Routes: **Refresh routes** button → `POST /route-distances/refresh`; progress/coverage →
+  `GET /route-distances`.
+- Deliveries: `GET /deliveries` (filters incl. `stuck=true`, `orderId`, `trackingCode`), and
+  `POST /deliveries/:id/retry | fallback | reconcile`.
+- Money: `GET /economics`. Pricing: `POST /admin/pricing`, `GET /admin/pricing`.
+- Stations: `PATCH /nodes/:id` (pins, status), `GET /node-operators/pending`.
+
+> The signed-in user's profile is `GET /users/me` — use it to restore a session on reload
+> instead of trusting a locally stored copy until a request 401s.
+
 ## Endpoints
 
 ### `POST /api/v1/auth/register`
@@ -1311,6 +1361,30 @@ A delivery's price depends on **the vehicle the parcel needs** and **the road di
 3. **Fee** — the vehicle's base fee + per-km rate × distance (see
    [`POST /admin/pricing`](#post-apiv1adminpricing)), plus the destination Node's flat fee.
 
+### `GET /api/v1/delivery-options`
+
+**Any signed-in role.** What the checkout form needs to build its parcel inputs:
+
+```json
+{
+  "parcelSizes": ["small", "medium", "large", "extra_large"],
+  "handlingFlags": ["fragile", "keep_upright", "perishable", "liquid"],
+  "limits": {
+    "weightKg": { "min": 0.1, "max": 1000, "decimals": 1 },
+    "dimensionCm": { "min": 1, "max": 500 }
+  },
+  "vehicles": [
+    { "vehicleClass": "motorbike", "parcelSizes": ["small", "medium"], "maxWeightKg": 20, "maxLongestSideCm": 60 },
+    { "vehicleClass": "car", "parcelSizes": ["small", "medium", "large", "extra_large"], "maxWeightKg": 50, "maxLongestSideCm": 120 }
+  ]
+}
+```
+
+`limits` are what the API validates; `vehicles` (enabled classes, smallest first — they
+change when an Admin edits the vehicle rules) say what can actually be carried, e.g. to hint
+"up to 20 kg goes by motorbike". A parcel beyond the last vehicle gets `422
+NO_DELIVERY_OPTION` from the quote.
+
 ### `POST /api/v1/delivery-quotes`
 
 **Requires an authenticated Consumer, NodeOperator or NodeStaff session.** Price preview
@@ -1492,7 +1566,10 @@ session.
 
 **Requires an authenticated Consumer session.** Lists only the requesting consumer's own
 orders — there is no "all orders" view for a Consumer. Paginated (see
-[Pagination](#pagination-list-endpoints)).
+[Pagination](#pagination-list-endpoints)). Optional `status` filter, comma-separated order
+statuses — e.g. the Returns tab:
+`?status=return_initiated,return_in_transit,returned_to_origin,ready_for_sender_collection,return_completed`
+(an unknown status is `400 VALIDATION_FAILED`).
 
 Response `200`, `data`:
 
@@ -1566,6 +1643,26 @@ Response `200`, `data`: same shape as one item from the list response above.
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `404 NOT_FOUND`.
 
+
+### `GET /api/v1/orders/:id/timeline`
+
+**Requires an authenticated Consumer session**, own orders only (`404` otherwise). The
+order's history in plain words, oldest first — the same steps and copy as the public
+tracking page:
+
+```json
+[
+  { "status": "order_placed", "label": "Order placed", "at": "2026-10-21T08:10:00.000Z" },
+  { "status": "at_origin_station", "label": "Dropped off at Yaba Node", "at": "2026-10-21T09:29:00.000Z" },
+  { "status": "on_the_way", "label": "On the way to Lekki Node", "at": "2026-10-21T10:05:00.000Z" },
+  { "status": "returning_to_sender", "label": "Returning to Yaba Node", "at": "2026-10-21T13:40:00.000Z" }
+]
+```
+
+`status` values are the public ones (see [Public tracking](#public-tracking)) plus
+`order_placed`. Render `label` as given.
+
+Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Consumer), `404 NOT_FOUND`.
 ### `GET /api/v1/handoffs/available-orders`
 
 **Requires an authenticated Rider session, and your `RiderProfile` must be `active`**
@@ -2420,9 +2517,11 @@ any of those. `404` for an unknown class.
 
 ### `GET /api/v1/admin/logistics/deliveries`
 
-Every courier attempt, newest first, paginated. Filters: `status` (`requested`, `assigned`,
-`picked_up`, `delivered`, `returning`, `returned`, `cancelled`), `provider`, `stuck=true` (in
-progress but nothing heard for 30+ minutes), `from` / `to` (ISO dates). Each row: `id`,
+Every courier attempt, newest first, paginated. Filters: `orderId` or `trackingCode` (one
+order's attempts — the code is read as forgivingly as the Node app's scan), `status`
+(`requested`, `assigned`, `picked_up`, `delivered`, `returning`, `returned`, `cancelled`),
+`provider`, `stuck=true` (in progress but nothing heard for 30+ minutes), `from` / `to` (ISO
+dates). Each row: `id`,
 `orderId`, `orderTrackingCode`, `orderStatus`, `provider`, `providerLabel`, `legType`,
 `status`, `providerStatus`, `externalId`, `attemptNumber`, `vehicleClass`, `courierName`,
 `courierPhone`, `quotedKobo`, `actualKobo`, `surchargeKobo`, `failureReason` (e.g.

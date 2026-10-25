@@ -113,6 +113,16 @@ export class UpdateVehicleRuleDto {
 }
 
 export class ListDeliveriesQueryDto extends PaginationQueryDto {
+  // Every courier attempt for one order — by id, or by tracking code (read
+  // as forgivingly as the Node app's scan: case, spaces, missing LCM).
+  @IsOptional()
+  @IsUUID()
+  orderId?: string;
+
+  @IsOptional()
+  @IsString()
+  trackingCode?: string;
+
   @IsOptional()
   @IsIn(LEG_STATUSES)
   status?: string;

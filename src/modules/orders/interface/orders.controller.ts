@@ -4,10 +4,12 @@ import { CurrentUser } from '../../../common/auth/decorators/current-user.decora
 import { Roles } from '../../../common/auth/decorators/roles.decorator';
 import { UserRole } from '../../../common/auth/user-role.enum';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
-import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { DeliveryQueryService } from '../../logistics/application/delivery-query.service';
 import { TrackingLinkService } from '../../tracking/application/tracking-link.service';
 import { OrderQueryService } from '../application/order-query.service';
+import { OrderTimelineService } from '../../tracking/application/order-timeline.service';
+import type { TimelineItem } from '../../tracking/application/order-timeline.service';
+import { MyOrdersQueryDto } from './dto/my-orders-query.dto';
 import { OrderResponseDto } from './dto/order-response.dto';
 
 @Controller('orders')
@@ -17,11 +19,12 @@ export class OrdersController {
     private readonly orderQueryService: OrderQueryService,
     private readonly trackingLinkService: TrackingLinkService,
     private readonly deliveryQueryService: DeliveryQueryService,
+    private readonly orderTimelineService: OrderTimelineService,
   ) {}
 
   @Get()
   async findMine(
-    @Query() query: PaginationQueryDto,
+    @Query() query: MyOrdersQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<PaginatedResultDto<OrderResponseDto>> {
     const result = await this.orderQueryService.findMine(user.id, query);
@@ -54,5 +57,17 @@ export class OrdersController {
       this.trackingLinkService.urlFor(row.trackingCode),
       await this.deliveryQueryService.viewFor(row.id, 'consumer'),
     );
+  }
+
+  // The order's history in plain words, oldest first — the same steps the
+  // public tracking page shows (drop-off, courier, arrival, collection, and
+  // a return if there was one).
+  @Get(':id/timeline')
+  async timeline(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<TimelineItem[]> {
+    await this.orderQueryService.getMine(user.id, id);
+    return this.orderTimelineService.timelineFor(id);
   }
 }

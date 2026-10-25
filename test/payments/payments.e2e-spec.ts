@@ -580,6 +580,38 @@ describe('Payments (e2e)', () => {
       };
     }
 
+    it('serves the checkout form its options and the vehicles available', async () => {
+      const data = (
+        (
+          await request(app.getHttpServer())
+            .get('/api/v1/delivery-options')
+            .set('Cookie', [consumerCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data as {
+        parcelSizes: string[];
+        handlingFlags: string[];
+        vehicles: { vehicleClass: string; maxWeightKg: number }[];
+      };
+      expect(data.parcelSizes).toEqual([
+        'small',
+        'medium',
+        'large',
+        'extra_large',
+      ]);
+      expect(data.handlingFlags).toContain('fragile');
+      // Bicycle and van are seeded disabled.
+      expect(data.vehicles.map((v) => v.vehicleClass)).toEqual([
+        'motorbike',
+        'car',
+      ]);
+      expect(data.vehicles[0].maxWeightKg).toBe(20);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/delivery-options')
+        .expect(401);
+    });
+
     it('prices a small parcel for a motorbike over an estimated road distance', async () => {
       const data = (
         (await quote({ parcelSize: 'small' }).expect(200)).body as SuccessBody

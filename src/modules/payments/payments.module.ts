@@ -1,4 +1,5 @@
 import { DeliveryQuoteService } from './application/delivery-quote.service';
+import { DeliveryOptionsController } from './interface/delivery-options.controller';
 import { DeliveryQuotesController } from './interface/delivery-quotes.controller';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -45,6 +46,7 @@ import { PricingController } from './interface/pricing.controller';
     PricingController,
     BanksController,
     DeliveryQuotesController,
+    DeliveryOptionsController,
   ],
   providers: [
     PricingService,

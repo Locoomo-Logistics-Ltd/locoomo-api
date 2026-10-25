@@ -2260,6 +2260,58 @@ describe('Handoffs (e2e)', () => {
       expect(email.attachments).toHaveLength(1);
     });
 
+    it("filters the sender's orders by status and shows each order's timeline", async () => {
+      const { id, consumerCookie } = await createPaidOrder(
+        'orders-filter@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${id}/drop-off`)
+        .set('Cookie', [originOperatorCookie])
+        .expect(200);
+
+      const list = async (status: string) =>
+        (
+          (
+            await request(app.getHttpServer())
+              .get(`/api/v1/orders?status=${status}`)
+              .set('Cookie', [consumerCookie])
+              .expect(200)
+          ).body as SuccessBody
+        ).data as { items: { id: string }[]; total: number };
+      expect(
+        (await list('awaiting_drop_off,parcel_received_at_origin')).items.map(
+          (o) => o.id,
+        ),
+      ).toEqual([id]);
+      expect((await list('return_in_transit,return_completed')).total).toBe(0);
+      await request(app.getHttpServer())
+        .get('/api/v1/orders?status=lost_in_space')
+        .set('Cookie', [consumerCookie])
+        .expect(400);
+
+      const timeline = (
+        (
+          await request(app.getHttpServer())
+            .get(`/api/v1/orders/${id}/timeline`)
+            .set('Cookie', [consumerCookie])
+            .expect(200)
+        ).body as SuccessBody
+      ).data as unknown as { status: string; label: string; at: string }[];
+      expect(timeline.map((t) => t.status)).toEqual([
+        'order_placed',
+        'at_origin_station',
+      ]);
+      expect(timeline[1].label).toMatch(/^Dropped off at /);
+
+      const { consumerCookie: someoneElse } = await createPaidOrder(
+        'orders-filter-other@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .get(`/api/v1/orders/${id}/timeline`)
+        .set('Cookie', [someoneElse])
+        .expect(404);
+    });
+
     it("gives the sender's order a tracking link and label instructions", async () => {
       const { id, trackingCode, consumerCookie } = await createPaidOrder(
         'track-orders-api@handoffs.e2e.test',
@@ -3273,6 +3325,31 @@ describe('Handoffs (e2e)', () => {
               `${api}/deliveries/${leg.id}/retry`,
             ),
           ).expect(409); // the courier has it now
+        });
+
+        it("finds one order's deliveries by order id or a sloppily typed tracking code", async () => {
+          const { id, trackingCode, leg } = await dropOffWithCourier(
+            'admin-find@handoffs.e2e.test',
+          );
+          const find = async (q: string) =>
+            (
+              (
+                await admin(
+                  request(app.getHttpServer()).get(`${api}/deliveries?${q}`),
+                ).expect(200)
+              ).body as SuccessBody
+            ).data as { items: { id: string; orderTrackingCode: string }[] };
+
+          expect((await find(`orderId=${id}`)).items.map((i) => i.id)).toEqual([
+            leg.id,
+          ]);
+          const typed = trackingCode.slice(4).replace('-', ' ').toLowerCase();
+          expect(
+            (await find(`trackingCode=${encodeURIComponent(typed)}`)).items.map(
+              (i) => i.id,
+            ),
+          ).toEqual([leg.id]);
+          expect((await find('trackingCode=garbage')).items).toEqual([]);
         });
 
         it('moves a delivery from the courier to Locoomo riders on demand', async () => {

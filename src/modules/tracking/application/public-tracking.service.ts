@@ -10,11 +10,11 @@ import {
   RETURN_PUBLIC_STATUSES,
   nextStepFor,
   PUBLIC_STATUS_LABELS,
-  timelineEntryFor,
   toPublicStatus,
 } from '../domain/public-status';
 import { PublicTrackingResponseDto } from '../interface/dto/public-tracking-response.dto';
 import { TrackQueryDto } from '../interface/dto/track-query.dto';
+import { OrderTimelineService } from './order-timeline.service';
 import { TrackingLinkService } from './tracking-link.service';
 
 // How long after collection the page keeps working.
@@ -45,6 +45,7 @@ export class PublicTrackingService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly trackingLinkService: TrackingLinkService,
+    private readonly orderTimelineService: OrderTimelineService,
   ) {}
 
   async track(
@@ -86,23 +87,13 @@ export class PublicTrackingService {
       origin: order.originName,
       destination: order.destinationName,
     };
-    const events = await this.dataSource.query<
-      { type: string; createdAt: Date }[]
-    >(
-      `SELECT type, "createdAt" FROM order_events
-        WHERE "orderId" = $1 ORDER BY "createdAt" ASC, id ASC`,
-      [order.id],
-    );
 
     const dto = new PublicTrackingResponseDto();
     dto.trackingCode = order.trackingCode;
     dto.status = status;
     dto.statusLabel = PUBLIC_STATUS_LABELS[status];
     dto.isFinal = FINAL_PUBLIC_STATUSES.has(status);
-    dto.timeline = events.flatMap((event) => {
-      const entry = timelineEntryFor(event.type, names);
-      return entry ? [{ ...entry, at: event.createdAt }] : [];
-    });
+    dto.timeline = await this.orderTimelineService.timelineFor(order.id, names);
     // During a return the origin is where the parcel is going (and where the
     // sender collects it), so it gets the same detail as the destination.
     dto.origin = RETURN_PUBLIC_STATUSES.has(status)
