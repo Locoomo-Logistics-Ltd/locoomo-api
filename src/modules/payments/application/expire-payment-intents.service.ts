@@ -6,7 +6,11 @@ import { DataSource, LessThanOrEqual, Repository } from 'typeorm';
 import { Env } from '../../../config/env.validation';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
 import { NodesService } from '../../nodes/application/nodes.service';
-import { PAYMENT_INTENT_EXPIRY_POLL_INTERVAL_MS } from '../domain/payment-intent.constants';
+import { PaymentReferenceNotFoundException } from '../domain/exceptions/payment-reference-not-found.exception';
+import {
+  PAYMENT_INTENT_EXPIRY_POLL_INTERVAL_MS,
+  PAYMENT_INTENT_NOT_FOUND_GRACE_MS,
+} from '../domain/payment-intent.constants';
 import { PaymentIntentStatus } from '../domain/payment-intent-status.enum';
 import { PaymentIntentEntity } from '../infrastructure/entities/payment-intent.entity';
 import type { PaymentVerificationResult } from '../domain/ports/payment-provider.port';
@@ -102,7 +106,8 @@ export class ExpirePaymentIntentsService {
   // it turned out to actually be paid and was just recovered, or the
   // provider was unreachable and we'd rather retry next poll than expire an
   // intent prematurely on our own infrastructure's account. Returns false
-  // only when the provider was reachable and confirms it's genuinely unpaid
+  // only when the provider was reachable and confirms it's genuinely unpaid,
+  // or has reported the reference missing for longer than the grace period
   // — the caller is then safe to expire it.
   private async tryRecover(intent: PaymentIntentEntity): Promise<boolean> {
     if (!intent.providerReference) {
@@ -114,6 +119,16 @@ export class ExpirePaymentIntentsService {
     try {
       verification = await provider.verify(intent.providerReference);
     } catch (error) {
+      if (
+        error instanceof PaymentReferenceNotFoundException &&
+        Date.now() - intent.expiresAt.getTime() >=
+          PAYMENT_INTENT_NOT_FOUND_GRACE_MS
+      ) {
+        this.logger.warn(
+          `Expiring intent ${intent.id}: provider has no such reference`,
+        );
+        return false;
+      }
       this.logger.warn(
         `Reconciliation verify failed for intent ${intent.id}: ${
           error instanceof Error ? error.message : String(error)

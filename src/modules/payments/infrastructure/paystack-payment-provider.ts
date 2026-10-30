@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { Env } from '../../../config/env.validation';
 import { PaymentProviderException } from '../domain/exceptions/payment-provider.exception';
+import { PaymentReferenceNotFoundException } from '../domain/exceptions/payment-reference-not-found.exception';
 import {
   PaymentInitializeParams,
   PaymentInitializeResult,
@@ -17,6 +18,8 @@ import {
   paystackRequest,
 } from './paystack-http';
 
+const PAYSTACK_TRANSACTION_NOT_FOUND = 'transaction_not_found';
+
 interface PaystackInitializeResponse {
   status: boolean;
   message: string;
@@ -26,6 +29,7 @@ interface PaystackInitializeResponse {
 interface PaystackVerifyResponse {
   status: boolean;
   message: string;
+  code?: string;
   data: {
     status: string;
     amount: number;
@@ -116,6 +120,12 @@ export class PaystackPaymentProvider implements PaymentProvider {
       { headers: { Authorization: `Bearer ${this.secretKey}` } },
       PAYSTACK_READ_POLICY,
     );
+    if (body.code === PAYSTACK_TRANSACTION_NOT_FOUND) {
+      throw new PaymentReferenceNotFoundException(
+        'paystack',
+        providerReference,
+      );
+    }
     if (!response.ok || !body.status) {
       throw new PaymentProviderException(
         'paystack',
