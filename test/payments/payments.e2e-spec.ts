@@ -15,6 +15,9 @@ import { NodeEntity } from '../../src/modules/nodes/infrastructure/entities/node
 import { OutboxEventEntity } from '../../src/modules/notifications/infrastructure/entities/outbox-event.entity';
 import { OrderEntity } from '../../src/modules/orders/infrastructure/entities/order.entity';
 import { ExpirePaymentIntentsService } from '../../src/modules/payments/application/expire-payment-intents.service';
+import { PaymentProviderException } from '../../src/modules/payments/domain/exceptions/payment-provider.exception';
+import { PaymentReferenceNotFoundException } from '../../src/modules/payments/domain/exceptions/payment-reference-not-found.exception';
+import { PAYMENT_INTENT_NOT_FOUND_GRACE_MS } from '../../src/modules/payments/domain/payment-intent.constants';
 import {
   PaymentInitializeParams,
   PaymentInitializeResult,
@@ -51,6 +54,7 @@ class FakePaystackPaymentProvider implements PaymentProvider {
     string,
     { amountKobo: number; status: PaymentVerificationStatus }
   >();
+  private readonly verifyFailures = new Map<string, Error>();
 
   initialize(
     params: PaymentInitializeParams,
@@ -66,6 +70,10 @@ class FakePaystackPaymentProvider implements PaymentProvider {
   }
 
   verify(providerReference: string): Promise<PaymentVerificationResult> {
+    const failure = this.verifyFailures.get(providerReference);
+    if (failure) {
+      return Promise.reject(failure);
+    }
     const tx = this.transactions.get(providerReference);
     if (!tx) {
       throw new Error(`Unknown fake transaction ${providerReference}`);
@@ -110,6 +118,10 @@ class FakePaystackPaymentProvider implements PaymentProvider {
     if (tx) {
       tx.status = 'success';
     }
+  }
+
+  failVerify(reference: string, error: Error): void {
+    this.verifyFailures.set(reference, error);
   }
 
   tamperAmount(reference: string): void {
@@ -541,6 +553,75 @@ describe('Payments (e2e)', () => {
       // (the parcel is genuinely on its way), unlike the expiry case above.
       const node = await nodes.findOneBy({ id: recoverNodeId });
       expect(node?.currentCount).toBe(1);
+    });
+
+    describe('when verify fails', () => {
+      const pastGrace = () =>
+        new Date(Date.now() - PAYMENT_INTENT_NOT_FOUND_GRACE_MS - 60_000);
+      const withinGrace = () => new Date(Date.now() - 60_000);
+
+      async function staleIntent(
+        name: string,
+        error: Error,
+        expiresAt: Date,
+      ): Promise<{ intentId: string; nodeId: string }> {
+        const nodeId = await createNode(name, 5);
+        const consumerCookie = await registerAndLoginConsumer(
+          `${name}@payments.e2e.test`,
+        );
+        const createResponse = await createIntent(consumerCookie, {
+          originNodeId: nodeId,
+        }).expect(201);
+        const intentId = (createResponse.body as SuccessBody).data.id as string;
+        fakePaystack.failVerify(intentId, error);
+        await paymentIntents.update(intentId, { expiresAt });
+        return { intentId, nodeId };
+      }
+
+      it('expires an intent the provider has had no record of past the grace period', async () => {
+        const { intentId, nodeId } = await staleIntent(
+          'missing-old',
+          new PaymentReferenceNotFoundException('paystack', 'missing-old'),
+          pastGrace(),
+        );
+
+        await expirePaymentIntentsService.poll();
+
+        const intent = await paymentIntents.findOneBy({ id: intentId });
+        expect(intent?.status).toBe('expired');
+        const node = await nodes.findOneBy({ id: nodeId });
+        expect(node?.currentCount).toBe(0);
+      });
+
+      it('keeps retrying a missing reference during the grace period, in case the key is wrong', async () => {
+        const { intentId, nodeId } = await staleIntent(
+          'missing-recent',
+          new PaymentReferenceNotFoundException('paystack', 'missing-recent'),
+          withinGrace(),
+        );
+
+        await expirePaymentIntentsService.poll();
+
+        const intent = await paymentIntents.findOneBy({ id: intentId });
+        expect(intent?.status).toBe('pending');
+        const node = await nodes.findOneBy({ id: nodeId });
+        expect(node?.currentCount).toBe(1);
+      });
+
+      it('never expires on a provider outage, however old the intent', async () => {
+        const { intentId, nodeId } = await staleIntent(
+          'outage',
+          new PaymentProviderException('paystack', 'verify', 'HTTP 503'),
+          pastGrace(),
+        );
+
+        await expirePaymentIntentsService.poll();
+
+        const intent = await paymentIntents.findOneBy({ id: intentId });
+        expect(intent?.status).toBe('pending');
+        const node = await nodes.findOneBy({ id: nodeId });
+        expect(node?.currentCount).toBe(1);
+      });
     });
   });
 
