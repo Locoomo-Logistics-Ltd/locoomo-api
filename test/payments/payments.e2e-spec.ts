@@ -499,6 +499,59 @@ describe('Payments (e2e)', () => {
     });
   });
 
+  describe('GET /payments/intents/:id', () => {
+    function getIntent(cookie: string, id: string): request.Test {
+      return request(app.getHttpServer())
+        .get(`/api/v1/payments/intents/${id}`)
+        .set('Cookie', [cookie]);
+    }
+
+    it('confirms a paid intent on poll without waiting for the webhook', async () => {
+      const consumerCookie = await registerAndLoginConsumer(
+        'poll-paid@payments.e2e.test',
+      );
+      const createResponse = await createIntent(consumerCookie).expect(201);
+      const intentId = (createResponse.body as SuccessBody).data.id as string;
+      fakePaystack.markPaid(intentId);
+
+      const response = await getIntent(consumerCookie, intentId).expect(200);
+      expect((response.body as SuccessBody).data.status).toBe('paid');
+
+      const order = await orders.findOneBy({ paymentIntentId: intentId });
+      expect(order).not.toBeNull();
+
+      // The webhook arriving afterwards is a no-op, not a second Order.
+      await sendWebhook(intentId, VALID_SIGNATURE).expect(200);
+      expect(await orders.countBy({ paymentIntentId: intentId })).toBe(1);
+    });
+
+    it('stays pending while the provider has no successful charge', async () => {
+      const consumerCookie = await registerAndLoginConsumer(
+        'poll-pending@payments.e2e.test',
+      );
+      const createResponse = await createIntent(consumerCookie).expect(201);
+      const intentId = (createResponse.body as SuccessBody).data.id as string;
+
+      const response = await getIntent(consumerCookie, intentId).expect(200);
+      expect((response.body as SuccessBody).data.status).toBe('pending');
+    });
+
+    it('answers with the stored status when the provider is down', async () => {
+      const consumerCookie = await registerAndLoginConsumer(
+        'poll-outage@payments.e2e.test',
+      );
+      const createResponse = await createIntent(consumerCookie).expect(201);
+      const intentId = (createResponse.body as SuccessBody).data.id as string;
+      fakePaystack.failVerify(
+        intentId,
+        new PaymentProviderException('paystack', 'verify', 'HTTP 503'),
+      );
+
+      const response = await getIntent(consumerCookie, intentId).expect(200);
+      expect((response.body as SuccessBody).data.status).toBe('pending');
+    });
+  });
+
   describe('ExpirePaymentIntentsService', () => {
     it('expires a stale PENDING intent and releases its Node capacity slot', async () => {
       const expiryNodeId = await createNode('expiry-origin', 5);

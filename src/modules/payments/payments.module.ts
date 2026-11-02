@@ -17,6 +17,7 @@ import { ExpirePaymentIntentsService } from './application/expire-payment-intent
 import { HandlePaymentWebhookService } from './application/handle-payment-webhook.service';
 import { PaymentIntentQueryService } from './application/payment-intent-query.service';
 import { PricingService } from './application/pricing.service';
+import { ReconcilePaymentIntentService } from './application/reconcile-payment-intent.service';
 import { PaymentIntentEntity } from './infrastructure/entities/payment-intent.entity';
 import { PricingRuleEntity } from './infrastructure/entities/pricing-rule.entity';
 import { PaymentProviderRegistry } from './infrastructure/payment-provider.registry';
@@ -55,6 +56,7 @@ import { PricingController } from './interface/pricing.controller';
     CreatePaymentIntentService,
     PaymentIntentQueryService,
     ConfirmPaymentIntentPaidService,
+    ReconcilePaymentIntentService,
     HandlePaymentWebhookService,
     ExpirePaymentIntentsService,
     PaystackPaymentProvider,
