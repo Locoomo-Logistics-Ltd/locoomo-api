@@ -4,7 +4,6 @@ import { Interval } from '@nestjs/schedule';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, LessThanOrEqual, Repository } from 'typeorm';
 import { Env } from '../../../config/env.validation';
-import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
 import { NodesService } from '../../nodes/application/nodes.service';
 import { PaymentReferenceNotFoundException } from '../domain/exceptions/payment-reference-not-found.exception';
 import {
@@ -15,8 +14,7 @@ import { PaymentIntentStatus } from '../domain/payment-intent-status.enum';
 import { PaymentIntentEntity } from '../infrastructure/entities/payment-intent.entity';
 import type { PaymentVerificationResult } from '../domain/ports/payment-provider.port';
 import { PaymentProviderRegistry } from '../infrastructure/payment-provider.registry';
-import { ConfirmPaymentIntentPaidService } from './confirm-payment-intent-paid.service';
-import { PAYMENT_WEBHOOK_IDEMPOTENCY_SCOPE } from './handle-payment-webhook.service';
+import { ReconcilePaymentIntentService } from './reconcile-payment-intent.service';
 
 const EXPIRY_BATCH_SIZE = 50;
 
@@ -41,8 +39,7 @@ export class ExpirePaymentIntentsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly nodesService: NodesService,
     private readonly paymentProviderRegistry: PaymentProviderRegistry,
-    private readonly idempotencyService: IdempotencyService,
-    private readonly confirmPaymentIntentPaidService: ConfirmPaymentIntentPaidService,
+    private readonly reconcilePaymentIntentService: ReconcilePaymentIntentService,
     @Inject(ConfigService)
     private readonly configService: ConfigService<Env, true>,
   ) {}
@@ -137,33 +134,9 @@ export class ExpirePaymentIntentsService {
       return true; // treat as "not resolved yet" — don't expire, retry next poll
     }
 
-    if (
-      verification.status !== 'success' ||
-      verification.amountKobo !== intent.amountKobo
-    ) {
-      return false;
-    }
-
-    await this.dataSource.transaction(async (manager) => {
-      await this.idempotencyService.withIdempotency(
-        PAYMENT_WEBHOOK_IDEMPOTENCY_SCOPE,
-        intent.providerReference as string,
-        manager,
-        async () => {
-          const repo = manager.getRepository(PaymentIntentEntity);
-          const fresh = await repo.findOneBy({ id: intent.id });
-          if (!fresh || fresh.status !== PaymentIntentStatus.PENDING) {
-            return;
-          }
-          await this.confirmPaymentIntentPaidService.confirm(
-            fresh,
-            verification,
-            manager,
-          );
-        },
-      );
-    });
-
-    return true;
+    return this.reconcilePaymentIntentService.confirmIfPaid(
+      intent,
+      verification,
+    );
   }
 }

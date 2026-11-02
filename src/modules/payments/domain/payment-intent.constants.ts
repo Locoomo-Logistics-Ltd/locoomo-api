@@ -11,3 +11,12 @@ export const PAYMENT_INTENT_EXPIRY_POLL_INTERVAL_MS = 60 * 1000;
 // every reference look missing, and expiring strands any payment behind it
 // (a late webhook is ignored on an EXPIRED intent). A day to catch that.
 export const PAYMENT_INTENT_NOT_FOUND_GRACE_MS = 24 * 60 * 60 * 1000;
+
+// While the consumer polls a PENDING intent after checkout, we verify it with
+// the provider at most this often, so the status flips to PAID within a poll
+// or two of the charge succeeding instead of waiting on the webhook.
+export const PAYMENT_INTENT_POLL_VERIFY_INTERVAL_MS = 5 * 1000;
+
+// Cap on how long a poll waits for that verify before answering with the
+// stored status.
+export const PAYMENT_INTENT_POLL_VERIFY_TIMEOUT_MS = 5 * 1000;
