@@ -1,4 +1,4 @@
-import { CloudinaryService } from '../infrastructure/cloudinary.service';
+import { CloudinaryService } from '../../../common/cloudinary/cloudinary.service';
 import { RiderProfileEntity } from '../infrastructure/entities/rider-profile.entity';
 import { RiderVerificationDocumentEntity } from '../infrastructure/entities/rider-verification-document.entity';
 import { RiderDocumentResponseDto } from '../interface/dto/rider-document-response.dto';

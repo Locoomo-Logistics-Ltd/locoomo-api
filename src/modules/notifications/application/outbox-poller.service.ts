@@ -1,23 +1,34 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnApplicationShutdown,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Interval } from '@nestjs/schedule';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { shouldRunBackgroundJobs } from '../../../common/process/background-jobs';
 import { Env } from '../../../config/env.validation';
 import {
-  OUTBOX_BATCH_SIZE,
   OUTBOX_CLAIM_LEASE_MS,
   OUTBOX_MAX_ATTEMPTS,
-  OUTBOX_POLL_INTERVAL_MS,
+  OUTBOX_MAX_DRAIN_ROUNDS,
   computeBackoffMs,
 } from '../domain/outbox.constants';
 import { OutboxEventStatus } from '../domain/outbox-event-status.enum';
 import { OutboxEventEntity } from '../infrastructure/entities/outbox-event.entity';
 import { OutboxHandlerRegistry } from './outbox-handler.registry';
 
+const INTERVAL_NAME = 'outbox-poller';
+
 @Injectable()
-export class OutboxPollerService {
+export class OutboxPollerService
+  implements OnModuleInit, OnApplicationShutdown
+{
   private readonly logger = new Logger(OutboxPollerService.name);
+  private readonly batchSize: number;
+  private readonly concurrency: number;
 
   // @Interval doesn't wait for one run to finish before scheduling the next
   // — skip overlapping runs in this process. Cross-process safety (more
@@ -32,20 +43,41 @@ export class OutboxPollerService {
     private readonly dataSource: DataSource,
     private readonly handlers: OutboxHandlerRegistry,
     private readonly configService: ConfigService<Env, true>,
-  ) {}
+    private readonly schedulerRegistry: SchedulerRegistry,
+  ) {
+    this.batchSize = configService.get('OUTBOX_BATCH_SIZE', { infer: true });
+    this.concurrency = configService.get('OUTBOX_CONCURRENCY', {
+      infer: true,
+    });
+  }
 
-  // Every e2e suite boots the full app, and several (register, login,
-  // password-reset, email-verification, ...) now enqueue real outbox rows
-  // as a side effect. e2e tests that care about delivery call `poll()`
-  // directly — this timer firing on top of that would mean the real
-  // NotificationSender (real SMTP creds in .env) could send mail to
-  // throwaway @*.e2e.test addresses. Same skip precedent as ThrottlerModule.
-  @Interval(OUTBOX_POLL_INTERVAL_MS)
-  async handleInterval(): Promise<void> {
-    if (this.configService.get('NODE_ENV', { infer: true }) === 'test') {
+  // Registered dynamically (not @Interval) so the period comes from config.
+  // Not registered at all under NODE_ENV=test or in a PROCESS_ROLE=api
+  // process — see shouldRunBackgroundJobs. Every e2e suite boots the full
+  // app and several enqueue real outbox rows; tests that care about
+  // delivery call poll() directly, so a timer must never also fire and
+  // reach the real NotificationSender.
+  onModuleInit(): void {
+    if (!shouldRunBackgroundJobs(this.configService)) {
       return;
     }
-    await this.poll();
+    const intervalMs = this.configService.get('OUTBOX_POLL_INTERVAL_MS', {
+      infer: true,
+    });
+    const handle = setInterval(() => {
+      void this.poll().catch((error: unknown) =>
+        this.logger.error(
+          `Outbox poll failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    }, intervalMs);
+    this.schedulerRegistry.addInterval(INTERVAL_NAME, handle);
+  }
+
+  onApplicationShutdown(): void {
+    if (this.schedulerRegistry.doesExist('interval', INTERVAL_NAME)) {
+      this.schedulerRegistry.deleteInterval(INTERVAL_NAME);
+    }
   }
 
   async poll(): Promise<void> {
@@ -55,9 +87,16 @@ export class OutboxPollerService {
     this.isPolling = true;
 
     try {
-      const dueEvents = await this.claimDueEvents();
-      for (const event of dueEvents) {
-        await this.processEvent(event);
+      // Keep draining while batches come back full (a backlog), bounded so
+      // one tick can't run forever. Within a batch, up to `concurrency`
+      // handlers run at once — the old one-at-a-time loop topped out around
+      // one message per second per instance.
+      for (let round = 0; round < OUTBOX_MAX_DRAIN_ROUNDS; round++) {
+        const dueEvents = await this.claimDueEvents();
+        await this.processConcurrently(dueEvents);
+        if (dueEvents.length < this.batchSize) {
+          break;
+        }
       }
     } finally {
       this.isPolling = false;
@@ -85,13 +124,34 @@ export class OutboxPollerService {
            FOR UPDATE SKIP LOCKED
         )
         RETURNING *`,
-      [OUTBOX_CLAIM_LEASE_MS, OutboxEventStatus.PENDING, OUTBOX_BATCH_SIZE],
+      [OUTBOX_CLAIM_LEASE_MS, OutboxEventStatus.PENDING, this.batchSize],
     );
 
     // RETURNING doesn't preserve the subquery's ORDER BY.
     return rows
       .map((row) => this.outboxEvents.create(row))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  // Simple worker pool over an already-claimed batch. Events are still
+  // *started* in createdAt order; with concurrency > 1 they may finish out
+  // of order, which is fine — every handler is independent (emails, SMS,
+  // courier submissions for different orders).
+  private async processConcurrently(
+    events: OutboxEventEntity[],
+  ): Promise<void> {
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < events.length) {
+        const event = events[next++];
+        await this.processEvent(event);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(this.concurrency, events.length) }, () =>
+        worker(),
+      ),
+    );
   }
 
   private async processEvent(event: OutboxEventEntity): Promise<void> {

@@ -8,6 +8,7 @@ import { RolesGuard } from '../../common/auth/roles.guard';
 import { Env } from '../../config/env.validation';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ActivateUserService } from './application/activate-user.service';
+import { AdminPermissionService } from './application/admin-permission.service';
 import { ConfirmInviteService } from './application/confirm-invite.service';
 import { ConfirmPasswordResetService } from './application/confirm-password-reset.service';
 import { GoogleAuthService } from './application/google-auth.service';
@@ -27,6 +28,8 @@ import { PasswordResetTokenEntity } from './infrastructure/entities/password-res
 import { RefreshTokenEntity } from './infrastructure/entities/refresh-token.entity';
 import { UserEntity } from './infrastructure/entities/user.entity';
 import { GoogleIdTokenVerifier } from './infrastructure/google-id-token-verifier';
+import { AdminAdminsController } from './interface/admin-admins.controller';
+import { AdminPermissionGuard } from './interface/admin-permission.guard';
 import { AuthController } from './interface/auth.controller';
 import { UsersController } from './interface/users.controller';
 
@@ -47,7 +50,7 @@ import { UsersController } from './interface/users.controller';
     }),
     NotificationsModule,
   ],
-  controllers: [AuthController, UsersController],
+  controllers: [AuthController, UsersController, AdminAdminsController],
   providers: [
     RegisterUserService,
     LoginUserService,
@@ -64,8 +67,11 @@ import { UsersController } from './interface/users.controller';
     GoogleAuthService,
     GoogleIdTokenVerifier,
     MyProfileService,
+    AdminPermissionService,
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    // After AuthGuard: only acts on @RequireAdminPermission routes.
+    { provide: APP_GUARD, useClass: AdminPermissionGuard },
   ],
   // RegisterUserService: exported so the `admin` module can provision
   // NodeOperator/Rider/Admin accounts through this module's application
@@ -83,6 +89,9 @@ import { UsersController } from './interface/users.controller';
     ActivateUserService,
     UserLookupService,
     InviteUserService,
+    // AdminPermissionService: the maker-checker approvals (admin module)
+    // check the approving admin's permission through it.
+    AdminPermissionService,
   ],
 })
 export class IdentityModule {}

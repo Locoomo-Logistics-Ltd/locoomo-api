@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { SetPayoutAccountDto } from '../../../common/dto/set-payout-account.dto';
 import { EntityNotFoundException } from '../../../common/exceptions';
 import { PaystackBankService } from '../../payments/application/paystack-bank.service';
-import { CloudinaryService } from '../infrastructure/cloudinary.service';
+import { CloudinaryService } from '../../../common/cloudinary/cloudinary.service';
 import { RiderProfileEntity } from '../infrastructure/entities/rider-profile.entity';
 import { RiderVerificationDocumentEntity } from '../infrastructure/entities/rider-verification-document.entity';
 import { RiderResponseDto } from '../interface/dto/rider-response.dto';

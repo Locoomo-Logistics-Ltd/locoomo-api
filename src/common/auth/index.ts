@@ -7,3 +7,7 @@ export * from './roles.guard';
 export * from './decorators/public.decorator';
 export * from './decorators/roles.decorator';
 export * from './decorators/current-user.decorator';
+export * from './principal';
+export * from './api-key-authenticator.registry';
+export * from './decorators/allow-api-key.decorator';
+export * from './decorators/current-principal.decorator';

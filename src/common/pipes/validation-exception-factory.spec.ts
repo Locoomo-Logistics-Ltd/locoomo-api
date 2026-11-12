@@ -57,6 +57,37 @@ describe('createValidationException', () => {
     expect(details).toHaveLength(2);
   });
 
+  it('flattens nested objects and array elements into full paths', () => {
+    const phone = buildError('phone', { isPhoneE164: 'phone must be valid' });
+    const receiver = buildError('receiver', {});
+    receiver.children = [phone];
+    const item = buildError('3', {});
+    item.children = [receiver];
+    const items = buildError('items', {});
+    items.children = [item];
+    const shallow = buildError('receiver', {});
+    shallow.children = [buildError('name', { isNotEmpty: 'name required' })];
+
+    const details = (
+      createValidationException([items, shallow]).getResponse() as {
+        details: unknown[];
+      }
+    ).details;
+
+    expect(details).toEqual([
+      {
+        field: 'items[3].receiver.phone',
+        constraint: 'isPhoneE164',
+        message: 'phone must be valid',
+      },
+      {
+        field: 'receiver.name',
+        constraint: 'isNotEmpty',
+        message: 'name required',
+      },
+    ]);
+  });
+
   it('produces an empty details array for no errors', () => {
     const details = (
       createValidationException([]).getResponse() as { details: unknown[] }

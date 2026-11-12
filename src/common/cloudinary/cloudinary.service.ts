@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
-import { Env } from '../../../config/env.validation';
+import { Env } from '../../config/env.validation';
 
 export interface UploadSignature {
   signature: string;
@@ -11,6 +11,7 @@ export interface UploadSignature {
   folder: string;
 }
 
+// Shared (riders' verification evidence, merchants' KYC documents).
 // Signed direct-to-Cloudinary upload — the client uploads bytes straight to
 // Cloudinary using a signature we generate here, never proxied through this API
 @Injectable()

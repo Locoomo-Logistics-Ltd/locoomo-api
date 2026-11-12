@@ -1,16 +1,54 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
+import { toE164 } from '../../../common/phone/phone-number';
 import { EmailMessage } from '../domain/email-message';
+import type { SmsMessage, SmsSender } from '../domain/sms';
 import { OutboxEventEntity } from '../infrastructure/entities/outbox-event.entity';
+import { SMS_SENDER } from '../infrastructure/sms-sender.token';
 import { EMAIL_OUTBOX_EVENT_TYPE } from './email-outbox.handler';
+import { SMS_OUTBOX_EVENT_TYPE } from './sms-outbox.handler';
 
 @Injectable()
 export class OutboxService {
+  private readonly logger = new Logger(OutboxService.name);
+
   constructor(
     @InjectRepository(OutboxEventEntity)
     private readonly outboxEvents: Repository<OutboxEventEntity>,
+    @Inject(SMS_SENDER) private readonly smsSender: SmsSender,
   ) {}
+
+  // Whether an SMS queued now would actually be attempted. Flows use this to
+  // decide whether they need another channel (plan D10/D19) — e.g. a
+  // receiver with no email and SMS off can't be notified at all.
+  isSmsEnabled(): boolean {
+    return this.smsSender.isEnabled();
+  }
+
+  // Best-effort SMS (plan D10): returns null — and queues nothing — when SMS
+  // is disabled or the number isn't a valid phone number, so callers never
+  // have to branch; they just also send an email/webhook as appropriate.
+  async enqueueSms(
+    message: SmsMessage,
+    manager?: EntityManager,
+  ): Promise<OutboxEventEntity | null> {
+    if (!this.smsSender.isEnabled()) {
+      return null;
+    }
+    const to = toE164(message.to);
+    if (!to) {
+      this.logger.warn(
+        `Not queueing SMS${message.tag ? ` (${message.tag})` : ''}: invalid phone number`,
+      );
+      return null;
+    }
+    return this.enqueue(
+      SMS_OUTBOX_EVENT_TYPE,
+      { to, body: message.body, tag: message.tag ?? null },
+      manager,
+    );
+  }
 
   // Pass the caller's EntityManager when this enqueue must be atomic with a
   // state change (e.g. issuing a password-reset token) — the whole point of

@@ -1,6 +1,9 @@
-export const OUTBOX_POLL_INTERVAL_MS = 10_000;
-export const OUTBOX_BATCH_SIZE = 10;
+// Poll interval, batch size and concurrency are env-configurable
+// (OUTBOX_POLL_INTERVAL_MS / OUTBOX_BATCH_SIZE / OUTBOX_CONCURRENCY).
 export const OUTBOX_MAX_ATTEMPTS = 5;
+// Back-to-back full batches one poll tick may process before yielding to
+// the next tick (bounds a single tick's runtime during a backlog).
+export const OUTBOX_MAX_DRAIN_ROUNDS = 20;
 // How long a claimed row stays invisible to other pollers. Claiming pushes
 // nextAttemptAt this far ahead; a normal outcome overwrites it (sent, or a
 // backoff retry), so it only matters if the process dies mid-handler — the

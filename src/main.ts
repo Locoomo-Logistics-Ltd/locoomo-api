@@ -3,12 +3,16 @@ import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { configureApp } from './bootstrap';
 import { Env } from './config/env.validation';
+import { mountMerchantOpenApi } from './openapi/openapi';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService<Env, true>);
 
   configureApp(app);
+  // Not in configureApp: building the document scans every controller, and
+  // e2e suites (which share configureApp) don't need it on every boot.
+  mountMerchantOpenApi(app);
 
   await app.listen(config.get('PORT', { infer: true }));
 }

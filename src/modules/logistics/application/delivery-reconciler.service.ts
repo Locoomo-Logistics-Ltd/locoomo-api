@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { shouldRunBackgroundJobs } from '../../../common/process/background-jobs';
 import { Env } from '../../../config/env.validation';
 import { LogisticsProviderError } from '../domain/ports/logistics-provider.port';
 import { CourierWalletService } from './courier-wallet.service';
@@ -44,7 +45,7 @@ export class DeliveryReconcilerService {
   // Skipped under NODE_ENV=test like the outbox poller; tests call runOnce().
   @Interval(RECONCILE_INTERVAL_MS)
   async handleInterval(): Promise<void> {
-    if (this.configService.get('NODE_ENV', { infer: true }) === 'test') {
+    if (!shouldRunBackgroundJobs(this.configService)) {
       return;
     }
     await this.runOnce();

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { CloudinaryService } from '../infrastructure/cloudinary.service';
+import { CloudinaryService } from '../../../common/cloudinary/cloudinary.service';
 import { UploadSignatureResponseDto } from '../interface/dto/upload-signature-response.dto';
 import { RiderVerificationDocumentType } from '../domain/rider-verification-document-type.enum';
 

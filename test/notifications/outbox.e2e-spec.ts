@@ -1,3 +1,4 @@
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -213,6 +214,7 @@ describe('Outbox / notification poller (e2e)', () => {
       dataSource,
       registry,
       configService,
+      app.get(SchedulerRegistry),
     );
 
     let calls = 0;

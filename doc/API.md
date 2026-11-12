@@ -37,6 +37,27 @@ to read or store. This has real implications for how you call the API:
   — they're httpOnly by design (XSS protection). Don't build UI that assumes you can
   inspect or manually attach them.
 
+- **Send `X-Locoomo-Client: web` on every request that isn't a `GET`** (POST, PATCH,
+  PUT, DELETE). It's the CSRF guard: a forged request from another site can't attach
+  a custom header, so a cookie-authenticated change without it is treated as forged.
+  Today the API only **logs** a missing header (`CSRF_MODE=report`); it will start
+  rejecting with `403 CSRF_HEADER_MISSING` once every frontend sends it — add it to
+  your HTTP client's defaults now, e.g.
+
+  ```ts
+  const api = axios.create({
+    baseURL: `${API_ORIGIN}/api/v1`,
+    withCredentials: true,
+    headers: { 'X-Locoomo-Client': 'web' },
+  });
+  ```
+
+  Any value works (it's the header's presence that matters); use `web`, or your app's
+  name. Sending it on GETs too is harmless.
+
+- **Request bodies are capped at 1 MB.** Over that → `413 PAYLOAD_TOO_LARGE`. Body
+  that isn't valid JSON → `400 MALFORMED_JSON`. Both use the normal error envelope.
+
 ## Authenticated requests
 
 Every route except `/health` and the `/api/v1/auth/*` endpoints below requires a
@@ -88,7 +109,9 @@ Error:
 }
 ```
 
-`details` is only present on validation errors (400). Branch UI logic on `error.code`,
+`details` is only present on validation errors (400). `field` is the full path to the
+value, so nested objects and arrays point at the exact input: `"receiver.phone"`,
+`"items[3].receiver.phone"`. Branch UI logic on `error.code`,
 not `error.message` — the message is human-readable copy and can be reworded without
 warning; the code is the stable contract.
 
@@ -101,6 +124,16 @@ backend greps logs for.
 | HTTP | code | Meaning |
 |---|---|---|
 | 400 | `VALIDATION_FAILED` | Request body failed DTO validation — see `error.details` for per-field reasons |
+| 400 | `MALFORMED_JSON` | Request body isn't valid JSON (a frontend bug — the body was hand-built or truncated) |
+| 413 | `PAYLOAD_TOO_LARGE` | Request body is over 1 MB |
+| 415 | `UNSUPPORTED_REQUEST_BODY` | Body uses an encoding/charset the API doesn't accept — send UTF-8 JSON |
+| 403 | `CSRF_HEADER_MISSING` | A cookie-authenticated non-GET request without `X-Locoomo-Client` (only once CSRF enforcement is switched on — see "CORS and cookies") |
+| 400 | `INVALID_IDEMPOTENCY_KEY` | `Idempotency-Key` header isn't 1–255 printable characters |
+| 409 | `IDEMPOTENCY_IN_PROGRESS` | The first request with this `Idempotency-Key` is still running — retry in a moment |
+| 422 | `IDEMPOTENCY_KEY_REUSED` | This `Idempotency-Key` was already used for a different request — generate a new key per distinct request |
+| 409 | `LAST_SUPER_ADMIN` | `PATCH /admin/admins/:id/permissions` would leave no active admin with `super` |
+| 403 | `SELF_APPROVAL_NOT_ALLOWED` | An admin tried to approve a request they raised themselves — a different admin must approve |
+| 409 | `APPROVAL_NOT_PENDING` | The approval request was already executed, rejected, cancelled, or has expired (7 days) |
 | 400 | `INVALID_VERIFICATION_DOCUMENT` | `POST /riders/onboarding` referenced a `cloudinaryPublicId` that doesn't correspond to an actual completed upload — re-request an upload signature and try again |
 | 401 | `INVALID_CREDENTIALS` | Login failed — wrong password, unknown email, or account not yet activated. Deliberately identical for all three so a login attempt can't be used to enumerate registered emails; don't try to distinguish these cases in the UI |
 | 401 | `INVALID_REFRESH_TOKEN` | Refresh failed — missing, unrecognized, expired, or already-used cookie. Treat as a hard sign-out, don't retry |
@@ -2618,4 +2651,161 @@ Response `200`, `data`:
 ```
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
+
+## Admin permissions
+
+Admins have one role (`admin`) plus a set of **permissions** that unlock sensitive screens.
+Existing admin screens keep working for every admin; newer ones (merchant review, money
+moves) also need a specific permission. A route that needs a permission you don't hold
+returns `403 FORBIDDEN`, exactly like a missing role.
+
+| Permission | Unlocks |
+|---|---|
+| `super` | Everything, including managing other admins' permissions. Implies all others |
+| `kyc` | Merchant KYC review (approve / reject / request changes, view documents) |
+| `finance` | Wallets, manual adjustments, claims payouts, refunds, pricing |
+| `ops` | Reroutes, suspensions, hubs, exceptions |
+| `support` | Read-mostly support tools, MFA resets |
+
+Every admin who existed before permissions shipped was given `super`, so nobody lost
+access; narrow people down from the screen below.
+
+### `GET /api/v1/admin/admins`
+
+**Requires `super`.** All admin accounts with their permissions.
+
+Response `200`, `data`:
+
+```json
+[
+  {
+    "id": "uuid",
+    "email": "ada@locoomo.com",
+    "firstName": "Ada",
+    "lastName": "Obi",
+    "status": "active",
+    "adminPermissions": ["finance", "ops"]
+  }
+]
+```
+
+### `PATCH /api/v1/admin/admins/:id/permissions`
+
+**Requires `super`.** Replaces (doesn't merge) the admin's permission set. Takes effect
+within seconds — no re-login needed. Recorded in the audit log.
+
+```json
+{ "permissions": ["finance", "ops"] }
+```
+
+| Field | Rules |
+|---|---|
+| `permissions` | Array (may be empty) of `super`, `kyc`, `finance`, `ops`, `support` |
+
+Response `200`: the updated admin (same shape as one item above).
+
+Errors: `400 VALIDATION_FAILED`, `403 FORBIDDEN`, `404 NOT_FOUND` (not an admin),
+`409 LAST_SUPER_ADMIN`.
+
+UI notes: show `super` as a separate, clearly-labelled toggle ("Full access — can manage
+other admins"). On `LAST_SUPER_ADMIN`, explain that someone else must be given full access
+first.
+
+## Approvals (two-admin rule)
+
+Some admin actions move money or are otherwise risky, so one admin **requests** them and a
+**different** admin **approves** them before they run (maker-checker). Requests are raised
+from the screen where the action lives (e.g. a wallet adjustment on a merchant's page —
+those screens arrive with the merchant platform); this queue is where the second admin
+decides.
+
+Rules the API enforces (show them in the UI rather than letting people hit the errors):
+
+- You can't approve your own request (`403 SELF_APPROVAL_NOT_ALLOWED`) — but you can
+  **cancel** it.
+- Approving or rejecting needs the permission the action requires (e.g. `finance` for
+  money). Without it → `403 FORBIDDEN`.
+- A request nobody decides within **7 days expires** and must be raised again.
+- Approval runs the action immediately; if the action itself fails, the request stays
+  `pending` and the error is returned.
+
+Status values: `pending`, `executed`, `rejected`, `cancelled`, `expired`.
+
+### `GET /api/v1/admin/approvals?status=pending&page=1&limit=20`
+
+**Requires an Admin session** (any admin can view the queue). `status` optional. Pending
+requests are oldest-first; everything else newest-first.
+
+Response `200`, `data` (paginated):
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "action": "wallet.manual_adjustment",
+      "status": "pending",
+      "summary": "Credit ₦25,000.00 to Ada Stores",
+      "reason": "Goodwill credit for delayed parcel LCM-4F2K-9XPT",
+      "payload": { "merchantId": "uuid", "amountKobo": 2500000 },
+      "merchantId": "uuid",
+      "requestedByUserId": "uuid",
+      "decidedByUserId": null,
+      "decisionNote": null,
+      "decidedAt": null,
+      "result": null,
+      "expiresAt": "2026-11-19T10:00:00.000Z",
+      "createdAt": "2026-11-12T10:00:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 1
+}
+```
+
+### `GET /api/v1/admin/approvals/:id`
+
+One request (same shape as an item above). `404 NOT_FOUND` if unknown.
+
+### `POST /api/v1/admin/approvals/:id/approve`
+
+```json
+{ "note": "Checked against the claim evidence" }
+```
+
+`note` optional (≤ 1000 chars). Response `200`: the request, now `executed`, with
+`result` holding what the action produced (e.g. the wallet entry id).
+
+Errors: `403 SELF_APPROVAL_NOT_ALLOWED`, `403 FORBIDDEN`, `404 NOT_FOUND`,
+`409 APPROVAL_NOT_PENDING`, plus any error from the action itself.
+
+### `POST /api/v1/admin/approvals/:id/reject`
+
+```json
+{ "note": "Evidence doesn't support the claim" }
+```
+
+`note` **required** (3–1000 chars) — the requester sees why. Response `200`: the request,
+now `rejected`. Errors: `403 FORBIDDEN`, `404 NOT_FOUND`, `409 APPROVAL_NOT_PENDING`.
+
+### `POST /api/v1/admin/approvals/:id/cancel`
+
+Only the admin who raised the request. No body. Response `200`: the request, now
+`cancelled`. Errors: `403 FORBIDDEN` (not yours), `404 NOT_FOUND`,
+`409 APPROVAL_NOT_PENDING`.
+
+## Idempotency-Key (safe retries)
+
+Some `POST` endpoints accept an optional `Idempotency-Key` header (each endpoint's section
+says so — the merchant API uses it everywhere). Send a fresh random value (a UUID v4) per
+user action, and **reuse the same value when retrying that action** after a timeout or
+network error:
+
+- Same key + same request → you get the original response back (header
+  `Idempotent-Replayed: true`); the action is **not** performed twice.
+- Same key + different request → `422 IDEMPOTENCY_KEY_REUSED`.
+- First attempt still running → `409 IDEMPOTENCY_IN_PROGRESS`; wait a moment and retry.
+- If the first attempt failed (any error), retrying with the same key runs it again.
+- Keys are remembered for 24 hours.
 

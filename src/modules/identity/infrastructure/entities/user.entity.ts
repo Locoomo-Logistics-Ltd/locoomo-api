@@ -60,6 +60,11 @@ export class UserEntity {
   @Column({ type: 'enum', enum: UserStatus, default: UserStatus.INVITED })
   status!: UserStatus;
 
+  // Admins only — AdminPermission values (common/auth/admin-permission.enum).
+  // Always empty for every other role.
+  @Column({ type: 'text', array: true, default: () => "'{}'" })
+  adminPermissions!: string[];
+
   // NDPA — set when the user accepts the ToS/Privacy Policy. Null until then.
   @Column({ type: 'timestamptz', nullable: true })
   consentAcceptedAt!: Date | null;

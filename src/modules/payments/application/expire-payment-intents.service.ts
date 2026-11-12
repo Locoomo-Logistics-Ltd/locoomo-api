@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, LessThanOrEqual, Repository } from 'typeorm';
+import { shouldRunBackgroundJobs } from '../../../common/process/background-jobs';
 import { Env } from '../../../config/env.validation';
 import { NodesService } from '../../nodes/application/nodes.service';
 import { PaymentReferenceNotFoundException } from '../domain/exceptions/payment-reference-not-found.exception';
@@ -48,7 +49,7 @@ export class ExpirePaymentIntentsService {
   // poll() directly rather than letting this timer race real app boot.
   @Interval(PAYMENT_INTENT_EXPIRY_POLL_INTERVAL_MS)
   async handleInterval(): Promise<void> {
-    if (this.configService.get('NODE_ENV', { infer: true }) === 'test') {
+    if (!shouldRunBackgroundJobs(this.configService)) {
       return;
     }
     await this.poll();

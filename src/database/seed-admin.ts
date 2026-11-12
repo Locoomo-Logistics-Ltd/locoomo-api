@@ -1,4 +1,5 @@
 import { hashPassword } from '../modules/identity/domain/password-hasher';
+import { AdminPermission } from '../common/auth/admin-permission.enum';
 import { UserRole } from '../common/auth/user-role.enum';
 import { UserStatus } from '../modules/identity/domain/user-status.enum';
 import { UserEntity } from '../modules/identity/infrastructure/entities/user.entity';
@@ -47,6 +48,9 @@ async function seed(): Promise<void> {
         lastName,
         phone,
         role: UserRole.ADMIN,
+        // The bootstrap admin is the one who grants everyone else's
+        // permissions, so it must hold `super`.
+        adminPermissions: [AdminPermission.SUPER],
         status: UserStatus.ACTIVE,
         consentAcceptedAt: new Date(),
         emailVerifiedAt: new Date(),

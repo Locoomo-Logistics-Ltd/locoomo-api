@@ -19,5 +19,19 @@ services:
       timeout: 5s
       retries: 5
 
+  # Optional locally — set REDIS_URL=redis://localhost:6381/0 to use it.
+  # Required in production once more than one API instance runs.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      # 6381: 6379/6380 are already taken on this machine by other projects.
+      - '6381:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 volumes:
   locoomo_postgres_data:
