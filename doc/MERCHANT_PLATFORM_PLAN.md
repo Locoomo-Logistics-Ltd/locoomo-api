@@ -760,6 +760,36 @@ Deferred on purpose:
 2. Frontends must add `X-Locoomo-Client: web` to non-GET requests. Flip `CSRF_MODE=enforce` once the "[CSRF report]" log lines stop.
 3. Run separate `api` and `worker` services and set `REDIS_URL` before scaling to more than one API instance.
 
+### M1a Account security: done (2026-11-12)
+
+Applies to every user, not only merchants.
+
+| Item | Where |
+|---|---|
+| TOTP 2FA (in-house RFC 6238, tested on the RFC vectors). Seeds sealed with AES-256-GCM (`DATA_ENCRYPTION_KEY`), replay-protected, 10 hashed recovery codes | `identity/domain/totp.ts`, `identity/application/mfa.service.ts`, `common/crypto/secret-box.ts` |
+| Login and Google return `{ mfaRequired, mfaToken }` for 2FA accounts; `POST /auth/mfa/verify` (5-minute token, 5 attempts) | `identity/application/session-starter.service.ts` |
+| Sessions = refresh-token families: list, revoke one, revoke others. `sid` claim + denylist, so revocation is immediate (also on logout, refresh-token theft and password reset) | `identity/application/session.service.ts`, `common/auth/session-denylist.ts` |
+| Step-up `POST /auth/reauth`: 2FA code when on, else password, else Google. `@RequireRecentAuth()` (10 min) | `identity/application/reauth.service.ts` |
+| `@RequireVerifiedEmail()`, `POST /auth/verify-email/resend` | `identity/interface/account-state.guard.ts` |
+| Mandatory admin 2FA: 14-day grace from invite, or from migration 357 for existing admins | `users.mfaRequiredSince` |
+
+**Rollout:**
+1. Set `DATA_ENCRYPTION_KEY` in every environment **before** anyone enrols, and never change it afterwards.
+2. Existing admins have 14 days from deploy to turn on 2FA.
+3. Frontends must handle the `mfaRequired` login response and the `REAUTH_REQUIRED` retry flow (doc/API.md › Account security).
+
+### Documentation
+
+- **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).
+  Where it is more specific than this plan, it wins: response shapes, the cursor format,
+  `notifyReceiver` values, shipment drop deadlines, error codes, and webhook signing per
+  Standard Webhooks with a base64 `whsec_` secret. Each phase must ship exactly what it
+  documents, or update it.
+- **[FRONTEND_PLATFORM_GUIDE.md](FRONTEND_PLATFORM_GUIDE.md)** covers the Locoomo frontend
+  team's changes, account-security screens, the admin app and the merchant dashboard
+  roadmap.
+- **[API.md](API.md)** is the per-endpoint reference for everything live.
+
 ## 18. Delivery approach
 
 Code accumulates phase by phase on `dev`. Each phase lands as reviewable commits with code,

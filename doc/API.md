@@ -8,6 +8,12 @@ Building a logistics screen (price preview, Node counter, handovers, rider app, 
 public tracking, courier admin)? Start with [LOGISTICS_API.md](LOGISTICS_API.md) — the
 flow-by-flow guide with full request and response samples and TypeScript types.
 
+Sign-in with 2FA, "confirm it's you", sessions, the admin permissions/approvals screens,
+or the upcoming merchant dashboard? Start with
+[FRONTEND_PLATFORM_GUIDE.md](FRONTEND_PLATFORM_GUIDE.md) — what every app must change,
+with code. The merchant dashboard calls the same `/merchant/*` endpoints external
+integrators use; their contract is [MERCHANT_API.md](MERCHANT_API.md).
+
 ## Base URL and versioning
 
 ```
@@ -124,6 +130,16 @@ backend greps logs for.
 | HTTP | code | Meaning |
 |---|---|---|
 | 400 | `VALIDATION_FAILED` | Request body failed DTO validation — see `error.details` for per-field reasons |
+| 401 | `INVALID_MFA_CODE` | Wrong, malformed or already-used 2FA / recovery code. Let the user retry |
+| 401 | `INVALID_MFA_CHALLENGE` | The 2FA sign-in step expired (5 min), was already completed, or had 5 wrong codes. Back to the password screen |
+| 403 | `REAUTH_REQUIRED` | Sensitive action: confirm identity via `POST /auth/reauth`, then retry the same request |
+| 403 | `MFA_ENROLLMENT_REQUIRED` | Admin past the 14-day 2FA deadline. Send them to 2FA setup |
+| 403 | `MFA_REQUIRED_FOR_ROLE` | Tried to turn off 2FA on an account that must have it (admins) |
+| 403 | `EMAIL_NOT_VERIFIED` | The route needs a verified email. Offer `POST /auth/verify-email/resend` |
+| 409 | `MFA_ALREADY_ENABLED` | 2FA setup started on an account that already has 2FA on |
+| 409 | `MFA_NOT_ENABLED` | Recovery codes / disable on an account without 2FA |
+| 409 | `MFA_SETUP_NOT_STARTED` | Confirm called before setup |
+| 409 | `EMAIL_ALREADY_VERIFIED` | Resend called for an already-verified email |
 | 400 | `MALFORMED_JSON` | Request body isn't valid JSON (a frontend bug — the body was hand-built or truncated) |
 | 413 | `PAYLOAD_TOO_LARGE` | Request body is over 1 MB |
 | 415 | `UNSUPPORTED_REQUEST_BODY` | Body uses an encoding/charset the API doesn't accept — send UTF-8 JSON |
@@ -342,8 +358,26 @@ Request:
 { "email": "ada@example.com", "password": "Correct-Horse-Battery-1" }
 ```
 
-Response `200`, `data`: same `UserResponseDto` shape as register's response. The
-session is delivered via `Set-Cookie`, not the body — see the cookie table below.
+Response `200`, `data`: **one of two shapes** — branch on `mfaRequired`:
+
+- **Signed in** — same `UserResponseDto` shape as register's response. The session is
+  delivered via `Set-Cookie`, not the body — see the cookie table below.
+- **Two-factor code needed** (the account has 2FA on) — no cookies are set yet:
+
+  ```json
+  { "mfaRequired": true, "mfaToken": "q8Zk…" }
+  ```
+
+  Show the "Enter the 6-digit code from your authenticator app" screen (with a "Use a
+  recovery code instead" link) and send both to
+  [`POST /api/v1/auth/mfa/verify`](#post-apiv1authmfaverify). The token lasts 5 minutes
+  and allows 5 wrong codes; after that, send the user back to the password screen.
+
+```ts
+type LoginResponse = UserResponseDto | { mfaRequired: true; mfaToken: string };
+```
+
+`POST /api/v1/auth/google` returns the same union.
 
 Errors: `400 VALIDATION_FAILED`, `401 INVALID_CREDENTIALS`, `403 ACCOUNT_SUSPENDED`,
 `429 RATE_LIMITED`.
@@ -466,6 +500,183 @@ registration).
 
 Errors: `400 VALIDATION_FAILED`, `401 INVALID_VERIFICATION_TOKEN` (bad, expired, or
 already-used token), `429 RATE_LIMITED`.
+
+## Account security: 2FA, sessions, step-up
+
+Everything in this section is for any signed-in user (consumer, operator, rider, admin,
+merchant). All of it keeps working during a mandatory-2FA lockout (below), because these
+are the screens a locked-out user needs.
+
+### `POST /api/v1/auth/mfa/verify`
+
+**Public.** Second step of a 2FA sign-in. Send the `mfaToken` from login plus **either**
+a 6-digit `code` **or** a `recoveryCode`:
+
+```json
+{ "mfaToken": "q8Zk…", "code": "492039" }
+```
+
+```json
+{ "mfaToken": "q8Zk…", "recoveryCode": "abcde-fghij" }
+```
+
+Response `200`, `data`: `UserResponseDto`, with the session in `Set-Cookie` (exactly like
+a normal login).
+
+Errors: `401 INVALID_MFA_CODE` (wrong or already-used code; let them try again),
+`401 INVALID_MFA_CHALLENGE` (token expired, already used, or 5 wrong codes; go back to
+the password screen), `403 ACCOUNT_SUSPENDED`. 10/min per IP.
+
+UI notes: the code field should accept pasted codes with spaces. Recovery codes are
+case-insensitive, and the dash is optional.
+
+### `GET /api/v1/auth/mfa`
+
+Response `200`, `data`:
+
+```json
+{
+  "enabled": false,
+  "confirmedAt": null,
+  "recoveryCodesRemaining": 0,
+  "required": true,
+  "enrollmentDeadline": "2026-11-26T10:00:00.000Z"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `required` | This account must have 2FA (all admins). It can't be turned off |
+| `enrollmentDeadline` | Only when `required` and not yet enabled. After this, every admin route answers `403 MFA_ENROLLMENT_REQUIRED` until 2FA is set up. Show a banner counting down to it |
+| `recoveryCodesRemaining` | Warn when it's low (e.g. ≤ 2) and offer to regenerate |
+
+### `POST /api/v1/auth/mfa/totp/setup`
+
+**Needs a recent sign-in or step-up** (see [`/auth/reauth`](#post-apiv1authreauth)). A
+normal login counts for 10 minutes, so "turn on 2FA" right after signing in just works.
+No body.
+
+Response `200`, `data`:
+
+```json
+{
+  "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+  "otpauthUrl": "otpauth://totp/Locoomo%3Aada%40example.com?secret=…&issuer=Locoomo&algorithm=SHA1&digits=6&period=30",
+  "qrDataUrl": "data:image/png;base64,iVBORw0…"
+}
+```
+
+Show `qrDataUrl` as `<img src>`. Show `secret` under a "Can't scan? Enter this key"
+toggle. 2FA is **not on yet**: the user must enter a code from the app next. Calling
+setup again replaces the pending secret (new QR code).
+
+Errors: `403 REAUTH_REQUIRED`, `409 MFA_ALREADY_ENABLED`.
+
+### `POST /api/v1/auth/mfa/totp/confirm`
+
+```json
+{ "code": "492039" }
+```
+
+Turns 2FA on. Response `200`, `data`:
+
+```json
+{ "recoveryCodes": ["abcde-fghij", "klmno-pqrst", "…10 in total"] }
+```
+
+**These are shown once and never again.** Make the user download, copy or print them
+and tick "I've saved these" before leaving the screen. Each one works once if the phone
+is lost. A "2FA turned on" email is sent.
+
+Errors: `401 INVALID_MFA_CODE`, `409 MFA_SETUP_NOT_STARTED`, `409 MFA_ALREADY_ENABLED`.
+
+### `POST /api/v1/auth/mfa/recovery-codes`
+
+**Needs a recent step-up.** Replaces all recovery codes (old ones stop working).
+Response: `{ "recoveryCodes": [...] }`, same one-time display rules.
+
+Errors: `403 REAUTH_REQUIRED`, `409 MFA_NOT_ENABLED`.
+
+### `DELETE /api/v1/auth/mfa`
+
+**Needs a recent step-up.** Turns 2FA off (email sent). Response `200`, `data: null`.
+
+Errors: `403 REAUTH_REQUIRED`, `403 MFA_REQUIRED_FOR_ROLE` (admins can't; hide the
+button when `required` is true), `409 MFA_NOT_ENABLED`.
+
+### `POST /api/v1/auth/reauth`
+
+"Confirm it's you" before a sensitive action. Any route that needs it answers
+`403 REAUTH_REQUIRED`. On that error, open a confirm dialog, call this, then **retry the
+original request**. Send the factor the account uses:
+
+| Account | Send |
+|---|---|
+| 2FA on | `{ "code": "492039" }` or `{ "recoveryCode": "abcde-fghij" }`. A password alone is **not** accepted |
+| Password, no 2FA | `{ "password": "…" }` |
+| Google-only, no 2FA | `{ "googleIdToken": "…" }` (run Google sign-in again for the same account) |
+
+Use `GET /auth/mfa` (`enabled`) to pick which prompt to show.
+
+Response `200`, `data`: `{ "reauthenticatedUntil": "2026-11-12T10:10:00.000Z" }`, and a
+new `access_token` cookie. Sensitive actions are allowed until that time (10 minutes).
+
+Errors: `401 INVALID_CREDENTIALS` (wrong password or Google account),
+`401 INVALID_MFA_CODE`. 5/min.
+
+Routes that need a recent step-up so far: 2FA setup, recovery-code regeneration and
+turning 2FA off. Merchant live API keys, webhook URLs, bank accounts and team roles join
+this list as they ship.
+
+### `GET /api/v1/auth/sessions`
+
+Where the user is signed in. Response `200`, `data`:
+
+```json
+[
+  {
+    "id": "uuid",
+    "startedAt": "2026-11-01T08:00:00.000Z",
+    "lastActiveAt": "2026-11-12T09:58:00.000Z",
+    "ip": "102.89.4.10",
+    "userAgent": "Mozilla/5.0 (iPhone; …)",
+    "current": true
+  }
+]
+```
+
+Newest activity first. `lastActiveAt` is the last token refresh, so it's accurate to
+about 15 minutes. Parse `userAgent` for a friendly "Chrome on iPhone" label.
+
+### `DELETE /api/v1/auth/sessions/:id`
+
+Signs that device out **immediately** (its open tabs get `401` on their next request).
+Response `200`, `data: null`. `404 NOT_FOUND` if it's not one of the user's active
+sessions. Revoking your own `current` session works too; then treat it as a logout.
+
+### `POST /api/v1/auth/sessions/revoke-others`
+
+"Sign out of all other devices". Keeps the current one. Response `200`, `data`:
+`{ "revoked": 2 }`.
+
+Sessions also end on their own after a password reset (every session) and on logout
+(that device only).
+
+### `POST /api/v1/auth/verify-email/resend`
+
+Sends a fresh verification link to the signed-in user. Earlier links stop working.
+No body. Response `200`, `data: null`. Errors: `409 EMAIL_ALREADY_VERIFIED`. 3/min.
+
+Merchant screens require a verified email (`403 EMAIL_NOT_VERIFIED`). Show a "Check your
+inbox (resend)" banner on that error.
+
+### Mandatory 2FA for admins
+
+Every admin must turn on 2FA within **14 days** (from when they were invited, or from
+this release for existing admins). After the deadline, every admin route answers
+`403 MFA_ENROLLMENT_REQUIRED` until they do. Only these keep working:
+`GET/PATCH /users/me`, everything under `/auth/` above, and logout. On that error,
+route the admin straight to the 2FA setup screen.
 
 ### `POST /api/v1/users/invite`
 
