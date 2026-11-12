@@ -34,6 +34,23 @@ export function setSessionCookies(
   });
 }
 
+// Replaces only the access token (step-up re-authentication) — the refresh
+// token and session are unchanged.
+export function setAccessCookie(
+  res: Response,
+  accessToken: string,
+  expiresInSeconds: number,
+  secure: boolean,
+): void {
+  res.cookie(ACCESS_TOKEN_COOKIE, accessToken, {
+    httpOnly: true,
+    secure,
+    sameSite: 'strict',
+    path: '/',
+    maxAge: expiresInSeconds * 1000,
+  });
+}
+
 // Path must match what the cookie was set with — the browser identifies a
 // cookie by name+path+domain, so a mismatched path silently clears nothing.
 export function clearSessionCookies(res: Response): void {

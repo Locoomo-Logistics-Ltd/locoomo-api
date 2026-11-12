@@ -73,6 +73,17 @@ export const envSchema = z
     // Optional: without it every check is recorded as "unverified" instead
     // of blocking Node creation. An empty value counts as unset.
     GOOGLE_MAPS_API_KEY: optionalString(),
+    // Encrypts sensitive fields at rest (common/crypto/secret-box): TOTP
+    // (2FA) seeds, merchant KYC ID numbers, bank account numbers — each with
+    // its own derived sub-key. Generate like JWT_ACCESS_SECRET and set it in
+    // every deployed environment.
+    // Optional only so existing deploys boot: when unset the key is derived
+    // from JWT_ACCESS_SECRET — which then can't be rotated without breaking
+    // every enrolled 2FA device. Never change it once users have enrolled.
+    DATA_ENCRYPTION_KEY: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().min(32).optional(),
+    ),
     // Shared state across API replicas: rate-limit counters, auth caches
     // (with cross-instance cache busting) and the session denylist. Optional
     // — without it everything falls back to per-process memory, which is

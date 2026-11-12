@@ -8,6 +8,7 @@ import {
   Post,
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { AllowWithoutMfaEnrollment } from '../../../common/auth/decorators/account-requirements.decorator';
 import { CurrentUser } from '../../../common/auth/decorators/current-user.decorator';
 import { Roles } from '../../../common/auth/decorators/roles.decorator';
 import { UserRole } from '../../../common/auth/user-role.enum';
@@ -35,6 +36,7 @@ export class UsersController {
     return this.inviteUserService.invite(dto);
   }
 
+  @AllowWithoutMfaEnrollment()
   @Get('me')
   getMine(@CurrentUser() user: AuthenticatedUser): Promise<UserResponseDto> {
     return this.myProfileService.getMine(user.id);
@@ -44,6 +46,7 @@ export class UsersController {
   // "phone was never collected at signup" gap for both password and Google
   // accounts, and is the hard precondition OnboardRiderService/
   // OnboardNodeService check before letting Rider/NodeOperator onboard.
+  @AllowWithoutMfaEnrollment()
   @Patch('me')
   updateMine(
     @Body() dto: UpdateProfileDto,

@@ -11,3 +11,5 @@ export * from './principal';
 export * from './api-key-authenticator.registry';
 export * from './decorators/allow-api-key.decorator';
 export * from './decorators/current-principal.decorator';
+export * from './session-denylist';
+export * from './decorators/account-requirements.decorator';

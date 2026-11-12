@@ -38,6 +38,14 @@ export class RefreshTokenEntity {
   @Column({ type: 'timestamptz', nullable: true })
   revokedAt!: Date | null;
 
+  // Session metadata for "where you're signed in" (GET /auth/sessions).
+  // Copied onto each rotated token so the family's latest row describes it.
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  userAgent!: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  ip!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 }

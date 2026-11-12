@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EntityNotFoundException } from '../../../common/exceptions';
+import { AccountSuspendedException } from '../domain/exceptions/account-suspended.exception';
+import { UserStatus } from '../domain/user-status.enum';
 import { UserEntity } from '../infrastructure/entities/user.entity';
 
 @Injectable()
@@ -29,5 +31,18 @@ export class UserLookupService {
       throw new EntityNotFoundException('User', userId);
     }
     return user.phone;
+  }
+
+  // For finishing a sign-in (after 2FA): the account may have been
+  // suspended in the minutes since the password was checked.
+  async getActiveUserForSession(userId: string): Promise<UserEntity> {
+    const user = await this.users.findOneBy({ id: userId });
+    if (!user) {
+      throw new EntityNotFoundException('User', userId);
+    }
+    if (user.status === UserStatus.SUSPENDED) {
+      throw new AccountSuspendedException();
+    }
+    return user;
   }
 }

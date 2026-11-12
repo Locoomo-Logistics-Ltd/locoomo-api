@@ -1,13 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { SessionDenylist } from '../../../common/auth/session-denylist';
 import { AccountSuspendedException } from '../domain/exceptions/account-suspended.exception';
 import { InvalidRefreshTokenException } from '../domain/exceptions/invalid-refresh-token.exception';
 import { hashRefreshToken } from '../domain/refresh-token-hasher';
 import { UserStatus } from '../domain/user-status.enum';
 import { RefreshTokenEntity } from '../infrastructure/entities/refresh-token.entity';
 import { UserEntity } from '../infrastructure/entities/user.entity';
-import { IssuedSession, TokenIssuanceService } from './token-issuance.service';
+import {
+  IssuedSession,
+  SessionClient,
+  TokenIssuanceService,
+  UNKNOWN_CLIENT,
+} from './token-issuance.service';
 
 export interface RefreshResult {
   user: UserEntity;
@@ -20,9 +26,13 @@ export class RefreshSessionService {
     @InjectRepository(RefreshTokenEntity)
     private readonly refreshTokens: Repository<RefreshTokenEntity>,
     private readonly tokenIssuanceService: TokenIssuanceService,
+    private readonly sessionDenylist: SessionDenylist,
   ) {}
 
-  async refresh(rawToken: string): Promise<RefreshResult> {
+  async refresh(
+    rawToken: string,
+    client: SessionClient = UNKNOWN_CLIENT,
+  ): Promise<RefreshResult> {
     const stored = await this.refreshTokens.findOne({
       where: { tokenHash: hashRefreshToken(rawToken) },
       relations: { user: true },
@@ -41,6 +51,9 @@ export class RefreshSessionService {
         { familyId: stored.familyId },
         { revokedAt: new Date() },
       );
+      // …and kill the family's live access tokens too, not just its
+      // refresh tokens.
+      await this.sessionDenylist.revoke([stored.familyId]);
       throw new InvalidRefreshTokenException();
     }
 
@@ -58,6 +71,7 @@ export class RefreshSessionService {
     const session = await this.tokenIssuanceService.rotateSession(
       stored.user,
       stored.familyId,
+      client,
     );
 
     return { user: stored.user, session };

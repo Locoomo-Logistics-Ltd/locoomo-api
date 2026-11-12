@@ -13,6 +13,7 @@ import { AuthenticatedUser } from './authenticated-user';
 import { ALLOW_API_KEY_KEY } from './decorators/allow-api-key.decorator';
 import { IS_PUBLIC_KEY } from './decorators/public.decorator';
 import { looksLikeApiKey, Principal } from './principal';
+import { SessionDenylist } from './session-denylist';
 import { ACCESS_TOKEN_COOKIE } from './session-cookie-names';
 
 export interface RequestWithUser extends Request {
@@ -36,6 +37,7 @@ export class AuthGuard implements CanActivate {
     private readonly jwtService: JwtService,
     private readonly reflector: Reflector,
     private readonly apiKeyAuthenticators: ApiKeyAuthenticatorRegistry,
+    private readonly sessionDenylist: SessionDenylist,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -101,18 +103,30 @@ export class AuthGuard implements CanActivate {
       throw new UnauthenticatedException();
     }
 
+    let payload: AccessTokenPayload;
     try {
-      const payload =
-        await this.jwtService.verifyAsync<AccessTokenPayload>(token);
-      request.user = { id: payload.sub, role: payload.role };
-      request.principal = {
-        kind: 'user',
-        userId: payload.sub,
-        role: payload.role,
-      };
+      payload = await this.jwtService.verifyAsync<AccessTokenPayload>(token);
     } catch {
       throw new UnauthenticatedException();
     }
+
+    // One cache lookup (Redis or memory) per cookie request — the price of
+    // revocation taking effect immediately.
+    if (payload.sid && (await this.sessionDenylist.isRevoked(payload.sid))) {
+      throw new UnauthenticatedException();
+    }
+
+    request.user = {
+      id: payload.sub,
+      role: payload.role,
+      sessionId: payload.sid,
+      reauthAt: payload.reauthAt,
+    };
+    request.principal = {
+      kind: 'user',
+      userId: payload.sub,
+      role: payload.role,
+    };
   }
 }
 

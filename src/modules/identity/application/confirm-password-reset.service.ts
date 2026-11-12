@@ -6,9 +6,9 @@ import { OutboxService } from '../../notifications/application/outbox.service';
 import { InvalidResetTokenException } from '../domain/exceptions/invalid-reset-token.exception';
 import { hashPassword } from '../domain/password-hasher';
 import { PasswordResetTokenEntity } from '../infrastructure/entities/password-reset-token.entity';
-import { RefreshTokenEntity } from '../infrastructure/entities/refresh-token.entity';
 import { UserEntity } from '../infrastructure/entities/user.entity';
 import { ConfirmPasswordResetDto } from '../interface/dto/confirm-password-reset.dto';
+import { SessionService } from './session.service';
 
 @Injectable()
 export class ConfirmPasswordResetService {
@@ -18,6 +18,7 @@ export class ConfirmPasswordResetService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly outboxService: OutboxService,
+    private readonly sessionService: SessionService,
   ) {}
 
   async confirmReset(dto: ConfirmPasswordResetDto): Promise<void> {
@@ -49,11 +50,7 @@ export class ConfirmPasswordResetService {
 
       // a password reset invalidates every session, not
       // just whichever device requested it.
-      await manager.update(
-        RefreshTokenEntity,
-        { userId: stored.userId },
-        { revokedAt: new Date() },
-      );
+      await this.sessionService.revokeAllForUser(stored.userId, manager);
 
       await this.outboxService.enqueueEmail(
         {

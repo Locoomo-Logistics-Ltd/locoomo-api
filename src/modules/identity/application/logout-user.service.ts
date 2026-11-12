@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
+import { SessionDenylist } from '../../../common/auth/session-denylist';
 import { hashRefreshToken } from '../domain/refresh-token-hasher';
 import { RefreshTokenEntity } from '../infrastructure/entities/refresh-token.entity';
 
@@ -12,6 +13,7 @@ export class LogoutUserService {
   constructor(
     @InjectRepository(RefreshTokenEntity)
     private readonly refreshTokens: Repository<RefreshTokenEntity>,
+    private readonly sessionDenylist: SessionDenylist,
   ) {}
 
   // No refresh token to revoke is not an error — logging out when already
@@ -21,9 +23,17 @@ export class LogoutUserService {
       return;
     }
 
+    const stored = await this.refreshTokens.findOneBy({
+      tokenHash: hashRefreshToken(rawToken),
+    });
+    if (!stored) {
+      return;
+    }
     await this.refreshTokens.update(
-      { tokenHash: hashRefreshToken(rawToken) },
+      { familyId: stored.familyId, revokedAt: IsNull() },
       { revokedAt: new Date() },
     );
+    // The session's still-valid access token stops working now too.
+    await this.sessionDenylist.revoke([stored.familyId]);
   }
 }

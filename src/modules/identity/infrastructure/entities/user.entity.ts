@@ -65,6 +65,12 @@ export class UserEntity {
   @Column({ type: 'text', array: true, default: () => "'{}'" })
   adminPermissions!: string[];
 
+  // When 2FA became mandatory for this account (admins). Null = not
+  // mandatory. The user then has MFA_ENROLLMENT_GRACE_DAYS to enrol before
+  // admin routes are refused (MfaEnrollmentGuard).
+  @Column({ type: 'timestamptz', nullable: true })
+  mfaRequiredSince!: Date | null;
+
   // NDPA — set when the user accepts the ToS/Privacy Policy. Null until then.
   @Column({ type: 'timestamptz', nullable: true })
   consentAcceptedAt!: Date | null;

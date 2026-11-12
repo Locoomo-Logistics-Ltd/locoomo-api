@@ -51,6 +51,8 @@ async function seed(): Promise<void> {
         // The bootstrap admin is the one who grants everyone else's
         // permissions, so it must hold `super`.
         adminPermissions: [AdminPermission.SUPER],
+        // 2FA is mandatory for admins; the grace period starts now.
+        mfaRequiredSince: new Date(),
         status: UserStatus.ACTIVE,
         consentAcceptedAt: new Date(),
         emailVerifiedAt: new Date(),
