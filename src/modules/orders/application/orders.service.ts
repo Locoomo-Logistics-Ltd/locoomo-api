@@ -10,6 +10,7 @@ import { generateTrackingCode } from '../domain/tracking-code';
 import { OrderEventEntity } from '../infrastructure/entities/order-event.entity';
 import { OrderEntity } from '../infrastructure/entities/order.entity';
 import { OrderStatusEventBus } from './order-status-event-bus';
+import { PublicHolidayService } from './public-holiday.service';
 
 // 32^8 possible codes — a same-transaction retry loop is the correctness
 // guarantee (the unique index is what actually prevents a collision), this
@@ -38,7 +39,10 @@ export interface CreateOrderFromPaidIntentFields {
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly statusEvents: OrderStatusEventBus) {}
+  constructor(
+    private readonly statusEvents: OrderStatusEventBus,
+    private readonly holidays: PublicHolidayService,
+  ) {}
 
   async createFromPaidIntent(
     fields: CreateOrderFromPaidIntentFields,
@@ -264,14 +268,30 @@ export class OrdersService {
     orderId: string,
     manager: EntityManager,
   ): Promise<OrderEntity> {
+    const deadline = await this.holidays.collectionDeadline(new Date());
     const order = await this.transition(
       orderId,
       OrderStatus.ARRIVED_AT_DESTINATION,
       OrderStatus.READY_FOR_COLLECTION,
       manager,
       OrderEventType.READY_FOR_COLLECTION,
+      { collectionDeadlineAt: deadline.toISOString() },
     );
-    return this.placeOnShelf(order, order.destinationNodeId, manager);
+    await manager.query(
+      `UPDATE orders SET "collectionDeadlineAt" = $2, "collectionRemindersSent" = 0
+        WHERE id = $1`,
+      [orderId, deadline],
+    );
+    const shelved = await this.placeOnShelf(
+      order,
+      order.destinationNodeId,
+      manager,
+    );
+    return {
+      ...shelved,
+      collectionDeadlineAt: deadline,
+      collectionRemindersSent: 0,
+    };
   }
 
   // Narrow export for handoffs' final collection step. eventPayload carries
@@ -308,8 +328,9 @@ export class OrdersService {
       OrderStatus.RETURN_INITIATED,
       manager,
       OrderEventType.RETURN_INITIATED,
-      eventPayload,
+      { ...eventPayload, reason: 'delivery_failed' },
     );
+    await this.setReturnReason(orderId, 'delivery_failed', manager);
     return this.transition(
       orderId,
       OrderStatus.RETURN_INITIATED,
@@ -317,6 +338,124 @@ export class OrdersService {
       manager,
       OrderEventType.RETURN_IN_TRANSIT,
     );
+  }
+
+  // Not collected by the deadline (D15): off the destination shelf and
+  // waiting for a return courier (handoffs dispatches the return leg in
+  // the same transaction). The receiver's code is voided by the caller.
+  async markUncollected(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    const order = await this.transition(
+      orderId,
+      OrderStatus.READY_FOR_COLLECTION,
+      OrderStatus.RETURN_INITIATED,
+      manager,
+      OrderEventType.RETURN_INITIATED,
+      { reason: 'not_collected' },
+    );
+    await this.setReturnReason(orderId, 'not_collected', manager);
+    // The delivery rider's job ended at the destination; the return gets
+    // its own courier (assignReturnCourier needs the slot empty).
+    await manager.query(`UPDATE orders SET "riderId" = NULL WHERE id = $1`, [
+      orderId,
+    ]);
+    // The parcel stays on the destination shelf until the return courier
+    // collects it; the shelf is cleared at pickup (markReturnPickedUp).
+    return { ...order, riderId: null, returnReason: 'not_collected' };
+  }
+
+  // A courier took the return job from the destination. No status change
+  // (the order is RETURN_INITIATED until pickup); an in-house rider is
+  // recorded so only they can request the pickup code. "riderId IS NULL"
+  // is the race guard, as in assignRider.
+  async assignReturnCourier(
+    orderId: string,
+    courier: { riderId: string | null; providerKey: string },
+    manager: EntityManager,
+  ): Promise<void> {
+    const [rows] = await manager.query<[{ id: string }[], number]>(
+      `UPDATE orders SET "riderId" = $2, "updatedAt" = now()
+        WHERE id = $1 AND status = $3 AND "riderId" IS NULL
+        RETURNING id`,
+      [orderId, courier.riderId, OrderStatus.RETURN_INITIATED],
+    );
+    if (rows.length === 0) {
+      throw new IllegalOrderTransitionException(
+        orderId,
+        OrderStatus.RETURN_INITIATED,
+        OrderStatus.RETURN_INITIATED,
+      );
+    }
+    await this.appendEvent(
+      manager,
+      orderId,
+      OrderEventType.RETURN_COURIER_ASSIGNED,
+      courier,
+    );
+  }
+
+  async releaseReturnCourier(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown> = {},
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE orders SET "riderId" = NULL, "updatedAt" = now()
+        WHERE id = $1 AND status = $2`,
+      [orderId, OrderStatus.RETURN_INITIATED],
+    );
+    await this.appendEvent(
+      manager,
+      orderId,
+      OrderEventType.RETURN_COURIER_RELEASED,
+      eventPayload,
+    );
+  }
+
+  // The return courier collected the parcel from the destination shelf.
+  async markReturnPickedUp(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    const order = await this.transition(
+      orderId,
+      OrderStatus.RETURN_INITIATED,
+      OrderStatus.RETURN_IN_TRANSIT,
+      manager,
+      OrderEventType.RETURN_IN_TRANSIT,
+    );
+    return this.clearShelf(order, manager);
+  }
+
+  async recordCollectionReminder(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown>,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE orders SET "collectionRemindersSent" = "collectionRemindersSent" + 1
+        WHERE id = $1`,
+      [orderId],
+    );
+    await this.appendEvent(
+      manager,
+      orderId,
+      OrderEventType.COLLECTION_REMINDER_SENT,
+      eventPayload,
+    );
+  }
+
+  private async setReturnReason(
+    orderId: string,
+    reason: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(`UPDATE orders SET "returnReason" = $2 WHERE id = $1`, [
+      orderId,
+      reason,
+    ]);
   }
 
   // The courier handed the parcel back at the origin Node's counter.

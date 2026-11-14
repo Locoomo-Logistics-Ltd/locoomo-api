@@ -114,14 +114,16 @@ Normal delivery, in order:
 | 3 | `rider_assigned` | A courier or rider accepted and is coming to pick up |
 | 4 | `in_transit` | Picked up, on the way to the destination Node |
 | 5 | `arrived_at_destination` | At the destination Node, being checked in |
-| 6 | `ready_for_collection` | Receiver has been emailed a collection code |
+| 6 | `ready_for_collection` | Receiver has been sent a collection code. They have **7 working days** (Mon–Fri, Lagos time, excluding public holidays) to collect: `collectionDeadlineAt` |
 | 7 | `completed` | Receiver collected the parcel ✓ |
 
-Return (branches off `in_transit` when the courier can't deliver):
+Return: branches off `in_transit` when the courier can't deliver (`returnReason:
+"delivery_failed"`), or off `ready_for_collection` when nobody collects by the deadline
+(`returnReason: "not_collected"`):
 
 | # | `status` | Meaning |
 |---|---|---|
-| R1 | `return_initiated` | Delivery failed; the courier will bring it back |
+| R1 | `return_initiated` | Delivery failed: the courier will bring it back. Not collected: still on the destination shelf; a return courier is being booked |
 | R2 | `return_in_transit` | Courier is on the way back to the origin Node |
 | R3 | `returned_to_origin` | Back at the origin Node, being checked in |
 | R4 | `ready_for_sender_collection` | Sender has been emailed a collection code |
@@ -567,6 +569,8 @@ An unknown status → `400 VALIDATION_FAILED` listing the allowed values.
   },
   "amountKobo": 434400,
   "status": "rider_assigned",
+  "collectionDeadlineAt": null,
+  "returnReason": null,
   "createdAt": "2026-10-25T09:58:12.000Z",
   "trackingUrl": "https://app.locoomo.com/track/LCM-7K3M-Q9TD?t=vH7-s18f1JP91ZfyVjm7Nq",
   "labelInstructions": {
@@ -646,7 +650,7 @@ Node's orders return `404`.
 | `queue` | Shows |
 |---|---|
 | `to_receive` | Paid parcels the sender hasn't dropped off yet (origin) |
-| `to_dispatch` | On the origin shelf, waiting for / being handed to a courier |
+| `to_dispatch` | On the shelf, waiting for / being handed to a courier: at the origin for delivery, or at the **destination for an uncollected parcel going back** (`status: "return_initiated"`, `nextAction: "hand_to_rider"` / `"hand_to_courier"`) |
 | `incoming` | Heading here — deliveries, and returns coming back |
 | `to_collect` | Waiting for the receiver (or, on returns, the sender) to collect |
 | *(omitted)* | Full history of every order that touched the caller's Nodes |
@@ -822,9 +826,12 @@ Request:
 { "type": "rider_pickup", "code": "948212" }
 ```
 
-`type` is `rider_pickup` at the origin, `rider_arrival` at the destination. Response
-`200`: an `OrderTransition` with the new `status` (`in_transit` after a pickup,
-`arrived_at_destination` after an arrival).
+`type` is `rider_pickup` where the rider collects and `rider_arrival` where they hand over.
+For a delivery that's the origin then the destination; for the **return of an uncollected
+parcel** it's the reverse: pickup at the destination Node, arrival at the origin. Response
+`200`: an `OrderTransition` with the new `status` (`in_transit` / `arrived_at_destination`
+for a delivery; `return_in_transit` / `returned_to_origin` for a return). The other Node
+gets `404`.
 
 Errors: `401 INVALID_HANDOFF_CODE` — wrong or expired code. Codes last 5 min; after 5
 wrong tries the code is locked and the rider must generate a new one. Show *"Code didn't
@@ -832,8 +839,10 @@ match — ask the rider for a fresh code"*.
 
 ### 5.7 Intake at the destination — `POST /handoffs/orders/:id/intake`
 
-No body. Safe to repeat. Emails the receiver a collection code (valid 60 min). Response
-`200`:
+No body. Safe to repeat. Sends the receiver a collection code by email (and SMS where
+configured). The code is valid until the end of the collection window, **7 working days**;
+the email says "Collect it by {day}". Reminders follow on working days 5 and 6, and an
+uncollected parcel goes back to the sender automatically at the deadline. Response `200`:
 
 ```json
 {
@@ -864,7 +873,8 @@ Errors: `401 INVALID_HANDOFF_CODE` (wrong, expired or locked — offer **Resend 
 #### Resend the code — `POST /handoffs/orders/:id/collection-code/resend`
 
 No body. Rate limit: 5/min. Works for the receiver (`ready_for_collection`) and, on
-returns, the sender (`ready_for_sender_collection`). The new code replaces the old one.
+returns, the sender (`ready_for_sender_collection`). The new code replaces the old one;
+for the receiver it keeps the original deadline (a resend doesn't extend the window).
 Response `200`:
 
 ```json
@@ -930,7 +940,14 @@ Errors: `403 NODE_NOT_ACTIVE` (station not approved yet), `404 NOT_FOUND`,
 
 #### `GET /handoffs/available-orders?latitude=6.5244&longitude=3.3792`
 
-Unclaimed parcels at origin Nodes, nearest first. Response `200`:
+Unclaimed jobs, nearest pickup first. Two kinds (`jobType`):
+
+- `delivery`: from the origin Node to the destination Node.
+- `return`: a parcel nobody collected, from the **destination** shelf back to the origin.
+
+Use `pickupNode*` and `dropoffNode*` for the job card and navigation: they're right for
+both kinds. The handover codes work the same way (`rider_pickup` at the pickup Node,
+`rider_arrival` at the drop-off Node). Response `200`:
 
 ```json
 {
@@ -947,7 +964,14 @@ Unclaimed parcels at origin Nodes, nearest first. Response `200`:
       "parcelDescription": "Two pairs of shoes in a shoebox",
       "parcelSize": "small",
       "createdAt": "2026-10-25T09:58:12.000Z",
-      "distanceMeters": 2300
+      "distanceMeters": 2300,
+      "jobType": "delivery",
+      "pickupNodeId": "7a1d9e42-3c5b-4f8a-b2e6-0c9d4a7f1e38",
+      "pickupNodeName": "Ejigbo Station",
+      "pickupNodeAddress": "12 Ikotun Road, Ejigbo",
+      "dropoffNodeId": "c84b2f17-6e3a-4d9c-8a51-f27e0b6d3a94",
+      "dropoffNodeName": "Pedro Road Station",
+      "dropoffNodeAddress": "45 Pedro Road, Shomolu"
     }
   ],
   "page": 1,
@@ -1054,10 +1078,16 @@ Response `200` (in progress):
   },
   "courierLabel": "Sendii",
   "etaMinutes": 18,
+  "collectBy": null,
   "nextStep": "The parcel is on its way to Pedro Road Station. We'll email the receiver a collection code when it's ready.",
   "updatedAt": "2026-10-25T10:34:10.000Z"
 }
 ```
+
+`collectBy` is set while the parcel is `ready_for_collection`: show "Collect by {day}" next
+to the destination. `collectionDeadlineAt` (same moment) and `returnReason`
+(`not_collected` | `delivery_failed`) also appear on the sender's order
+(`GET /orders/:id`).
 
 Response `200` (returned to sender) — `origin` gains `address`, `state` and
 `openingHours`, because that's where the parcel is now (`openingHours` trimmed to one day
@@ -1129,6 +1159,20 @@ the code and the last 4 digits."*
 ## 8. Admin app
 
 **Admin only.** Paths are under `/admin/logistics` unless stated.
+
+### 8.0 Public holidays — `/admin/public-holidays` (`ops`)
+
+Public holidays don't count as working days for collection windows and reminders. Add
+them as they're declared (federal holidays are often announced late).
+
+| Endpoint | |
+|---|---|
+| `GET /admin/public-holidays?from=2026-01-01` | `[{ "date": "2026-12-25", "name": "Christmas Day" }]`, oldest first |
+| `POST /admin/public-holidays` | `{ "date": "2026-12-25", "name": "Christmas Day" }` (Lagos date). Adding an existing date renames it. `201` |
+| `DELETE /admin/public-holidays/2026-12-25` | `204`; `404` if it isn't listed |
+
+A new holiday affects parcels shelved after it's added; existing deadlines aren't
+recalculated.
 
 ### 8.1 Couriers
 

@@ -11,13 +11,9 @@ import { ReceiverNotificationService } from './receiver-notification.service';
 
 const IDEMPOTENCY_SCOPE = 'handoffs.confirm-intake';
 
-// The receiver has no account to check a status page with (decision #7),
-// so a 60-minute window gives them time to notice the email without the
-// operator having to babysit the counter — ResendCollectionCodeService
-// covers the case where that isn't enough. How long an order can sit
-// ARRIVED_AT_DESTINATION/READY_FOR_COLLECTION before it's treated as
-// abandoned is E6, still unresolved — not decided here.
-const COLLECTION_CODE_TTL_MINUTES = 60;
+// The receiver's code lasts the whole collection window (D15, plan §5.4):
+// 7 working days, then an uncollected parcel goes back to the sender
+// (CollectionWindowService). This resolves E6.
 
 // Destination-side equivalent of ConfirmDropOffService: a Node operator
 // confirming the parcel physically arrived at their counter (the rider
@@ -56,17 +52,18 @@ export class ConfirmIntakeService {
               orderId,
               manager,
             );
-            const issued = await this.handoffCodeIssuerService.issue(
+            const deadline = order.collectionDeadlineAt!;
+            const issued = await this.handoffCodeIssuerService.issueUntil(
               manager,
               orderId,
               HandoffCodeType.RECEIVER_COLLECTION,
               null,
-              COLLECTION_CODE_TTL_MINUTES,
+              deadline,
             );
             await this.receiverNotificationService.enqueueReadyForCollection(
               order,
               issued.code,
-              COLLECTION_CODE_TTL_MINUTES,
+              deadline,
               manager,
             );
             return order;

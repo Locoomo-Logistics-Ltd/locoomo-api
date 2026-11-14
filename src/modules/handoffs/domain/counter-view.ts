@@ -62,6 +62,9 @@ const DESTINATION_ACTIONS: Record<string, NextAction> = {
   in_transit: 'receive_from_rider',
   arrived_at_destination: 'intake',
   ready_for_collection: 'hand_to_receiver',
+  // Not collected in time: still on this shelf, waiting for the return
+  // courier (D15).
+  return_initiated: 'hand_to_rider',
 };
 
 // How the current courier proves a handover (from the delivery leg):

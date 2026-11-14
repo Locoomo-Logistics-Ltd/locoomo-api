@@ -19,9 +19,14 @@ import {
 const QUEUE_FILTERS: Record<NodeQueue, string> = {
   // Paid, sender hasn't dropped it off yet.
   to_receive: `o."originNodeId" = ANY($1) AND o.status = 'awaiting_drop_off'`,
-  // On the origin shelf, waiting for or being handed to a rider.
-  to_dispatch: `o."originNodeId" = ANY($1)
-                AND o.status IN ('parcel_received_at_origin', 'rider_assigned')`,
+  // On the shelf, waiting for or being handed to a rider: at the origin
+  // for delivery, or at the destination for the return of a parcel nobody
+  // collected.
+  to_dispatch: `(o."originNodeId" = ANY($1)
+                AND o.status IN ('parcel_received_at_origin', 'rider_assigned'))
+               OR (o."destinationNodeId" = ANY($1)
+                AND o.status = 'return_initiated'
+                AND o."shelfNodeId" = o."destinationNodeId")`,
   // Heading to the caller's Node — a delivery, or a return coming back.
   incoming: `(o."destinationNodeId" = ANY($1)
               AND o.status IN ('rider_assigned', 'in_transit'))

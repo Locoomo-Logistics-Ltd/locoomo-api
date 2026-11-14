@@ -1,12 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
+import { formatLagosDay } from '../../../common/time/working-days';
 import { escapeHtml } from '../../../common/html/escape-html';
 import { OutboxService } from '../../notifications/application/outbox.service';
 import { TrackingEmailService } from '../../tracking/application/tracking-email.service';
 
 interface OrderForReceiverEmail {
   trackingCode: string;
-  receiverEmail: string;
+  // Null for merchant parcels whose buyer gave no email (SMS/relay only).
+  receiverEmail: string | null;
+  receiverPhone?: string | null;
   parcelDescription: string;
   destinationNodeId: string;
 }
@@ -34,6 +37,9 @@ export class ReceiverNotificationService {
     order: OrderForReceiverEmail,
     manager: EntityManager,
   ): Promise<void> {
+    if (!order.receiverEmail) {
+      return;
+    }
     const destination = await this.destinationOf(order, manager);
     const tracking = await this.trackingEmailService.trackingBlock(
       order.trackingCode,
@@ -63,13 +69,13 @@ export class ReceiverNotificationService {
   async enqueueReadyForCollection(
     order: OrderForReceiverEmail,
     collectionCode: string,
-    codeTtlMinutes: number,
+    collectBy: Date,
     manager: EntityManager,
   ): Promise<void> {
     await this.enqueueCollectionCode(
       order,
       collectionCode,
-      codeTtlMinutes,
+      collectBy,
       'Your Locoomo parcel is ready for collection',
       `Your parcel (${order.parcelDescription}) has arrived and is ready for collection.`,
       manager,
@@ -79,17 +85,54 @@ export class ReceiverNotificationService {
   async enqueueNewCollectionCode(
     order: OrderForReceiverEmail,
     collectionCode: string,
-    codeTtlMinutes: number,
+    collectBy: Date,
     manager: EntityManager,
   ): Promise<void> {
     await this.enqueueCollectionCode(
       order,
       collectionCode,
-      codeTtlMinutes,
+      collectBy,
       'Your new Locoomo collection code',
       `Here's a new collection code for your parcel (${order.parcelDescription}).`,
       manager,
     );
+  }
+
+  // Working days 5 and 6 of the window (D15). The code itself isn't
+  // repeated (only its hash is kept); the Node can send a new one.
+  async enqueueCollectionReminder(
+    order: OrderForReceiverEmail,
+    collectBy: Date,
+    manager: EntityManager,
+  ): Promise<void> {
+    const destination = await this.destinationOf(order, manager);
+    const where = `${destination.name}, ${destination.address}, ${destination.city}`;
+    const deadline = formatLagosDay(collectBy);
+    const text =
+      `Your parcel (${order.parcelDescription}) is still waiting for you at ${where}. ` +
+      `Collect it by ${deadline}, or it goes back to the sender. ` +
+      `Bring the collection code we sent you; if you've lost it, the staff can send a new one.`;
+    if (order.receiverEmail) {
+      await this.outboxService.enqueueEmail(
+        {
+          to: order.receiverEmail,
+          subject: `Reminder: collect your parcel by ${deadline}`,
+          text,
+          html: `<p>${escapeHtml(text)}</p>`,
+        },
+        manager,
+      );
+    }
+    if (order.receiverPhone) {
+      await this.outboxService.enqueueSms(
+        {
+          to: order.receiverPhone,
+          body: `Locoomo: your parcel ${order.trackingCode} is waiting at ${destination.name}. Collect by ${deadline} or it returns to the sender.`,
+          tag: 'collection_reminder',
+        },
+        manager,
+      );
+    }
   }
 
   // The collection code comes first in the text — it's what the receiver
@@ -97,35 +140,49 @@ export class ReceiverNotificationService {
   private async enqueueCollectionCode(
     order: OrderForReceiverEmail,
     collectionCode: string,
-    codeTtlMinutes: number,
+    collectBy: Date,
     subject: string,
     intro: string,
     manager: EntityManager,
   ): Promise<void> {
     const destination = await this.destinationOf(order, manager);
-    const tracking = await this.trackingEmailService.trackingBlock(
-      order.trackingCode,
-    );
     const where = `${destination.name}, ${destination.address}, ${destination.city}`;
+    const deadline = formatLagosDay(collectBy);
     const instructions =
       `Give this code to the staff at ${where}, along with your name, to collect your parcel. ` +
-      `The code expires in ${codeTtlMinutes} minutes.`;
+      `Collect it by ${deadline}; after that it goes back to the sender.`;
 
-    await this.outboxService.enqueueEmail(
-      {
-        to: order.receiverEmail,
-        subject,
-        text:
-          `Your collection code is: ${collectionCode}\n\n` +
-          `${intro}\n${instructions}\n\n${tracking.text}`,
-        html:
-          `<p>Your collection code is: <strong style="font-size:20px">${collectionCode}</strong></p>` +
-          `<p>${escapeHtml(intro)}</p><p>${escapeHtml(instructions)}</p>` +
-          tracking.html,
-        attachments: tracking.attachments,
-      },
-      manager,
-    );
+    if (order.receiverEmail) {
+      const tracking = await this.trackingEmailService.trackingBlock(
+        order.trackingCode,
+      );
+      await this.outboxService.enqueueEmail(
+        {
+          to: order.receiverEmail,
+          subject,
+          text:
+            `Your collection code is: ${collectionCode}\n\n` +
+            `${intro}\n${instructions}\n\n${tracking.text}`,
+          html:
+            `<p>Your collection code is: <strong style="font-size:20px">${collectionCode}</strong></p>` +
+            `<p>${escapeHtml(intro)}</p><p>${escapeHtml(instructions)}</p>` +
+            tracking.html,
+          attachments: tracking.attachments,
+        },
+        manager,
+      );
+    }
+    // SMS where configured (D10): skipped silently otherwise.
+    if (order.receiverPhone) {
+      await this.outboxService.enqueueSms(
+        {
+          to: order.receiverPhone,
+          body: `Locoomo: your parcel is ready at ${destination.name}. Collection code ${collectionCode}. Collect by ${deadline}.`,
+          tag: 'collection_code',
+        },
+        manager,
+      );
+    }
   }
 
   private async destinationOf(

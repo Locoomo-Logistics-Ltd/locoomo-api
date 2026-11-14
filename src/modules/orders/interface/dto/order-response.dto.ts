@@ -29,6 +29,11 @@ export class OrderResponseDto {
   parcel!: ParcelView;
   amountKobo!: number;
   status!: OrderStatus;
+  // While on the destination shelf: collect by this time or it comes back
+  // to you (7 working days, D15).
+  collectionDeadlineAt!: Date | null;
+  // Set while/after it's returning: not_collected | delivery_failed.
+  returnReason!: string | null;
   createdAt!: Date;
   // Public tracking page link for the sender to share with the receiver
   // (WhatsApp/SMS) — carries the signed token, so treat it like the order
@@ -63,6 +68,8 @@ export class OrderResponseDto {
     dto.parcel = toParcelView(order);
     dto.amountKobo = order.amountKobo;
     dto.status = order.status;
+    dto.collectionDeadlineAt = order.collectionDeadlineAt;
+    dto.returnReason = order.returnReason;
     dto.createdAt = order.createdAt;
     dto.trackingUrl = trackingUrl;
     dto.delivery = delivery;

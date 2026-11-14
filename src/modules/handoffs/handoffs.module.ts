@@ -9,6 +9,7 @@ import { NodesModule } from '../nodes/nodes.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersModule } from '../orders/orders.module';
 import { RidersModule } from '../riders/riders.module';
+import { CollectionWindowService } from './application/collection-window.service';
 import { AcceptOrderService } from './application/accept-order.service';
 import { BrowseAvailableOrdersService } from './application/browse-available-orders.service';
 import { ConfirmCollectionService } from './application/confirm-collection.service';
@@ -77,6 +78,7 @@ import { HandoffsController } from './interface/handoffs.controller';
     ReturnCollectionService,
     DeliveryProgressListener,
     CourierHandoverQueryService,
+    CollectionWindowService,
   ],
 })
 export class HandoffsModule {}

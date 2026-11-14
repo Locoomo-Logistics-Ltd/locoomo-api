@@ -10,6 +10,11 @@ export enum OrderEventType {
   READY_FOR_COLLECTION = 'ready_for_collection',
   COLLECTED_BY_RECEIVER = 'collected_by_receiver',
   RETURN_INITIATED = 'return_initiated',
+  // A courier took (or let go of) the return job from the destination.
+  RETURN_COURIER_ASSIGNED = 'return_courier_assigned',
+  RETURN_COURIER_RELEASED = 'return_courier_released',
+  // Receiver reminded to collect before the deadline.
+  COLLECTION_REMINDER_SENT = 'collection_reminder_sent',
   RETURN_IN_TRANSIT = 'return_in_transit',
   RETURNED_TO_ORIGIN = 'returned_to_origin',
   READY_FOR_SENDER_COLLECTION = 'ready_for_sender_collection',

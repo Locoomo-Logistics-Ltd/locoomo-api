@@ -109,6 +109,19 @@ export class OrderEntity {
   @Column({ type: 'int', nullable: true })
   shelfNumber!: number | null;
 
+  // End of the collection window (D15): set when shelved at the
+  // destination. Past it, an uncollected parcel goes back to the sender.
+  @Column({ type: 'timestamptz', nullable: true })
+  collectionDeadlineAt!: Date | null;
+
+  @Column({ type: 'smallint', default: 0 })
+  collectionRemindersSent!: number;
+
+  // Why it's going back: not_collected | delivery_failed (later
+  // merchant_request, refused, …).
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  returnReason!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

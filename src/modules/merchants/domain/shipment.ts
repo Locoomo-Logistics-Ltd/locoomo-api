@@ -154,25 +154,9 @@ export function generateCollectionCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, '0');
 }
 
-// Collection window (D15): 7 working days, Monday–Friday in Lagos time
-// (UTC+1, no DST), ending at 23:59:59 local on the last day. Public
-// holidays are added with the logistics core (M3).
+// Collection window (D15): 7 working days (common/time/working-days).
 export const COLLECTION_WORKING_DAYS = 7;
-const LAGOS_OFFSET_MS = 60 * 60 * 1000;
-
-export function addWorkingDays(from: Date, days: number): Date {
-  const local = new Date(from.getTime() + LAGOS_OFFSET_MS);
-  let added = 0;
-  while (added < days) {
-    local.setUTCDate(local.getUTCDate() + 1);
-    const weekday = local.getUTCDay();
-    if (weekday !== 0 && weekday !== 6) {
-      added++;
-    }
-  }
-  local.setUTCHours(23, 59, 59, 0);
-  return new Date(local.getTime() - LAGOS_OFFSET_MS);
-}
+export { addWorkingDays } from '../../../common/time/working-days';
 
 // Drop-off deadline before an unreceived shipment expires (§7.1).
 export const DROP_DEADLINE_DAYS = { hub: 60, node: 14 } as const;
