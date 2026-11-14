@@ -129,7 +129,15 @@ Return: branches off `in_transit` when the courier can't deliver (`returnReason:
 | R4 | `ready_for_sender_collection` | Sender has been emailed a collection code |
 | R5 | `return_completed` | Sender collected the parcel ✓ |
 
-Also `cancelled` and `disputed` — set by Admins, never shown on the public page.
+Ended early:
+
+| `status` | Meaning |
+|---|---|
+| `refused` | The origin Node turned it away at drop-off (`refusal.reason`: `prohibited`, `damaged`, `unsafe`, `packaging`, `other`). The sender is emailed why |
+| `exception` | Lost or damaged in our care (set by an admin, `ops`). The sender is emailed |
+| `cancelled` | Ended before drop-off |
+
+Also `disputed` (set by Admins, never shown on the public page).
 
 ---
 
@@ -571,6 +579,9 @@ An unknown status → `400 VALIDATION_FAILED` listing the allowed values.
   "status": "rider_assigned",
   "collectionDeadlineAt": null,
   "returnReason": null,
+  "collection": null,
+  "refusal": null,
+  "exception": null,
   "createdAt": "2026-10-25T09:58:12.000Z",
   "trackingUrl": "https://app.locoomo.com/track/LCM-7K3M-Q9TD?t=vH7-s18f1JP91ZfyVjm7Nq",
   "labelInstructions": {
@@ -782,6 +793,28 @@ action endpoint returns:
 Show *"Put it on shelf **10**"*. The courier is booked in the background; the order moves
 to `rider_assigned` (`nextAction: hand_to_courier` or `hand_to_rider`) once someone accepts.
 
+#### Refuse at drop-off — `POST /handoffs/orders/:id/refuse`
+
+Origin staff only, while `awaiting_drop_off`. For parcels that can't travel: hand it back to
+the person who brought it.
+
+```json
+{ "reason": "prohibited", "note": "Contains a lithium battery pack", "photoPublicId": "counter/<your user id>/abc123" }
+```
+
+`reason`: `prohibited`, `damaged`, `unsafe`, `packaging`, `other`. `note` (≤ 500 chars) is
+shown to the sender. `photoPublicId` is optional: a photo of the parcel, uploaded first
+(below). Response `200`: an `OrderTransition` with `"status": "refused"`. The origin
+slot is freed and the sender is emailed. Errors: `409 ILLEGAL_ORDER_TRANSITION` (already
+dropped off or refused), `422 UPLOAD_NOT_FOUND`.
+
+#### Counter photos — `POST /handoffs/upload-signature`
+
+Node staff. No body. Returns a Cloudinary signature (`signature`, `timestamp`, `apiKey`,
+`cloudName`, `folder`) for one private upload. Upload the photo straight to Cloudinary with
+`type=authenticated`, then send its `public_id` as `photoPublicId`. Photos must be in your
+own folder (`counter/<your user id>/…`).
+
 ### 5.5 Handover to/from an external courier — `GET /handoffs/orders/:id/courier-handover`
 
 When `nextAction` is `hand_to_courier` or `receive_from_courier`. Rate limit: 20/min.
@@ -882,6 +915,34 @@ Response `200`:
 ```
 
 The code itself is only emailed, never returned. Error: `409 ORDER_NOT_READY_FOR_COLLECTION`.
+
+#### No code? Collect with ID — `POST /handoffs/orders/:id/collect-with-id`
+
+Destination staff, while `ready_for_collection`. Rate limit: 10/min. For a receiver who
+lost their code (or never got one): check a photo ID and ask for the last 4 digits of the
+phone number the parcel was sent to.
+
+```json
+{ "collectorName": "Ada Okafor", "phoneLast4": "5678", "idType": "nin", "idLast4": "4321", "photoPublicId": "counter/<your user id>/def456" }
+```
+
+| Field | |
+|---|---|
+| `collectorName` | As written on the ID (proxy pickup is fine; it's recorded) |
+| `phoneLast4` | Checked against the receiver's phone |
+| `idType` | `nin`, `passport`, `drivers_licence`, `voters_card` |
+| `idLast4` | Last 4 characters of the ID number |
+| `photoPublicId` | Optional photo of the person or ID (upload as above) |
+
+Response `200`: an `OrderTransition` with `"status": "completed"`. The proof of delivery
+records `collectionMethod: "id_check"` and the collector's name. Errors:
+
+| | UI |
+|---|---|
+| `422 ID_CHECK_FAILED` (`details.attemptsLeft`) | *"Those digits don't match. {attemptsLeft} tries left."* |
+| `409 ID_CHECK_LOCKED` | After 5 wrong tries: *"Use the collection code instead"* and offer **Resend code** |
+
+Every attempt, right or wrong, is logged with the staff member's name.
 
 ### 5.9 Returns at the origin Node
 
@@ -1087,7 +1148,9 @@ Response `200` (in progress):
 `collectBy` is set while the parcel is `ready_for_collection`: show "Collect by {day}" next
 to the destination. `collectionDeadlineAt` (same moment) and `returnReason`
 (`not_collected` | `delivery_failed`) also appear on the sender's order
-(`GET /orders/:id`).
+(`GET /orders/:id`), along with `collection` (`collectedAt`, `method`: `code` |
+`id_check`, `collectorName`) once collected, `refusal` (`reason`, `note`) and `exception`
+(`type`, `at`).
 
 Response `200` (returned to sender) — `origin` gains `address`, `state` and
 `openingHours`, because that's where the parcel is now (`openingHours` trimmed to one day
@@ -1146,6 +1209,8 @@ The page deliberately carries no names, phones, codes or prices. Render `statusL
 | `returning_to_sender` | Returning to sender | return track |
 | `returned_to_sender` | Returned — ready for sender collection | return track |
 | `return_completed` | Returned to sender | return track ✓ |
+| `refused` | Not accepted at drop-off | ended ✓ |
+| `problem` | We're looking into a problem with this parcel | ended ✓ (lost or damaged) |
 
 (`order_placed` appears only in timelines.)
 
@@ -1159,6 +1224,20 @@ the code and the last 4 digits."*
 ## 8. Admin app
 
 **Admin only.** Paths are under `/admin/logistics` unless stated.
+
+### 8.0a Lost or damaged — `POST /admin/orders/:id/exception` (`ops`)
+
+For a parcel in our care that's gone missing or been damaged:
+
+```json
+{ "type": "lost", "note": "Rider reports the parcel fell off the bike" }
+```
+
+`type`: `lost` or `damaged`. `note` (5–1000 chars) stays internal. Response `200`: an
+`OrderTransition` with `"status": "exception"`. Whatever the parcel was holding (origin or
+destination shelf space, the rider's slot) is freed and the sender is emailed. Not allowed
+before drop-off or after it's finished (`409 ILLEGAL_ORDER_TRANSITION`). An active courier
+booking isn't cancelled automatically; check *Deliveries* (§8.5).
 
 ### 8.0 Public holidays — `/admin/public-holidays` (`ops`)
 
@@ -1537,7 +1616,10 @@ Codes a logistics screen can receive, and what to do:
 | 409 | `NODE_CAPACITY_UNAVAILABLE` | checkout | *"This station is full — choose another"* |
 | 409 | `ILLEGAL_ORDER_TRANSITION` | rider accept, counter actions | The order moved on — refresh it |
 | 409 | `RIDER_CAPACITY_UNAVAILABLE` | rider accept | *"Finish a delivery first"* |
-| 409 | `ORDER_NOT_READY_FOR_COLLECTION` | resend code | Refresh the order |
+| 409 | `ORDER_NOT_READY_FOR_COLLECTION` | resend code, collect with ID | Refresh the order |
+| 422 | `ID_CHECK_FAILED` | collect with ID | Show `details.attemptsLeft` |
+| 409 | `ID_CHECK_LOCKED` | collect with ID | Collect with the code instead (resend it) |
+| 422 | `UPLOAD_NOT_FOUND` | refuse, collect with ID | Upload the photo again |
 | 409 | `COURIER_HANDOVER_NOT_AVAILABLE` | courier-handover | Refresh / re-scan |
 | 409 | `ILLEGAL_DELIVERY_ACTION` | admin delivery actions, courier settings | Show `message` to the Admin |
 | 422 | `NO_DELIVERY_OPTION` | quote, checkout, dispatch | *"Too big or heavy for our vehicles, or no courier on this route"* |

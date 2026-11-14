@@ -13,8 +13,14 @@ import {
 const HOLD_ON = new Set(['parcel_received_at_origin']);
 // Released once it's off the destination side for good: collected, gone
 // back (a failed delivery or a return picked up from the shelf both pass
-// through return_in_transit), or cancelled.
-const RELEASE_ON = new Set(['completed', 'return_in_transit', 'cancelled']);
+// through return_in_transit), cancelled, or lost/damaged.
+const RELEASE_ON = new Set([
+  'completed',
+  'return_in_transit',
+  'cancelled',
+  // Lost or damaged: it won't be collected there.
+  'exception',
+]);
 
 // The destination counter of two-counter capacity (plan §5.2, E3), driven
 // by order status changes inside the transaction that made them. The

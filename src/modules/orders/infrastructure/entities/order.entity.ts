@@ -19,13 +19,23 @@ export class OrderEntity {
   @Column({ type: 'varchar' })
   trackingCode!: string;
 
+  // Consumer orders only (merchant parcels are paid from the wallet).
   @Index({ unique: true })
-  @Column({ type: 'uuid' })
-  paymentIntentId!: string;
+  @Column({ type: 'uuid', nullable: true })
+  paymentIntentId!: string | null;
 
+  // Consumer orders only.
   @Index()
-  @Column({ type: 'uuid' })
-  consumerId!: string;
+  @Column({ type: 'uuid', nullable: true })
+  consumerId!: string | null;
+
+  // Who the order is for (plan §5.1). CHECK: consumer orders carry
+  // consumerId + paymentIntentId, merchant orders merchantId.
+  @Column({ type: 'varchar', default: 'consumer' })
+  source!: 'consumer' | 'merchant';
+
+  @Column({ type: 'uuid', nullable: true })
+  merchantId!: string | null;
 
   @Column({ type: 'uuid' })
   originNodeId!: string;
@@ -43,8 +53,9 @@ export class OrderEntity {
   @Column({ type: 'varchar' })
   receiverFullName!: string;
 
-  @Column({ type: 'varchar' })
-  receiverEmail!: string;
+  // May be absent on merchant parcels (SMS / merchant relay instead).
+  @Column({ type: 'varchar', nullable: true })
+  receiverEmail!: string | null;
 
   @Column({ type: 'varchar' })
   receiverPhone!: string;
@@ -127,6 +138,42 @@ export class OrderEntity {
   // DestinationCapacitySubscriber.
   @Column({ type: 'boolean', default: false })
   destinationSlotHeld!: boolean;
+
+  // Proof of delivery (plan §5.4): when, how (code | id_check), who
+  // collected, and an optional photo taken at the counter.
+  @Column({ type: 'timestamptz', nullable: true })
+  collectedAt!: Date | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  collectionMethod!: 'code' | 'id_check' | null;
+
+  @Column({ type: 'varchar', length: 150, nullable: true })
+  collectorName!: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  collectionPhotoPublicId!: string | null;
+
+  @Column({ type: 'smallint', default: 0 })
+  idCheckFailedAttempts!: number;
+
+  // Why it was turned away at drop-off.
+  @Column({ type: 'jsonb', nullable: true })
+  refusal!: {
+    reason: string;
+    note: string | null;
+    photoPublicId: string | null;
+    at: string;
+  } | null;
+
+  // Lost / damaged in our custody.
+  @Column({ type: 'jsonb', nullable: true })
+  exception!: {
+    type: 'lost' | 'damaged';
+    note: string;
+    at: string;
+    byUserId: string;
+    previousStatus: string;
+  } | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

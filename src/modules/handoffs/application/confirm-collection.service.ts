@@ -2,11 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
-import { RecordRevenueSplitService } from '../../earnings/application/record-revenue-split.service';
-import { OrdersService } from '../../orders/application/orders.service';
 import { HandoffCodeType } from '../domain/handoff-code-type.enum';
 import { OrderTransitionResult } from '../domain/order-transition-result';
 import { HandoffCodeValidatorService } from './handoff-code-validator.service';
+import { CollectionCompletionService } from './collection-completion.service';
 import { OrderLookupService } from './order-lookup.service';
 
 const IDEMPOTENCY_SCOPE = 'handoffs.confirm-collection';
@@ -21,10 +20,9 @@ export class ConfirmCollectionService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly orderLookupService: OrderLookupService,
-    private readonly ordersService: OrdersService,
     private readonly idempotencyService: IdempotencyService,
     private readonly handoffCodeValidatorService: HandoffCodeValidatorService,
-    private readonly recordRevenueSplitService: RecordRevenueSplitService,
+    private readonly collectionCompletionService: CollectionCompletionService,
   ) {}
 
   async confirm(
@@ -51,27 +49,11 @@ export class ConfirmCollectionService {
               HandoffCodeType.RECEIVER_COLLECTION,
               code,
             );
-            const order = await this.ordersService.markCollected(
+            const order = await this.collectionCompletionService.complete(
+              manager,
               orderId,
-              manager,
               { identityConfirmed },
-            );
-            // Same transaction, same idempotency guard as the COMPLETED
-            // transition itself — an order can't reach COMPLETED without
-            // its revenue split being recorded atomically alongside it.
-            // riderId is null when an external courier carried the parcel;
-            // the rider share is then recorded as a non-payable courier
-            // allocation (pilot settlement — see RecordRevenueSplitService).
-            await this.recordRevenueSplitService.record(
-              {
-                orderId: order.id,
-                amountKobo: order.amountKobo,
-                destinationFeeKobo: order.destinationFeeKobo,
-                riderId: order.riderId,
-                originNodeId: order.originNodeId,
-                destinationNodeId: order.destinationNodeId,
-              },
-              manager,
+              { method: 'code', collectorName: null, photoPublicId: null },
             );
             return order;
           },

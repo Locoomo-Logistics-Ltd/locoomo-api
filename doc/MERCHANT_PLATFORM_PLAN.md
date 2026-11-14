@@ -696,6 +696,7 @@ None of these block the build. They're config values or terms text.
 | F7 | Data retention periods in §11.6; NDPC registration check; DPA text | legal/DPO |
 | F8 | Whether Paystack DVA needs the owner's BVN for these merchants | finance (Paystack account manager) |
 | F9 | SMS sender ID "Locoomo" with the merchant name in the message body; SMS cost absorbed | commercial |
+| F10 | Refunds when a consumer parcel is refused at drop-off or lost/damaged in our care (amount, who approves, Paystack refund vs credit) | finance/ops |
 
 ---
 
@@ -951,6 +952,31 @@ Decisions:
   (§6.5, M5); pickers already stop offering it.
 - The whole handoffs e2e suite now ends with **zero audit drift** on its shared Nodes. One
   test helper wrote order status directly; it now uses the real drop-off endpoint.
+
+### M3c Refusal, ID-check collection, lost/damaged, merchant order schema: done (2026-11-14)
+
+| Item | Where |
+|---|---|
+| New statuses `refused`, `exception` (migration 364); transitions: refuse/cancel from `awaiting_drop_off`, exception from every in-custody status | `orders/domain/order-transitions.ts` |
+| `orders.source` + `merchantId`; `consumerId`, `paymentIntentId`, `receiverEmail` nullable; `CHK_orders_source` (added `NOT VALID`, then validated); proof of delivery (`collectedAt`, `collectionMethod`, `collectorName`, `collectionPhotoPublicId`, backfilled for past collections), `idCheckFailedAttempts`, `refusal`, `exception` (migration 365) | `order.entity.ts` |
+| Refuse at drop-off (`POST /handoffs/orders/:id/refuse`): origin slot freed, sender emailed, audited | `refuse-drop-off.service.ts` |
+| ID-check collection (`POST …/collect-with-id`): phone last-4 checked, 5 tries then locked, name and ID attested by staff, audited; same completion path as code collection (revenue split, codes voided, proof of delivery) | `collect-with-id.service.ts`, `collection-completion.service.ts` |
+| Lost/damaged (`POST /admin/orders/:id/exception`, `ops`): frees origin, destination and rider slots per previous status; sender emailed | `order-exception.service.ts` |
+| Counter photos: signed uploads into the staff member's folder, checked before use | `counter-uploads.service.ts` |
+| Sender contact resolver (consumer built in; merchants register in M4 without handoffs importing them) used by return, refusal and exception emails | `sender-contact.service.ts` |
+| Public tracking: `refused`, `problem`; neutral "going back to the sender" wording | `tracking/domain/public-status.ts` |
+
+Decisions and open items:
+- **No refund on refusal or lost/damaged for consumer orders.** It needs a refund policy:
+  ops handle it manually, and the emails don't promise one (new item for §15).
+- **Merchant cancel and intercept** are wired in the order model (`markCancelled`; the
+  intercept transitions exist) but have no endpoint until merchant live shipments (M4).
+- **Lost/damaged doesn't cancel an active courier booking**; ops check Deliveries.
+- **Incident:** after a session restart the test env file was missing, so one migration check
+  ran against the local dev database (`locoomo` on localhost). It reverted and re-applied
+  migration 353 there (same seeded pricing rule re-inserted; no orders existed) and migrated
+  it to 365. Test commands now go through a wrapper that refuses any DB other than
+  `locoomo_test`.
 
 ### Documentation
 

@@ -4,7 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { AppModule } from '../../src/app.module';
 import { addWorkingDays, lagosDate } from '../../src/common/time/working-days';
 import { CollectionWindowService } from '../../src/modules/handoffs/application/collection-window.service';
@@ -1863,7 +1863,10 @@ describe('Handoffs (e2e)', () => {
         orderId,
         type: 'collected_by_receiver',
       });
-      expect(event.payload).toEqual({ identityConfirmed: true });
+      expect(event.payload).toEqual({
+        identityConfirmed: true,
+        method: 'code',
+      });
     });
 
     // Proxy pickup is a legitimate real-world case (someone other than the
@@ -1890,7 +1893,10 @@ describe('Handoffs (e2e)', () => {
         orderId,
         type: 'collected_by_receiver',
       });
-      expect(event.payload).toEqual({ identityConfirmed: false });
+      expect(event.payload).toEqual({
+        identityConfirmed: false,
+        method: 'code',
+      });
     });
 
     it('rejects a wrong code and increments the lockout counter durably', async () => {
@@ -4054,6 +4060,205 @@ describe('Handoffs (e2e)', () => {
       } finally {
         await nodes.update(destinationNodeId, { destinationHeldCount: stored });
       }
+    });
+  });
+
+  describe('refusal, ID-check collection, lost/damaged (M3c)', () => {
+    const originHeld = async (): Promise<number> =>
+      (await nodes.findOneByOrFail({ id: originNodeId })).currentCount;
+    const code = (r: request.Response): string =>
+      (r.body as { error: { code: string } }).error.code;
+
+    it('lets the origin refuse a parcel at drop-off, freeing its slot and telling the sender', async () => {
+      const consumerEmail = 'refuse-sender@handoffs.e2e.test';
+      const { id: orderId } = await createPaidOrder(consumerEmail);
+      const held = await originHeld();
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/refuse`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ reason: 'prohibited' })
+        .expect(404);
+      expect(
+        code(
+          await request(app.getHttpServer())
+            .post(`/api/v1/handoffs/orders/${orderId}/refuse`)
+            .set('Cookie', [originOperatorCookie])
+            .send({
+              reason: 'prohibited',
+              photoPublicId: 'counter/someone-else/photo',
+            })
+            .expect(422),
+        ),
+      ).toBe('UPLOAD_NOT_FOUND');
+
+      const refused = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/refuse`)
+        .set('Cookie', [originOperatorCookie])
+        .send({ reason: 'prohibited', note: 'Contains a lithium battery pack' })
+        .expect(200);
+      expect((refused.body as SuccessBody).data.status).toBe('refused');
+      const order = await orders.findOneByOrFail({ id: orderId });
+      expect(order.refusal).toMatchObject({
+        reason: 'prohibited',
+        note: 'Contains a lithium battery pack',
+      });
+      expect(await originHeld()).toBe(held - 1);
+      const email = await outboxEvents
+        .createQueryBuilder('o')
+        .where("o.payload ->> 'to' = :to", { to: consumerEmail })
+        .orderBy('o."createdAt"', 'DESC')
+        .getOneOrFail();
+      expect(email.payload as { subject: string; text: string }).toMatchObject({
+        subject: 'Your parcel was not accepted at drop-off',
+        text: expect.stringContaining('items we can’t carry') as string,
+      });
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/refuse`)
+        .set('Cookie', [originOperatorCookie])
+        .send({ reason: 'damaged' })
+        .expect(409);
+    });
+
+    it('hands a parcel over on photo ID + phone digits, with proof of delivery', async () => {
+      const rider = await createActiveRider('idcheck-rider@handoffs.e2e.test');
+      const orderId = await createReadyForCollectionOrder(
+        'idcheck@handoffs.e2e.test',
+        rider.cookie,
+      );
+      const body = {
+        collectorName: 'Receiver Tester',
+        phoneLast4: '0000',
+        idType: 'nin',
+        idLast4: '4321',
+      };
+      const wrong = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect-with-id`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send(body)
+        .expect(422);
+      expect(
+        (wrong.body as { error: { code: string; details: unknown } }).error,
+      ).toMatchObject({
+        code: 'ID_CHECK_FAILED',
+        details: { attemptsLeft: 4 },
+      });
+
+      // receiverPhone is +2348012345678 in this suite.
+      const ok = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect-with-id`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ ...body, phoneLast4: '5678', collectorName: 'Ada Proxy' })
+        .expect(200);
+      expect((ok.body as SuccessBody).data.status).toBe('completed');
+      const order = await orders.findOneByOrFail({ id: orderId });
+      expect(order).toMatchObject({
+        collectionMethod: 'id_check',
+        collectorName: 'Ada Proxy',
+        idCheckFailedAttempts: 1,
+        destinationSlotHeld: false,
+      });
+      expect(order.collectedAt).not.toBeNull();
+      expect(
+        await handoffCodes.countBy({
+          orderId,
+          type: HandoffCodeType.RECEIVER_COLLECTION,
+          usedAt: IsNull(),
+        }),
+      ).toBe(0);
+      // One row per party (Nodes, rider, platform), as for code collection.
+      expect(await revenueSplitEntries.countBy({ orderId })).toBeGreaterThan(0);
+    });
+
+    it('locks ID-check collection after 5 wrong attempts; the code still works', async () => {
+      const rider = await createActiveRider('idlock-rider@handoffs.e2e.test');
+      const orderId = await createReadyForCollectionOrder(
+        'idlock@handoffs.e2e.test',
+        rider.cookie,
+      );
+      const wrong = {
+        collectorName: 'Someone',
+        phoneLast4: '1111',
+        idType: 'passport',
+        idLast4: 'A123',
+      };
+      for (let i = 0; i < 5; i++) {
+        await request(app.getHttpServer())
+          .post(`/api/v1/handoffs/orders/${orderId}/collect-with-id`)
+          .set('Cookie', [destinationOperatorCookie])
+          .send(wrong)
+          .expect(422);
+      }
+      expect(
+        code(
+          await request(app.getHttpServer())
+            .post(`/api/v1/handoffs/orders/${orderId}/collect-with-id`)
+            .set('Cookie', [destinationOperatorCookie])
+            .send({ ...wrong, phoneLast4: '5678' })
+            .expect(409),
+        ),
+      ).toBe('ID_CHECK_LOCKED');
+      const collectionCode = await extractLatestCollectionCode(receiverEmail);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code: collectionCode, identityConfirmed: true })
+        .expect(200);
+    });
+
+    it('records a parcel lost in transit, freeing the rider and destination slots', async () => {
+      const rider = await createActiveRider('lost-rider@handoffs.e2e.test');
+      const consumerEmail = 'lost-sender@handoffs.e2e.test';
+      const orderId = await createAssignedOrder(consumerEmail, rider.cookie);
+      await pickUp(orderId, rider.cookie);
+      const riderSlots = async () =>
+        (await riderProfiles.findOneByOrFail({ userId: rider.userId }))
+          .currentActiveOrderCount;
+      const destinationHeld = async () =>
+        (await nodes.findOneByOrFail({ id: destinationNodeId }))
+          .destinationHeldCount;
+      const [slotsBefore, destBefore] = [
+        await riderSlots(),
+        await destinationHeld(),
+      ];
+
+      const response = await asAdmin(
+        request(app.getHttpServer()).post(
+          `/api/v1/admin/orders/${orderId}/exception`,
+        ),
+      )
+        .send({
+          type: 'lost',
+          note: 'Rider reports the parcel fell off the bike',
+        })
+        .expect(200);
+      expect((response.body as SuccessBody).data.status).toBe('exception');
+      expect(await riderSlots()).toBe(slotsBefore - 1);
+      expect(await destinationHeld()).toBe(destBefore - 1);
+      expect(
+        (await orders.findOneByOrFail({ id: orderId })).exception,
+      ).toMatchObject({
+        type: 'lost',
+        previousStatus: 'in_transit',
+      });
+      const email = await outboxEvents
+        .createQueryBuilder('o')
+        .where("o.payload ->> 'to' = :to", { to: consumerEmail })
+        .orderBy('o."createdAt"', 'DESC')
+        .getOneOrFail();
+      expect((email.payload as { subject: string }).subject).toBe(
+        'A problem with your parcel: it is missing',
+      );
+
+      // Not in our custody any more: nothing to record.
+      await asAdmin(
+        request(app.getHttpServer()).post(
+          `/api/v1/admin/orders/${orderId}/exception`,
+        ),
+      )
+        .send({ type: 'damaged', note: 'Second report' })
+        .expect(409);
     });
   });
 });

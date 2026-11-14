@@ -3494,6 +3494,11 @@ newest first. Metadata only, never bodies.
 `nextCursor` back as `cursor` for the next page (`400 INVALID_CURSOR` if it's been altered).
 Show `correlationId` with a copy button: support needs it.
 
+## Admin: orders
+
+`POST /api/v1/admin/orders/:id/exception` (`ops`): record a parcel lost or damaged in our
+care. Details: [LOGISTICS_API.md §8.0a](LOGISTICS_API.md#80a-lost-or-damaged--post-adminordersidexception-ops).
+
 ## Admin: public holidays
 
 `GET/POST /api/v1/admin/public-holidays`, `DELETE /api/v1/admin/public-holidays/:date`

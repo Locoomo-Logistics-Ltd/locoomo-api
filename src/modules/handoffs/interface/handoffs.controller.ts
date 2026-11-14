@@ -8,6 +8,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Req,
   Query,
 } from '@nestjs/common';
 import { ReturnCollectionService } from '../application/return-collection.service';
@@ -45,6 +46,13 @@ import { MyOrderResponseDto } from './dto/my-order-response.dto';
 import { OrderPreviewResponseDto } from './dto/order-preview-response.dto';
 import { OrderTransitionResponseDto } from './dto/order-transition-response.dto';
 import { RequestHandoffCodeDto } from './dto/request-handoff-code.dto';
+import type { Request } from 'express';
+import type { UploadSignature } from '../../../common/cloudinary/cloudinary.service';
+import { auditContextFrom } from '../../../common/audit/audit.service';
+import { CollectWithIdService } from '../application/collect-with-id.service';
+import { CounterUploadsService } from '../application/counter-uploads.service';
+import { RefuseDropOffService } from '../application/refuse-drop-off.service';
+import { CollectWithIdDto, RefuseDropOffDto } from './dto/counter.dto';
 
 @Controller('handoffs')
 export class HandoffsController {
@@ -64,7 +72,57 @@ export class HandoffsController {
     private readonly courierHandoverQueryService: CourierHandoverQueryService,
     private readonly returnIntakeService: ReturnIntakeService,
     private readonly returnCollectionService: ReturnCollectionService,
+    private readonly refuseDropOffService: RefuseDropOffService,
+    private readonly collectWithIdService: CollectWithIdService,
+    private readonly counterUploadsService: CounterUploadsService,
   ) {}
+
+  // Signed upload for a counter photo (refused parcel, ID-check collection).
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
+  @Post('upload-signature')
+  @HttpCode(HttpStatus.OK)
+  uploadSignature(@CurrentUser() user: AuthenticatedUser): UploadSignature {
+    return this.counterUploadsService.signature(user.id);
+  }
+
+  // Origin staff turn a parcel away at drop-off (plan §5.3).
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
+  @Post('orders/:id/refuse')
+  @HttpCode(HttpStatus.OK)
+  async refuse(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RefuseDropOffDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ): Promise<OrderTransitionResponseDto> {
+    const order = await this.refuseDropOffService.refuse(
+      id,
+      user.id,
+      dto,
+      auditContextFrom(request),
+    );
+    return OrderTransitionResponseDto.fromResult(order);
+  }
+
+  // Receiver without their code: photo ID + phone last 4 (plan §5.4).
+  @Roles(UserRole.NODE_OPERATOR, UserRole.NODE_STAFF)
+  @Throttle({ default: { limit: 10, ttl: seconds(60) } })
+  @Post('orders/:id/collect-with-id')
+  @HttpCode(HttpStatus.OK)
+  async collectWithId(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CollectWithIdDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: Request,
+  ): Promise<OrderTransitionResponseDto> {
+    const order = await this.collectWithIdService.collect(
+      id,
+      user.id,
+      dto,
+      auditContextFrom(request),
+    );
+    return OrderTransitionResponseDto.fromResult(order);
+  }
 
   @Roles(UserRole.RIDER)
   @Get('available-orders')
