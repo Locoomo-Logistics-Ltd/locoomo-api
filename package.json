@@ -33,7 +33,7 @@
     "seed:admin:prod": "node dist/database/seed-admin.js",
     "sendii:webhook": "ts-node -r tsconfig-paths/register src/scripts/sendii-webhook.ts",
     "sendii:tunnel": "bash scripts/sendii-dev-tunnel.sh",
-    "openapi:generate": "ts-node -r tsconfig-paths/register src/scripts/generate-openapi.ts"
+    "openapi:generate": "nest build && node dist/scripts/generate-openapi.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

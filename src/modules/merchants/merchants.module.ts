@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CloudinaryModule } from '../../common/cloudinary/cloudinary.module';
 import { IdentityModule } from '../identity/identity.module';
+import { NodesModule } from '../nodes/nodes.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { AdminMerchantsService } from './application/admin-merchants.service';
@@ -11,6 +12,7 @@ import { ApiRateLimiter } from './application/api-rate-limiter';
 import { ApiRequestLogService } from './application/api-request-log.service';
 import { MerchantAccountService } from './application/merchant-account.service';
 import { MerchantBankAccountService } from './application/merchant-bank-account.service';
+import { MerchantCatalogService } from './application/merchant-catalog.service';
 import { MerchantContextService } from './application/merchant-context.service';
 import { MerchantNotifierService } from './application/merchant-notifier.service';
 import { MerchantTeamService } from './application/merchant-team.service';
@@ -36,6 +38,7 @@ import {
   MerchantInvitesController,
   MerchantTeamController,
 } from './interface/merchant-team.controller';
+import { MerchantCatalogController } from './interface/merchant-catalog.controller';
 import { MerchantGuard } from './interface/merchant.guard';
 
 // External merchants (plan v2): accounts, teams, onboarding/KYC and the
@@ -62,6 +65,8 @@ import { MerchantGuard } from './interface/merchant.guard';
     // PaystackBankService: bank list + account resolution.
     PaymentsModule,
     CloudinaryModule,
+    // NodesService.searchAvailable/getAvailable: the checkout picker.
+    NodesModule,
   ],
   controllers: [
     MerchantAccountController,
@@ -71,6 +76,7 @@ import { MerchantGuard } from './interface/merchant.guard';
     AdminMerchantsController,
     ApiKeysController,
     MerchantPingController,
+    MerchantCatalogController,
   ],
   providers: [
     MerchantContextService,
@@ -84,6 +90,7 @@ import { MerchantGuard } from './interface/merchant.guard';
     ApiKeyAuthenticatorService,
     ApiKeyService,
     ApiRequestLogService,
+    MerchantCatalogService,
   ],
 })
 export class MerchantsModule {}

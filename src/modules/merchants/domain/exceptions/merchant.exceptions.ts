@@ -261,3 +261,14 @@ export class ApiKeyRevokedException extends BusinessException {
     super('This key is revoked or expired');
   }
 }
+
+export class OriginRequiredException extends BusinessException {
+  readonly errorCode = 'ORIGIN_REQUIRED';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super(
+      'Pass originNodeId (where you will drop the parcel). It becomes optional once a hub is assigned to your account.',
+    );
+  }
+}

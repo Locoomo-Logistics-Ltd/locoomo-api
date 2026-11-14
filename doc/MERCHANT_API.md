@@ -291,9 +291,11 @@ origins), or from your server with a secret key.
 | `q` | Search name, address and area |
 | `state`, `city` | Filters |
 | `parcelSize` | Only Nodes that can currently accept this size (`small` · `medium` · `large` · `extra_large`) |
-| `limit`, `cursor` | Pagination |
+| `limit`, `cursor` | Pagination (§5.4): `limit` 1–200, default 50 |
 
-Only Nodes that are open for business **and have shelf space** are returned.
+Only Nodes that are open for business **and have shelf space** are returned: nearest first
+with `near`, otherwise by name. `distanceKm` is `null` without `near`. Test and live keys see
+the same Nodes (test shipments point at real Nodes but never reach them).
 
 ```json
 {
@@ -311,7 +313,8 @@ Only Nodes that are open for business **and have shelf space** are returned.
         "mon": [{ "open": "08:00", "close": "20:00" }],
         "sun": []
       },
-      "contactPhone": "+2348090000000"
+      "contactPhone": "+2348090000000",
+      "acceptingParcels": true
     }
   ],
   "nextCursor": null,
@@ -321,8 +324,10 @@ Only Nodes that are open for business **and have shelf space** are returned.
 
 ### `GET /nodes/{id}`
 
-One Node, same shape. Use it to re-check a stored Node before creating a shipment
-(`404 NOT_FOUND` if it no longer accepts parcels).
+One Node, same shape. Use it to re-check a stored Node before creating a shipment:
+`404 NOT_FOUND` if it has closed or been withdrawn. A Node that's temporarily full is still
+returned, with `acceptingParcels: false`; shipments to it still go ahead, and we reroute
+if it's still full when the parcel arrives (§6, picker tips).
 
 ### `GET /quotes`
 
@@ -331,21 +336,28 @@ One Node, same shape. Use it to re-check a stored Node before creating a shipmen
 | `destinationNodeId` | Required |
 | `parcelSize` | Required: `small` · `medium` · `large` · `extra_large` |
 | `weightKg`, `lengthCm`, `widthCm`, `heightCm` | Optional; more accurate price |
-| `originNodeId` | Optional; defaults to your primary hub |
+| `originNodeId` | Where you'll drop the parcel. Optional once a hub is assigned to your account (it defaults to that hub); until then required (`422 ORIGIN_REQUIRED`) |
 
 ```json
 {
   "currency": "NGN",
   "amountKobo": 180000,
-  "breakdown": { "baseKobo": 120000, "distanceKobo": 60000, "volumeDiscountKobo": -9000, "vatKobo": 9000 },
+  "breakdown": { "baseKobo": 120000, "distanceKobo": 69000, "volumeDiscountKobo": -9000, "vatKobo": 12558 },
   "vehicleClass": "motorbike",
   "estimatedReadyInWorkingDays": 2
 }
 ```
 
+- `baseKobo + distanceKobo + volumeDiscountKobo = amountKobo`. Prices include VAT;
+  `vatKobo` is the VAT **already included** in `amountKobo` (not added on top), and is
+  `0` until VAT is itemised on your invoices.
+- `estimatedReadyInWorkingDays` runs from drop-off to ready for collection. An estimate.
+- Errors: `404 NOT_FOUND` (a Node isn't available), `422 NO_DELIVERY_OPTION` (too big or
+  heavy for any vehicle, or no courier covers the route), `422 ORIGIN_REQUIRED`.
+
 **Quotes are estimates.** The price is fixed when you create the shipment, and adjusted
 once when we measure the parcel at drop-off ([§14](#14-billing-wallet-pricing-invoices)).
-Publishable keys with "hide prices" return the quote without amounts.
+Publishable keys with "hide prices" return `amountKobo: null` and `breakdown: null`.
 
 **Picker tips:**
 - Show a map and list, sorted by distance, with opening hours.
@@ -895,6 +907,8 @@ don't handle and still respond 2xx.
 | 409 | `IDEMPOTENCY_IN_PROGRESS` | Retry shortly with the same key |
 | 413 | `PAYLOAD_TOO_LARGE` | Over 1 MB; use imports |
 | 422 | `DESTINATION_NODE_UNAVAILABLE` | That Node isn't accepting parcels; pick another from `/nodes` |
+| 422 | `NO_DELIVERY_OPTION` | Too big or heavy for any vehicle, or no courier covers the route |
+| 422 | `ORIGIN_REQUIRED` | Quote without `originNodeId` and no hub assigned yet |
 | 422 | `RECEIVER_UNREACHABLE` | Add `receiver.email`, or relay the code yourself |
 | 422 | `IDEMPOTENCY_KEY_REUSED` | New request, new key |
 | 422 | `CLAIM_WINDOW_CLOSED` | More than 30 days |
@@ -947,6 +961,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-14 | **Nodes and quotes are live**: `GET /nodes`, `GET /nodes/{id}` (now with `acceptingParcels`), `GET /quotes`, from your server or the buyer's browser with a publishable key. `originNodeId` is required on quotes until hubs open. Quote breakdowns show VAT as included, not added |
 | 2026-11-14 | **API keys are live**: create test keys in *Developers › API keys* (live keys once approved), restrict them by IP or origin, roll and revoke them, and see every request in *Developers › API logs*. `GET /ping` checks a key. Rate limits apply as in §5.5. Nodes/quotes, test shipments and webhooks are next |
 | 2026-11-14 | **Accounts and onboarding are live** in the merchant dashboard: create a business, invite your team with roles, complete KYC and submit for review. API keys, the sandbox, Nodes/quotes, test shipments and webhooks are next |
 | 2026-11-12 | v1 contract published (Preview). Rollout order: accounts and onboarding → API keys, sandbox, Nodes/quotes, test shipments and webhooks → live shipments and wallet → hubs, manifests and bulk → reporting and claims |

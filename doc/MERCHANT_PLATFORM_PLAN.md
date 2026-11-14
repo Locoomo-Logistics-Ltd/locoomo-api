@@ -846,6 +846,23 @@ Deferred: per-merchant raised rate limits (admin) and API-key-aware dashboard re
    not, set `TRUST_PROXY_HOPS` explicitly.
 2. Set `REDIS_URL` before running more than one API instance (key cache, rate limits).
 
+### M2b Nodes and quotes: done (2026-11-14)
+
+| Item | Where |
+|---|---|
+| `GET /merchant/nodes` (near/radius, q, state, city, cursor) and `/nodes/{id}` (`acceptingParcels`), via a plain-data `NodesService.searchAvailable/getAvailable` | `merchant-catalog.service.ts`, `nodes/application/nodes.service.ts` |
+| `GET /merchant/quotes` through checkout's `DeliveryQuoteService` (same price logic); merchant breakdown, VAT shown as included when `VAT_ENABLED`, `hidePrices` for publishable keys | `merchants/domain/merchant-quote.ts` |
+| Any key, or a dashboard session of any member; open CORS for publishable keys (M2a) | `merchant-catalog.controller.ts` |
+| Public OpenAPI: real schemas (generated from the compiled build so the Swagger plugin runs) and only the schemas public paths reference | `src/openapi/openapi.ts`, `npm run openapi:generate` |
+
+Decisions:
+- **Origin is required on quotes until hubs exist (M5)**: `422 ORIGIN_REQUIRED`. M5 makes it
+  default to the merchant's hub.
+- **`parcelSize` on `/nodes` is accepted but doesn't narrow results yet**: capacity is per
+  parcel. The two-counter capacity model (M3, E3) can refine this.
+- **VAT**: prices stay VAT-inclusive; `VAT_ENABLED` (default off) only itemises the included
+  VAT. The contract's sample was corrected (VAT was shown as added on top). Finance confirms F3.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

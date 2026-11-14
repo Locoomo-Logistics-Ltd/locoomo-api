@@ -36,7 +36,45 @@ export function buildMerchantOpenApiDocument(
       MERCHANT_OPENAPI_PATH_PREFIXES.some((prefix) => path.startsWith(prefix)),
     ),
   );
+  pruneUnusedSchemas(document);
   return document;
+}
+
+// Nest registers every DTO in components, including internal ones. Keep
+// only the schemas the public paths actually reference (transitively), so
+// the published contract doesn't describe admin or consumer endpoints.
+export function pruneUnusedSchemas(document: OpenAPIObject): void {
+  const schemas = document.components?.schemas;
+  if (!schemas) {
+    return;
+  }
+  const keep = new Set<string>();
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (!node || typeof node !== 'object') {
+      return;
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key === '$ref' && typeof value === 'string') {
+        const name = value.replace('#/components/schemas/', '');
+        if (!keep.has(name)) {
+          keep.add(name);
+          visit(schemas[name]);
+        }
+      } else {
+        visit(value);
+      }
+    }
+  };
+  visit(document.paths);
+  for (const name of Object.keys(schemas)) {
+    if (!keep.has(name)) {
+      delete schemas[name];
+    }
+  }
 }
 
 // JSON only (no bundled UI): frontend/integrator tooling (openapi-typescript,

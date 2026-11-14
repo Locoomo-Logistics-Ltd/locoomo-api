@@ -5,7 +5,8 @@ import { AppModule } from '../app.module';
 import { configureApp } from '../bootstrap';
 import { buildMerchantOpenApiDocument } from '../openapi/openapi';
 
-// `npm run openapi:generate` — writes the merchant OpenAPI document to
+// `npm run openapi:generate` — builds first (the @nestjs/swagger compiler
+// plugin only runs in `nest build`, so ts-node would drop fields), then writes the merchant OpenAPI document to
 // doc/openapi/merchant.json so it's versioned with the code (and diffable
 // in review). CI regenerates it and fails if the committed file is stale.
 const OUTPUT = 'doc/openapi/merchant.json';

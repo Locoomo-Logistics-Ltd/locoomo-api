@@ -174,6 +174,7 @@ backend greps logs for.
 | 403 | `MFA_REQUIRED_FOR_LIVE_KEYS` | Live key actions need 2FA on `details.who`: `you` or `owner` |
 | 409 | `API_KEY_LIMIT_REACHED` | 20 active keys per mode; revoke one |
 | 409 | `API_KEY_REVOKED` | Roll/edit of a revoked or expired key |
+| 422 | `ORIGIN_REQUIRED` | `GET /merchant/quotes` without `originNodeId` while the merchant has no hub |
 | 400 | `INVALID_CURSOR` | A pagination cursor was altered or is from another list; restart without it |
 | 401 | `INVALID_API_KEY` | (API keys) unknown, revoked, expired, IP or origin not allowed |
 | 403 | `INSUFFICIENT_SCOPE` | (API keys) the key lacks the route's scope |

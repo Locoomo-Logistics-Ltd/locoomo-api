@@ -52,6 +52,35 @@ export function decodeCursor(
   throw new InvalidCursorException();
 }
 
+// For small, slow-changing lists sorted by something other than time (Nodes
+// by distance): the cursor is just "how many already seen". Same opaque
+// shape to clients.
+export function encodeOffsetCursor(offset: number): string {
+  return Buffer.from(JSON.stringify({ o: offset })).toString('base64url');
+}
+
+export function decodeOffsetCursor(cursor: string | undefined): number {
+  if (!cursor) {
+    return 0;
+  }
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, 'base64url').toString('utf8'),
+    ) as { o?: unknown };
+    if (
+      typeof parsed.o === 'number' &&
+      Number.isInteger(parsed.o) &&
+      parsed.o >= 0 &&
+      parsed.o <= 100_000
+    ) {
+      return parsed.o;
+    }
+  } catch {
+    // fall through
+  }
+  throw new InvalidCursorException();
+}
+
 // Rows fetched with `limit + 1`: the extra one only says "there's more".
 export function toCursorPage<R, T>(
   rows: R[],

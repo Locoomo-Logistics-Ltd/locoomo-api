@@ -124,6 +124,13 @@ export const envSchema = z
       (value) => (value === '' ? undefined : value),
       z.coerce.number().int().min(0).max(5).optional(),
     ),
+    // Show the 7.5% VAT included in merchant prices as its own line
+    // (plan §8.3, F3). Prices are VAT-inclusive either way; off until
+    // finance confirms Locoomo charges VAT on these services.
+    VAT_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
     // Global kill switch for the merchant platform (plan §10). `false`
     // answers every /merchant route with 503 MERCHANT_PLATFORM_DISABLED;
     // admin merchant routes keep working so ops can still act.

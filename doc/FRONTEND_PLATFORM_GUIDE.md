@@ -512,8 +512,10 @@ Two kinds of endpoint:
   `/merchant/invites`, `/merchant/banks`): dashboard-only, cookie session. Full
   per-endpoint reference with samples:
   [API.md › Merchant accounts](API.md#merchant-accounts-dashboard).
-- **Shipping** (`/merchant/nodes`, `/shipments`, …, 🛠): the same endpoints integrators call
-  with API keys. Their contract is [MERCHANT_API.md](MERCHANT_API.md).
+- **Shipping**: the same endpoints integrators call with API keys; the dashboard calls them
+  with the session (any team member). Contract: [MERCHANT_API.md](MERCHANT_API.md).
+  `GET /merchant/nodes`, `/nodes/{id}` and `/quotes` are live ✅ (use them for the
+  destination picker and price preview); `/shipments` and the rest are 🛠.
 
 ### 9.1 Hosting and auth
 
