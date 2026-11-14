@@ -204,3 +204,60 @@ export class NotApplicableToIndividualsException extends BusinessException {
     this.details = { field };
   }
 }
+
+export class MerchantNotApprovedException extends AuthorizationException {
+  readonly errorCode = 'MERCHANT_NOT_APPROVED';
+  readonly httpStatus = 403;
+
+  constructor() {
+    super(
+      'Live mode needs an approved merchant account. Use test mode until then.',
+    );
+  }
+}
+
+export class MerchantSuspendedException extends AuthorizationException {
+  readonly errorCode = 'MERCHANT_SUSPENDED';
+  readonly httpStatus = 403;
+
+  constructor() {
+    super(
+      'This merchant account is suspended. Reads still work and parcels in flight continue.',
+    );
+  }
+}
+
+export class MfaRequiredForLiveKeysException extends AuthorizationException {
+  readonly errorCode = 'MFA_REQUIRED_FOR_LIVE_KEYS';
+  readonly httpStatus = 403;
+
+  constructor(who: 'you' | 'owner') {
+    super(
+      who === 'you'
+        ? 'Turn on two-factor authentication on your account to manage live keys'
+        : 'The account owner must turn on two-factor authentication before live keys can be created',
+    );
+    this.details = { who };
+  }
+}
+
+export class ApiKeyLimitReachedException extends BusinessException {
+  readonly errorCode = 'API_KEY_LIMIT_REACHED';
+  readonly httpStatus = 409;
+
+  constructor(limit: number) {
+    super(
+      `You can have up to ${limit} active keys per mode. Revoke one first.`,
+    );
+    this.details = { limit };
+  }
+}
+
+export class ApiKeyRevokedException extends BusinessException {
+  readonly errorCode = 'API_KEY_REVOKED';
+  readonly httpStatus = 409;
+
+  constructor() {
+    super('This key is revoked or expired');
+  }
+}

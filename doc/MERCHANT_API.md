@@ -152,7 +152,30 @@ Authorization: Bearer sk_live_9fQ2…
   live keys*.
 - Never put a secret key in a URL. Keys in query strings are rejected.
 
-Invalid, revoked or expired keys all return the same `401 INVALID_API_KEY`.
+Invalid, revoked or expired keys all return the same `401 INVALID_API_KEY`. So do keys
+used from an IP or browser origin outside their allow-list.
+
+**Check a key**: `GET /ping` (any key) tells you which account and mode it belongs to and
+what it may do:
+
+```bash
+curl https://api.locoomo.com/api/v1/merchant/ping -H "Authorization: Bearer sk_test_…"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "merchantId": "5d0c…",
+    "mode": "test",
+    "keyKind": "secret",
+    "scopes": ["shipments:read", "shipments:write", "manifests:write", "wallet:read", "claims:write", "nodes:read", "quotes:read"]
+  }
+}
+```
+
+Every key, secret or publishable, can read Nodes and quotes (`nodes:read`, `quotes:read`).
+Changes to a key (revoke, roll, new restrictions) apply immediately.
 
 ---
 
@@ -239,9 +262,13 @@ GET /shipments?limit=100&updatedSince=2026-11-12T00:00:00Z&cursor=eyJ0IjoiMjAy�
 | `sk_test_…` | 25 requests/second |
 | `pk_…` | 30 requests/second per key per end-user IP |
 
-Every response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
+Every response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`
+(seconds until the window resets; for live secret keys these describe the per-minute window).
 Over the limit you get `429 RATE_LIMITED` with `Retry-After` (seconds). Back off and retry.
 Need more? Ask your account manager.
+
+Many invalid keys from one IP (30 in a minute) block that IP's key attempts for a minute
+(`429`), so fix a misconfigured key before retrying in a loop.
 
 **Daily volume:** accounts also have a daily live-shipment limit (generous: individual
 sellers 2,000, businesses 100,000). We email you at 80%. At 100%, creation returns
@@ -855,6 +882,7 @@ don't handle and still respond 2xx.
 | 400 | `VALIDATION_FAILED` | Fix the fields in `details` |
 | 400 | `MALFORMED_JSON` | Body isn't valid JSON |
 | 400 | `INVALID_IDEMPOTENCY_KEY` | Use 1–255 printable characters (a UUID) |
+| 400 | `INVALID_CURSOR` | The pagination cursor was altered; restart the listing without it |
 | 401 | `INVALID_API_KEY` | Unknown, revoked or expired key, or IP not allowed |
 | 402 | `INSUFFICIENT_WALLET_BALANCE` | Top up; see `requiredKobo` and `availableKobo` |
 | 403 | `INSUFFICIENT_SCOPE` | The key lacks the scope for this endpoint |
@@ -919,5 +947,6 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-14 | **API keys are live**: create test keys in *Developers › API keys* (live keys once approved), restrict them by IP or origin, roll and revoke them, and see every request in *Developers › API logs*. `GET /ping` checks a key. Rate limits apply as in §5.5. Nodes/quotes, test shipments and webhooks are next |
 | 2026-11-14 | **Accounts and onboarding are live** in the merchant dashboard: create a business, invite your team with roles, complete KYC and submit for review. API keys, the sandbox, Nodes/quotes, test shipments and webhooks are next |
 | 2026-11-12 | v1 contract published (Preview). Rollout order: accounts and onboarding → API keys, sandbox, Nodes/quotes, test shipments and webhooks → live shipments and wallet → hubs, manifests and bulk → reporting and claims |

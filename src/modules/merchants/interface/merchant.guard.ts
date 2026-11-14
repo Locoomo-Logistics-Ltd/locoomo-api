@@ -103,6 +103,7 @@ export const CurrentMerchantActor = createParamDecorator(
       merchantId: request.merchant.merchantId,
       memberId: request.merchant.memberId,
       role: request.merchant.role,
+      reauthAt: request.user.reauthAt,
       context: auditContextFrom(request),
     };
   },

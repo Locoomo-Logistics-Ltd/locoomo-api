@@ -5,11 +5,17 @@ import { IdentityModule } from '../identity/identity.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { AdminMerchantsService } from './application/admin-merchants.service';
+import { ApiKeyAuthenticatorService } from './application/api-key-authenticator.service';
+import { ApiKeyService } from './application/api-key.service';
+import { ApiRateLimiter } from './application/api-rate-limiter';
+import { ApiRequestLogService } from './application/api-request-log.service';
 import { MerchantAccountService } from './application/merchant-account.service';
 import { MerchantBankAccountService } from './application/merchant-bank-account.service';
 import { MerchantContextService } from './application/merchant-context.service';
 import { MerchantNotifierService } from './application/merchant-notifier.service';
 import { MerchantTeamService } from './application/merchant-team.service';
+import { ApiKeyEntity } from './infrastructure/entities/api-key.entity';
+import { MerchantApiRequestEntity } from './infrastructure/entities/merchant-api-request.entity';
 import { MerchantBankAccountEntity } from './infrastructure/entities/merchant-bank-account.entity';
 import { MerchantDirectorEntity } from './infrastructure/entities/merchant-director.entity';
 import { MerchantDocumentEntity } from './infrastructure/entities/merchant-document.entity';
@@ -18,6 +24,10 @@ import { MerchantMemberEntity } from './infrastructure/entities/merchant-member.
 import { MerchantReviewItemEntity } from './infrastructure/entities/merchant-review-item.entity';
 import { MerchantEntity } from './infrastructure/entities/merchant.entity';
 import { AdminMerchantsController } from './interface/admin-merchants.controller';
+import {
+  ApiKeysController,
+  MerchantPingController,
+} from './interface/api-keys.controller';
 import {
   MerchantAccountController,
   MerchantBanksController,
@@ -42,9 +52,11 @@ import { MerchantGuard } from './interface/merchant.guard';
       MerchantDocumentEntity,
       MerchantBankAccountEntity,
       MerchantReviewItemEntity,
+      ApiKeyEntity,
+      MerchantApiRequestEntity,
     ]),
     // UserLookupService (team names/emails), AdminPermissionService (KYC
-    // reviewers to notify).
+    // reviewers to notify), MfaService (2FA before live keys).
     IdentityModule,
     NotificationsModule,
     // PaystackBankService: bank list + account resolution.
@@ -57,6 +69,8 @@ import { MerchantGuard } from './interface/merchant.guard';
     MerchantTeamController,
     MerchantInvitesController,
     AdminMerchantsController,
+    ApiKeysController,
+    MerchantPingController,
   ],
   providers: [
     MerchantContextService,
@@ -66,6 +80,10 @@ import { MerchantGuard } from './interface/merchant.guard';
     MerchantTeamService,
     AdminMerchantsService,
     MerchantGuard,
+    ApiRateLimiter,
+    ApiKeyAuthenticatorService,
+    ApiKeyService,
+    ApiRequestLogService,
   ],
 })
 export class MerchantsModule {}

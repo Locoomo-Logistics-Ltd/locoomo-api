@@ -20,6 +20,9 @@ export interface MerchantActor {
   merchantId: string;
   memberId: string;
   role: MerchantRole;
+  // Step-up timestamp of the session (for actions that need it only
+  // sometimes, e.g. live keys).
+  reauthAt?: number;
   context: AuditRequestContext;
 }
 

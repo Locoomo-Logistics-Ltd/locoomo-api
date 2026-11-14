@@ -22,3 +22,15 @@ export class InsufficientScopeException extends AuthorizationException {
     );
   }
 }
+
+// 429 with Retry-After (set on the response by whoever throws this).
+export class RateLimitedException extends AuthorizationException {
+  readonly errorCode = 'RATE_LIMITED';
+  readonly httpStatus = 429;
+
+  constructor() {
+    super(
+      'Too many requests. Slow down and retry after the Retry-After delay.',
+    );
+  }
+}

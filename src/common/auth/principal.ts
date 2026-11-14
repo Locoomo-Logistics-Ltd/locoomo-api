@@ -20,6 +20,8 @@ export interface ApiKeyPrincipal {
   merchantId: string;
   mode: ApiKeyMode;
   scopes: string[];
+  // Publishable keys: quotes are returned without amounts.
+  hidePrices?: boolean;
 }
 
 export type Principal = UserPrincipal | ApiKeyPrincipal;

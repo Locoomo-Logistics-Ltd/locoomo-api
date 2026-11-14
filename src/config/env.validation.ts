@@ -116,6 +116,14 @@ export const envSchema = z
     // `generic` is the default route; `dnd` delivers to DND-registered
     // numbers but must be activated on the Termii account first.
     TERMII_CHANNEL: z.enum(['generic', 'dnd']).default('generic'),
+    // How many reverse proxies sit in front of the app (Express `trust
+    // proxy`), so request.ip is the real client: per-IP rate limits, audit
+    // IPs, API-key IP allow-lists. Railway's edge is one hop. Unset: 1 when
+    // running on Railway (RAILWAY_ENVIRONMENT is set), else 0.
+    TRUST_PROXY_HOPS: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.coerce.number().int().min(0).max(5).optional(),
+    ),
     // Global kill switch for the merchant platform (plan §10). `false`
     // answers every /merchant route with 503 MERCHANT_PLATFORM_DISABLED;
     // admin merchant routes keep working so ops can still act.

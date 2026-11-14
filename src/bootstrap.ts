@@ -1,8 +1,12 @@
 import { INestApplication, VersioningType } from '@nestjs/common';
+import type {
+  CorsOptions,
+  CorsOptionsDelegate,
+} from '@nestjs/common/interfaces/external/cors-options.interface';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
-import express from 'express';
+import express, { Request } from 'express';
 import helmet from 'helmet';
 import { createAppValidationPipe } from './common/pipes';
 import { CORRELATION_ID_HEADER } from './common/constants/correlation-id.constant';
@@ -41,8 +45,32 @@ const EXPOSED_RESPONSE_HEADERS = [
   'X-RateLimit-Reset',
 ];
 
+// Merchant endpoints a buyer's browser calls with a publishable key from the
+// merchant's own checkout (any origin): open CORS without credentials. The
+// key's allowed-origins list is enforced when the key is checked.
+const PUBLISHABLE_KEY_PATHS =
+  /^\/api\/v1\/merchant\/(nodes|quotes|ping)(\/|\?|$)/;
+
+export function isPublishableKeyPath(url: string): boolean {
+  return PUBLISHABLE_KEY_PATHS.test(url);
+}
+
+// Reverse proxies in front of the app. Without this, request.ip is the
+// proxy for every user, so per-IP limits are shared by everyone.
+export function trustProxyHops(config: ConfigService<Env, true>): number {
+  return (
+    config.get('TRUST_PROXY_HOPS', { infer: true }) ??
+    (process.env.RAILWAY_ENVIRONMENT ? 1 : 0)
+  );
+}
+
 export function configureApp(app: INestApplication): void {
   const config = app.get(ConfigService<Env, true>);
+
+  const hops = trustProxyHops(config);
+  if (hops > 0) {
+    (app as NestExpressApplication).set('trust proxy', hops);
+  }
 
   // /health stays unprefixed/unversioned — it's an infra probe target (Railway/Render), not app-facing API surface.
   app.setGlobalPrefix('api', { exclude: ['health'] });
@@ -77,7 +105,7 @@ export function configureApp(app: INestApplication): void {
 
   app.use(cookieParser());
 
-  app.enableCors({
+  const sessionCors: CorsOptions = {
     origin: config
       .get('CORS_ORIGIN', { infer: true })
       .split(',')
@@ -85,5 +113,22 @@ export function configureApp(app: INestApplication): void {
     credentials: true,
     allowedHeaders: ALLOWED_REQUEST_HEADERS,
     exposedHeaders: EXPOSED_RESPONSE_HEADERS,
-  });
+  };
+  const publishableCors: CorsOptions = {
+    origin: true,
+    credentials: false,
+    methods: ['GET', 'HEAD', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', CORRELATION_ID_HEADER],
+    exposedHeaders: EXPOSED_RESPONSE_HEADERS,
+    maxAge: 600,
+  };
+  const corsFor: CorsOptionsDelegate<Request> = (request, callback) => {
+    callback(
+      null,
+      isPublishableKeyPath(request.originalUrl ?? request.url)
+        ? publishableCors
+        : sessionCors,
+    );
+  };
+  app.enableCors(corsFor);
 }

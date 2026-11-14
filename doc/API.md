@@ -169,6 +169,15 @@ backend greps logs for.
 | 409 | `OWNER_ROLE_PROTECTED` | Changing/removing the owner, or an invalid transfer. Transfer ownership first |
 | 409 | `REVIEW_HAS_REJECTED_ITEMS` | Admin approve with rejected sections (`details.keys`) |
 | 422 | `NO_REJECTED_ITEMS` | Admin request-changes without any rejected section |
+| 403 | `MERCHANT_NOT_APPROVED` | Live mode/keys before the merchant is approved |
+| 403 | `MERCHANT_SUSPENDED` | Live writes (and live key changes) while suspended; reads still work |
+| 403 | `MFA_REQUIRED_FOR_LIVE_KEYS` | Live key actions need 2FA on `details.who`: `you` or `owner` |
+| 409 | `API_KEY_LIMIT_REACHED` | 20 active keys per mode; revoke one |
+| 409 | `API_KEY_REVOKED` | Roll/edit of a revoked or expired key |
+| 400 | `INVALID_CURSOR` | A pagination cursor was altered or is from another list; restart without it |
+| 401 | `INVALID_API_KEY` | (API keys) unknown, revoked, expired, IP or origin not allowed |
+| 403 | `INSUFFICIENT_SCOPE` | (API keys) the key lacks the route's scope |
+| 429 | `RATE_LIMITED` | Too many requests; wait `Retry-After` seconds |
 | 403 | `SELF_APPROVAL_NOT_ALLOWED` | An admin tried to approve a request they raised themselves — a different admin must approve |
 | 409 | `APPROVAL_NOT_PENDING` | The approval request was already executed, rejected, cancelled, or has expired (7 days) |
 | 400 | `INVALID_VERIFICATION_DOCUMENT` | `POST /riders/onboarding` referenced a `cloudinaryPublicId` that doesn't correspond to an actual completed upload — re-request an upload signature and try again |
@@ -3338,6 +3347,136 @@ Errors: `403 INVITE_EMAIL_MISMATCH`, `404 INVALID_MERCHANT_INVITE`,
 
 `ownership` + **step-up**. `{ "memberId": "uuid" }` (an existing member). The new owner
 gets `owner`; the old owner becomes `admin`. Response `204`. Owner and admins are emailed.
+
+### Developers: API keys
+
+Permission `developers.manage` (owner, admin, developer). Integrator-facing rules (prefixes,
+scopes, rate limits) are in [MERCHANT_API.md §4](MERCHANT_API.md#4-authentication-and-api-keys).
+
+**Live keys** (create, roll, edit) also need all of:
+
+- an **approved** account (`403 MERCHANT_NOT_APPROVED`; suspended → `403 MERCHANT_SUSPENDED`);
+- **2FA on the caller** and **on the owner** (`403 MFA_REQUIRED_FOR_LIVE_KEYS`,
+  `details.who`: `"you"` or `"owner"`);
+- **step-up** (`403 REAUTH_REQUIRED`; your "Confirm it's you" interceptor handles it).
+
+Test keys need none of these: merchants can build before approval. Revoking never needs
+step-up.
+
+#### `GET /api/v1/merchant/api-keys?mode=test`
+
+`mode`: `test` (default) or `live`. Active keys plus keys revoked/expired in the last 30 days,
+newest first.
+
+```json
+[
+  {
+    "id": "uuid",
+    "mode": "test",
+    "kind": "secret",
+    "name": "Production server",
+    "displayKey": "sk_test_…a1B2",
+    "scopes": ["shipments:read", "shipments:write", "manifests:write", "wallet:read", "claims:write"],
+    "allowedIps": [],
+    "allowedOrigins": [],
+    "hidePrices": false,
+    "state": "active",
+    "expiresAt": null,
+    "revokedAt": null,
+    "lastUsedAt": "2026-11-14T10:01:00.000Z",
+    "lastUsedIp": "203.0.113.7",
+    "createdAt": "2026-11-14T09:00:00.000Z"
+  }
+]
+```
+
+`state`: `active`, `expiring` (rolled; works until `expiresAt`), `expired`, `revoked`.
+`lastUsedAt` updates at most once a minute. Publishable keys always show `scopes: []`
+(they're fixed to Nodes and quotes).
+
+#### `POST /api/v1/merchant/api-keys`
+
+```json
+{
+  "mode": "test",
+  "kind": "secret",
+  "name": "Production server",
+  "scopes": ["shipments:read", "shipments:write"],
+  "allowedIps": ["203.0.113.0/24"]
+}
+```
+
+| Field | Rules |
+|---|---|
+| `mode` | `test` or `live` |
+| `kind` | `secret` (server) or `publishable` (browser checkout) |
+| `name` | 1–60 chars |
+| `scopes` | Secret only. Any of `shipments:read`, `shipments:write`, `manifests:write`, `webhooks:manage`, `wallet:read`, `claims:write`. Default: all except `webhooks:manage` |
+| `allowedIps` | Secret only, ≤ 50. IPs or CIDR ranges (v4/v6). Empty = any |
+| `allowedOrigins` | Publishable only, ≤ 50. Exact origins like `https://shop.example.com`. Empty = any |
+| `hidePrices` | Publishable only. Quotes come back without amounts |
+
+Response `201`:
+
+```json
+{ "key": { "…": "as in the list" }, "secret": "sk_test_4fQ9…" }
+```
+
+**`secret` is returned once and never again.** Show it in a dialog with a copy button and
+"I've stored it safely" before closing. Errors: `409 API_KEY_LIMIT_REACHED` (20 active keys
+per mode), `409 MERCHANT_NOT_EDITABLE` (closed/rejected), plus the live-key errors above.
+
+#### `PATCH /api/v1/merchant/api-keys/:id`
+
+Same optional fields minus `mode`/`kind` (`name`, `scopes`, `allowedIps`, `allowedOrigins`,
+`hidePrices`). Fields that don't apply to the key's kind are ignored. Live keys need step-up.
+Takes effect immediately. Response `200`: the key. `409 API_KEY_REVOKED` for an ended key.
+
+#### `POST /api/v1/merchant/api-keys/:id/roll`
+
+```json
+{ "expireOldIn": "24h" }
+```
+
+`expireOldIn`: `now`, `1h`, `24h` or `7d`. Creates a new key with the same name and settings;
+the old one keeps working until then (`now` revokes it at once). Response `201`: same shape as
+create, with the new `secret`. Live keys need 2FA + step-up.
+
+#### `POST /api/v1/merchant/api-keys/:id/revoke` · `POST …/api-keys/revoke-all`
+
+- Revoke one: `200` with the key (`state: "revoked"`). Works immediately on every server.
+- Revoke all: body `{ "mode": "live" }` → `200 { "revoked": 3 }`. The "leaked key"
+  emergency button: confirm with the number of keys first.
+
+#### `GET /api/v1/merchant/api-logs?mode=test&outcome=errors&apiKeyId=…&limit=50&cursor=…`
+
+Developers › API logs: every request made with the merchant's keys in the last **30 days**,
+newest first. Metadata only, never bodies.
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "apiKeyId": "uuid",
+      "apiKeyName": "Production server",
+      "method": "POST",
+      "path": "/api/v1/merchant/shipments",
+      "statusCode": 422,
+      "durationMs": 48,
+      "ip": "203.0.113.7",
+      "correlationId": "b1f2c3d4-…",
+      "createdAt": "2026-11-14T10:01:00.000Z"
+    }
+  ],
+  "nextCursor": "eyJ0Ijoi…",
+  "hasMore": true
+}
+```
+
+`outcome`: `all` (default) or `errors` (status ≥ 400). `limit` 1–200 (default 50); pass
+`nextCursor` back as `cursor` for the next page (`400 INVALID_CURSOR` if it's been altered).
+Show `correlationId` with a copy button: support needs it.
 
 ## Admin: merchants
 

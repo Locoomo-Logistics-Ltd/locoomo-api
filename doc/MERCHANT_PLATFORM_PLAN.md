@@ -817,6 +817,35 @@ Decisions made while building (within the plan's intent):
 3. Legal: publish the merchant terms + DPA text for version `2026-11-14`
    (`merchants/domain/merchant-terms.ts`). Bump the constant whenever the text changes.
 
+### M2a API keys: done (2026-11-14)
+
+M2 ships in slices: **M2a keys** → M2b Nodes and quotes → M2c test shipments + simulator → M2d webhooks.
+
+| Item | Where |
+|---|---|
+| `api_keys` (SHA-256 hash only, prefix + last4), `merchant_api_requests`. Migration 359 | `merchants/infrastructure/entities/` |
+| Key format `sk_/pk_` + `test/live` + 43 base62 chars; scopes, defaults (all but `webhooks:manage`); every key gets `nodes:read` + `quotes:read` | `merchants/domain/api-key.ts` |
+| Authenticator registered into AuthGuard: lookup cached 30s (revoke/roll/edit bust it), revoked/expired/closed/rejected → 401, live keys only for approved/suspended merchants, IP (CIDR v4/v6) and origin allow-lists, suspended live writes → `403 MERCHANT_SUSPENDED` | `api-key-authenticator.service.ts` |
+| Per-key rate limits on the shared throttler storage (live 3,000/min + 50/s, test 25/s, pk 30/s per key per IP) with `X-RateLimit-*`; 30 bad keys/min from one IP → 1-minute block. Global per-IP throttler skips API-key requests | `api-rate-limiter.ts`, `common/common.module.ts` |
+| Dashboard: list, create (secret shown once), edit, roll with overlap (now/1h/24h/7d), revoke, revoke-all; live keys need approval, 2FA on caller and owner, step-up | `api-key.service.ts`, `api-keys.controller.ts` |
+| Request log per key request (metadata only), dashboard list with cursor pagination, 30-day purge job | `api-request-log.service.ts` |
+| `GET /merchant/ping` for integrators | `api-keys.controller.ts` |
+| Publishable-key CORS: open, no credentials, on `/merchant/{nodes,quotes,ping}` only | `bootstrap.ts` |
+| Cursor pagination helper (`{items, nextCursor, hasMore}`) | `common/pagination/` |
+| Step-up check moved to `common/auth/recent-auth.ts` (conditional step-up for live keys) | |
+
+Also fixed: **Express `trust proxy` was never set**, so behind Railway `request.ip` was the
+proxy for every user. All users shared the per-IP limits (including 5 logins/min), and audit
+logs recorded the proxy IP. Now `TRUST_PROXY_HOPS` (default 1 on Railway, else 0).
+
+Deferred: per-merchant raised rate limits (admin) and API-key-aware dashboard requests
+(`Locoomo-Mode`) arrive with M2b/M2c.
+
+**Rollout:**
+1. After deploy, check an `audit_events` row's `ip` is a real client IP, not Railway's. If
+   not, set `TRUST_PROXY_HOPS` explicitly.
+2. Set `REDIS_URL` before running more than one API instance (key cache, rate limits).
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

@@ -73,14 +73,8 @@ export class MfaEnrollmentRequiredException extends AuthorizationException {
   }
 }
 
-export class ReauthRequiredException extends AuthorizationException {
-  readonly errorCode = 'REAUTH_REQUIRED';
-  readonly httpStatus = 403;
-
-  constructor() {
-    super('Confirm it’s you to continue');
-  }
-}
+// Moved to common (merchants need it too); re-exported for identity.
+export { ReauthRequiredException } from '../../../../common/exceptions/reauth-required.exception';
 
 export class EmailAlreadyVerifiedException extends BusinessException {
   readonly errorCode = 'EMAIL_ALREADY_VERIFIED';

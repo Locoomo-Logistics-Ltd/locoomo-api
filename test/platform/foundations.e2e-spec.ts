@@ -21,6 +21,7 @@ import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
 import { AdminPermission } from '../../src/common/auth/admin-permission.enum';
 import { ApiKeyAuthenticatorRegistry } from '../../src/common/auth/api-key-authenticator.registry';
+import { ApiKeyAuthenticatorService } from '../../src/modules/merchants/application/api-key-authenticator.service';
 import { AllowApiKey } from '../../src/common/auth/decorators/allow-api-key.decorator';
 import { CurrentPrincipal } from '../../src/common/auth/decorators/current-principal.decorator';
 import type { Principal } from '../../src/common/auth/principal';
@@ -191,7 +192,12 @@ describe('Platform foundations (e2e)', () => {
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule, FoundationsTestModule],
-    }).compile();
+    })
+      // These tests exercise the guard's generic API-key handling with the
+      // fake keys registered above, not the merchants module's real store.
+      .overrideProvider(ApiKeyAuthenticatorService)
+      .useValue({ forget: () => Promise.resolve() })
+      .compile();
     app = moduleFixture.createNestApplication();
     configureApp(app);
     await app.init();

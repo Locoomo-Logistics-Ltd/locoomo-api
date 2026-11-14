@@ -9,3 +9,4 @@ export * from './insufficient-role.exception';
 export * from './api-key.exceptions';
 export * from './csrf-header-missing.exception';
 export * from './request-body.exceptions';
+export * from './reauth-required.exception';

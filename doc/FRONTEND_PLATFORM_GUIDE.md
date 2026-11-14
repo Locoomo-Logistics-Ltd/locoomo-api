@@ -295,8 +295,8 @@ Otherwise the API answers `403 REAUTH_REQUIRED`.
 
 **Which actions need it?** Today: starting 2FA setup, regenerating recovery codes,
 turning 2FA off, and in the merchant dashboard setting the bank account, changing team
-roles, transferring ownership and closing the account. Creating or rolling live API keys
-and changing webhook URLs will too (🛠). Don't hard-code the list. React to the error code.
+roles, transferring ownership, closing the account, and creating, rolling or editing live
+API keys. Changing webhook URLs will too (🛠). Don't hard-code the list. React to the error code.
 
 ### One interceptor for every app
 
@@ -552,9 +552,9 @@ subdomain (e.g. `api-staging.locoomo.com`); ask backend.
 | 4 | **Home** | Status banner (draft / in review / changes requested / approved / suspended), checklist progress | ✅ (KPIs, go-live checklist 🛠) |
 | 5 | **Team** + **Accept invite** page | Invite by email with a role, change roles, remove, leave, transfer ownership | ✅ |
 | 6 | **Settings › Close account** | Owner only | ✅ |
-| 7 | Developers › API keys | Create, roll and revoke test/live keys; the secret is shown **once** | 🛠 next |
+| 7 | **Developers › API keys** | Create, roll and revoke test/live keys; the secret is shown **once** | ✅ |
 | 8 | Developers › Webhooks | Endpoints, events, signing secret (shown once), delivery log, replay, send test | 🛠 next |
-| 9 | Developers › API logs | Recent requests by key | 🛠 |
+| 9 | **Developers › API logs** | Requests made with the merchant's keys (30 days) | ✅ |
 | 10 | Shipments | List, detail and timeline, create form, CSV import, cancel, return, label PDF | 🛠 |
 | 11 | Manifests | Group shipments for a hub drop, QR/PDF for the driver | 🛠 |
 | 12 | Returns to collect | Parcels back at the hub, collection code per batch | 🛠 |
@@ -776,6 +776,33 @@ highlight `error.details.sections[].key`.
    | `INVITE_EMAIL_MISMATCH` | "This invitation is for {email}. Sign out and sign in with that address." |
    | `ALREADY_A_MERCHANT_MEMBER` | "You're already on another business's team. Leave it first to join this one." |
 
+### 9.7a Developers › API keys and API logs
+
+Reference: [API.md › Developers: API keys](API.md#developers-api-keys). Needs
+`developers.manage`.
+
+- **Test / Live tabs** (`GET /merchant/api-keys?mode=…`). Group by kind: *Secret keys*
+  (server) and *Publishable keys* (checkout).
+- **Create key** dialog: name, kind; for secret keys a scope checklist (pre-tick all except
+  "Manage webhooks") and an optional IP allow-list; for publishable keys allowed origins and
+  "Hide prices in checkout".
+- **Show the secret once.** After `POST`, open a modal with the full `secret`, a copy
+  button, and "I've stored it somewhere safe" to close. Never put it in app state beyond
+  that modal, never in logs or analytics.
+- **Live tab before approval**: show "Live keys unlock when your account is approved"
+  instead of the create button. Handle `MFA_REQUIRED_FOR_LIVE_KEYS`:
+  `details.who === 'you'` → link to 2FA setup (§6.1); `'owner'` → "Ask the account
+  owner to turn on two-factor authentication".
+- **Row**: `displayKey`, name, `state` badge (`expiring` shows "Stops working {expiresAt}"),
+  "Last used {lastUsedAt} from {lastUsedIp}", menu: Edit, Roll, Revoke.
+- **Roll** dialog: "Keep the old key working for: Don't (revoke now) / 1 hour / 24 hours /
+  7 days", then the same show-once modal.
+- **Revoke all live keys**: a red button at the bottom of the Live tab. Confirm by typing
+  the number of keys.
+- **API logs** (`GET /merchant/api-logs`): table of time, method, path, status (red
+  ≥ 400), duration, key name, IP; "Errors only" toggle (`outcome=errors`); filter by key;
+  infinite scroll with `nextCursor`. Copy button on `correlationId`.
+
 ### 9.8 Team roles: hide what a member can't do
 
 Use `me.permissions` (from `GET /merchant/account`), not the role name, to show or hide
@@ -857,6 +884,10 @@ New in this release (✅). The full list is in [API.md › Error codes](API.md#e
 | 409 | `OWNER_ROLE_PROTECTED` | team | Not reachable if the owner row has no controls |
 | 409 / 422 | `REVIEW_HAS_REJECTED_ITEMS` / `NO_REJECTED_ITEMS` | admin review | Explain on the button |
 | 409 | `INVALID_MERCHANT_TRANSITION` | admin review, submit, close | Someone else acted first: refresh |
+| 403 | `MERCHANT_NOT_APPROVED` / `MERCHANT_SUSPENDED` | live keys | Explain on the Live tab |
+| 403 | `MFA_REQUIRED_FOR_LIVE_KEYS` | live keys | See §9.7a (`details.who`) |
+| 409 | `API_KEY_LIMIT_REACHED` / `API_KEY_REVOKED` | API keys | "Revoke an unused key first" / refresh the list |
+| 400 | `INVALID_CURSOR` | any cursor list | Reload the list from the top |
 
 ---
 
