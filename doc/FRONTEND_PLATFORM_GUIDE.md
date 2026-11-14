@@ -558,14 +558,14 @@ subdomain (e.g. `api-staging.locoomo.com`); ask backend.
 | 5 | **Team** + **Accept invite** page | Invite by email with a role, change roles, remove, leave, transfer ownership | ✅ |
 | 6 | **Settings › Close account** | Owner only | ✅ |
 | 7 | **Developers › API keys** | Create, roll and revoke test/live keys; the secret is shown **once** | ✅ |
-| 8 | Developers › Webhooks | Endpoints, events, signing secret (shown once), delivery log, replay, send test | 🛠 next |
+| 8 | **Developers › Webhooks** | Endpoints, events, signing secret (shown once), delivery log, replay, send test | ✅ |
 | 9 | **Developers › API logs** | Requests made with the merchant's keys (30 days) | ✅ |
 | 10 | **Shipments** | List (filters, cursor), detail and timeline, create form, cancel, return to sender | ✅ (CSV import, label PDF 🛠) |
 | 11 | Manifests | Group shipments for a hub drop, QR/PDF for the driver | 🛠 |
 | 12 | Returns to collect | Parcels back at the hub, collection code per batch | 🛠 |
 | 13 | Wallet | Balance, held funds, top-up, bank-transfer account, statement, invoices | 🛠 |
 | 14 | Claims | Lost or damaged claims | 🛠 |
-| 15 | **Test simulator** | On a test shipment's detail page: buttons per next status (`POST /merchant/test/shipments/{id}/simulate`) | ✅ (webhook view 🛠) |
+| 15 | **Test simulator** | On a test shipment's detail page: buttons per next status (`POST /merchant/test/shipments/{id}/simulate`), then show the resulting deliveries (`GET /merchant/webhook-deliveries`) | ✅ |
 | 16 | Audit log | Who did what in the team | 🛠 |
 
 ### 9.3 First load: where does this user go?
@@ -808,6 +808,25 @@ Reference: [API.md › Developers: API keys](API.md#developers-api-keys). Needs
   ≥ 400), duration, key name, IP; "Errors only" toggle (`outcome=errors`); filter by key;
   infinite scroll with `nextCursor`. Copy button on `correlationId`.
 
+### 9.7b Developers › Webhooks
+
+Endpoints are per mode: send `Locoomo-Mode` like the shipping screens. Contract and payloads:
+[MERCHANT_API.md §12](MERCHANT_API.md#12-webhooks). Needs `developers.manage`.
+
+- **List** (`GET /merchant/webhook-endpoints`): URL, events ("All events" when `[]`),
+  status: *Active*; *Failing since {failingSince}* (amber); *Disabled: {disabledReason}*
+  (red, with an **Enable** button = `PATCH {enabled: true}`).
+- **Add endpoint**: URL (must be `https://`; show `INVALID_WEBHOOK_URL`'s message inline),
+  event checklist (default all), description. Then the same show-once dialog as API keys for
+  `secret`.
+- **Change URL** and **Roll secret** need step-up (the §5 interceptor handles it). After a
+  roll, show "Old secret still accepted until {previousSecretExpiresAt}".
+- **Send test event**: show `delivered` ✓/✗ with `responseStatus` and `durationMs`.
+- **Replay**: a date-time picker (last 30 days) → "Queued {queued} events".
+- **Delivery log** (`GET /merchant/webhook-deliveries?endpointId=…`): time, event type,
+  status, attempts, response status; expand a row for `responseBody`/`error`;
+  `nextAttemptAt` for pending ones.
+
 ### 9.8 Team roles: hide what a member can't do
 
 Use `me.permissions` (from `GET /merchant/account`), not the role name, to show or hide
@@ -893,6 +912,7 @@ New in this release (✅). The full list is in [API.md › Error codes](API.md#e
 | 403 | `MFA_REQUIRED_FOR_LIVE_KEYS` | live keys | See §9.7a (`details.who`) |
 | 409 | `API_KEY_LIMIT_REACHED` / `API_KEY_REVOKED` | API keys | "Revoke an unused key first" / refresh the list |
 | 400 | `INVALID_CURSOR` | any cursor list | Reload the list from the top |
+| 422 / 409 | `INVALID_WEBHOOK_URL` / `WEBHOOK_ENDPOINT_LIMIT_REACHED` | webhooks | Inline under the URL / "Remove an endpoint first" |
 
 ---
 

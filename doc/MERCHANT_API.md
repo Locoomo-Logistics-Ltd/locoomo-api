@@ -5,8 +5,9 @@ across Nigeria. Your buyer picks a Node at checkout. You create a shipment and d
 parcel at a Locoomo hub or Node. We move it, notify the buyer, and hold it until they
 collect it with a one-time code. You follow every step by webhook.
 
-> **Status: Preview (v1 contract).** This document is the agreed contract for the v1
-> Merchant API. The sandbox opens first, then live access. Endpoints are rolled out in the
+> **Status: v1. The sandbox is open** (test keys, Nodes and quotes, test shipments,
+> simulator, webhooks); live shipments follow. This document is the agreed contract for the
+> v1 Merchant API. Endpoints are rolled out in the
 > order of the [Changelog](#18-changelog). Within v1 we only make
 > [additive changes](#3-versioning-and-stability); anything marked *Preview* may still be
 > refined before it goes live, and we'll announce it here.
@@ -679,11 +680,23 @@ notices) the parcel may be disposed of under the merchant terms (`shipment.dispo
 
 ### 12.1 Setting up
 
-Add endpoints in *Developers › Webhooks* (or with `POST /webhook-endpoints` with scope
-`webhooks:manage`): an HTTPS URL, the events you want, and you get a **signing secret**
-(`whsec_…`, shown once). You can have up to 5 endpoints per mode, and test and live are
-configured separately. Use *Send test event* (`POST /webhook-endpoints/{id}/test`) to check
-yours.
+Add endpoints in *Developers › Webhooks*, or over the API with a key that has the
+`webhooks:manage` scope (not given to new keys by default). The key's mode decides which
+mode the endpoint is for; test and live are configured separately, up to 5 endpoints each.
+
+| Endpoint | |
+|---|---|
+| `GET /webhook-endpoints` | Your endpoints, without secrets |
+| `POST /webhook-endpoints` | `{ "url", "events"?, "description"? }` → `{ "endpoint", "secret" }`. The **signing secret** (`whsec_…`) is shown once. `events`: event types to receive; omit or `[]` for all, including types added later |
+| `PATCH /webhook-endpoints/{id}` | Any of `url`, `events`, `description`, `enabled` (`true` re-enables an endpoint we disabled) |
+| `DELETE /webhook-endpoints/{id}` | Stop sending and forget it |
+| `POST /webhook-endpoints/{id}/roll-secret` | New secret, shown once; the old one keeps signing for 24 hours (§12.3) |
+| `POST /webhook-endpoints/{id}/test` | Sends a `webhook.test` event now and answers `{ "delivered", "responseStatus", "durationMs", "error" }` |
+| `POST /webhook-endpoints/{id}/replay` | `{ "since": "<ISO time>" }` (within 30 days) → `{ "queued" }`: resends every subscribed event since then (up to 10,000) |
+| `GET /webhook-deliveries?endpointId=&status=&limit=&cursor=` | Delivery log, newest first (§12.5) |
+
+URLs must be public `https://` addresses (`422 INVALID_WEBHOOK_URL`); a 6th endpoint is
+`409 WEBHOOK_ENDPOINT_LIMIT_REACHED`.
 
 ### 12.2 What we send
 
@@ -704,10 +717,16 @@ webhook-signature: v1,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4=
   "occurredAt": "2026-11-15T10:05:00.000Z",
   "data": {
     "shipment": { "…": "the full Shipment object, as it was at that moment" },
-    "sequence": 5
+    "sequence": 4
   }
 }
 ```
+
+Extras in `data` for some events: `collectionCode` (`ready_for_collection`, only when you
+relay codes, §11.1), `adjustment` (`fee_adjusted`: `previousKobo`, `newKobo`,
+`differenceKobo`, `reason`), `previousDestination` (`destination_changed`), `changed`
+(`updated`: which parts changed). `merchant.status_changed` carries
+`data.merchant: { id, status, previousStatus }`.
 
 Respond with any **2xx within 10 seconds**. Do the heavy work after responding: queue it.
 
@@ -808,10 +827,13 @@ total). Each endpoint gets at most 4 requests in flight at once, so a slow endpo
 delays its own events. If every delivery to an endpoint fails for 36 hours, we **disable
 the endpoint** and email your developers. Fix it, re-enable it, then
 `POST /webhook-endpoints/{id}/replay` with `{ "since": "…" }` to resend what you missed.
-The delivery log (`GET /webhook-deliveries`) keeps 30 days of requests and responses.
+The delivery log (`GET /webhook-deliveries`) keeps 30 days: each delivery's event, status
+(`pending`, `delivering`, `succeeded`, `failed`), attempts, next attempt, and your last
+response (status and its first 2 KB).
 
-Webhook URLs must be public HTTPS. Private and internal addresses, and redirects, are
-refused.
+Webhook URLs must be public HTTPS. Private and internal addresses are refused, also when a
+hostname resolves to one at send time. Redirects are not followed (a `3xx` counts as a
+failure), so register the final URL.
 
 ### 12.6 Events
 
@@ -833,9 +855,13 @@ refused.
 | `manifest.received` | Hub finished checking a manifest in |
 | `claim.decided` | Claim approved or rejected |
 | `wallet.funded` · `wallet.low_balance` | Wallet changes |
-| `merchant.status_changed` | Your account was approved, suspended, etc. |
+| `merchant.status_changed` | Your account was submitted, approved, suspended, etc. Sent to test and live endpoints |
+| `webhook.test` | Only from *Send test event*, only to that endpoint |
 
-Expect new event types over time ([§3](#3-versioning-and-stability)). Ignore the ones you
+Sent today: every `shipment.*` event above except `collection_reminder` (live operations),
+plus `merchant.status_changed` and `webhook.test`. `manifest.received`, `claim.decided` and
+`wallet.*` arrive with their features. Expect new event types over time
+([§3](#3-versioning-and-stability)). Ignore the ones you
 don't handle and still respond 2xx.
 
 ---
@@ -938,6 +964,9 @@ don't handle and still respond 2xx.
 | 422 | `ORIGIN_REQUIRED` | Quote without `originNodeId` and no hub assigned yet |
 | 422 | `RECEIVER_UNREACHABLE` | Add `receiver.email`, or relay the code yourself |
 | 422 | `IDEMPOTENCY_KEY_REUSED` | New request, new key |
+| 422 | `INVALID_WEBHOOK_URL` | Use a public `https://` URL |
+| 409 | `WEBHOOK_ENDPOINT_LIMIT_REACHED` | 5 endpoints per mode |
+| 422 | `REPLAY_WINDOW_EXCEEDED` | Replays reach back 30 days at most |
 | 422 | `CLAIM_WINDOW_CLOSED` | More than 30 days |
 | 429 | `RATE_LIMITED` | Back off; honour `Retry-After` |
 | 429 | `DAILY_LIMIT_REACHED` | Resets at midnight Lagos time; ask to raise it |
@@ -988,6 +1017,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-14 | **Webhooks are live; the sandbox is complete.** Endpoints (API and dashboard), Standard Webhooks signing with 24-hour secret rolls, retries, auto-disable, replay, *Send test event* and the delivery log. Next: live shipments and the wallet |
 | 2026-11-14 | **Test shipments and the simulator are live**: create (single and bulk), read, list and sync, timeline, edit, cancel, return to sender, and `POST /test/shipments/{id}/simulate`. `origin` is required until hubs open. Webhooks are next; imports and labels come with live shipments |
 | 2026-11-14 | **Nodes and quotes are live**: `GET /nodes`, `GET /nodes/{id}` (now with `acceptingParcels`), `GET /quotes`, from your server or the buyer's browser with a publishable key. `originNodeId` is required on quotes until hubs open. Quote breakdowns show VAT as included, not added |
 | 2026-11-14 | **API keys are live**: create test keys in *Developers › API keys* (live keys once approved), restrict them by IP or origin, roll and revoke them, and see every request in *Developers › API logs*. `GET /ping` checks a key. Rate limits apply as in §5.5. Nodes/quotes, test shipments and webhooks are next |

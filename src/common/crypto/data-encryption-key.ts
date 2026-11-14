@@ -8,7 +8,7 @@ import { SecretBox } from './secret-box';
 // leaked TOTP key can't open KYC data and vice versa.
 export function createSecretBox(
   config: ConfigService<Env, true>,
-  purpose: 'totp-seed' | 'merchant-kyc' | 'bank-account',
+  purpose: 'totp-seed' | 'merchant-kyc' | 'bank-account' | 'webhook-secret',
 ): SecretBox {
   return new SecretBox(
     config.get('DATA_ENCRYPTION_KEY', { infer: true }) ??

@@ -883,6 +883,27 @@ Decisions:
 - **Deferred to M4:** shipment imports (CSV/10k), labels, the test-wallet reset, the
   drop-deadline expiry job, live `trackingUrl`.
 
+### M2d Webhooks: done (2026-11-14). M2 complete
+
+**M2 exit criterion met:** an integrator can build the whole integration against test mode
+(keys, Nodes/quotes, shipments, simulator, signed webhooks), covered end to end by
+`test/merchants/*.e2e-spec.ts`.
+
+| Item | Where |
+|---|---|
+| `webhook_endpoints` (secret sealed with `webhook-secret`, previous secret + expiry, failing/disabled state), `webhook_events` (exact body, `msg_…` id), `webhook_deliveries` (latest attempt = the log). Migration 361 | `merchants/infrastructure/entities/` |
+| Standard Webhooks signing (checked against the spec's reference vector), retry schedule, address rules | `merchants/domain/webhooks.ts` |
+| Emitter: a listener on shipment events plus `merchant.status_changed` (submit, admin transitions, close; both modes), queued in the change's transaction | `webhook-emitter.service.ts` |
+| Dispatcher (worker): claims due deliveries with ≤ 4 in flight per endpoint, signs (two signatures during a roll), 10 s timeout, no redirects, retries, disables after 36 h of failures and emails owner/admins/developers, 30-day purge | `webhook-dispatcher.service.ts` |
+| Transport: `https` with a connection-time DNS check that refuses non-public addresses (beats DNS rebinding) | `infrastructure/webhook-transport.ts` |
+| Endpoints API (key `webhooks:manage` or dashboard; URL change and secret roll need step-up in the dashboard), send test (synchronous), replay, delivery log | `webhook-endpoint.service.ts`, `webhooks.controller.ts` |
+
+Fixed while testing: TypeORM raw `UPDATE … RETURNING` returns `[rows, count]` and
+`INSERT … RETURNING` returns rows; both are now handled explicitly.
+
+**Rollout:** run at least one `worker` (or `all`) process: deliveries are sent by the
+background dispatcher, not the API process.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

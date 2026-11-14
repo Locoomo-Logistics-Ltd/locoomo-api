@@ -18,6 +18,9 @@ import { MerchantContextService } from './application/merchant-context.service';
 import { MerchantShipmentService } from './application/merchant-shipment.service';
 import { ShipmentEventsService } from './application/shipment-events.service';
 import { ShipmentSimulatorService } from './application/shipment-simulator.service';
+import { WebhookDispatcherService } from './application/webhook-dispatcher.service';
+import { WebhookEmitterService } from './application/webhook-emitter.service';
+import { WebhookEndpointService } from './application/webhook-endpoint.service';
 import { MerchantNotifierService } from './application/merchant-notifier.service';
 import { MerchantTeamService } from './application/merchant-team.service';
 import { ApiKeyEntity } from './infrastructure/entities/api-key.entity';
@@ -29,6 +32,13 @@ import { MerchantInviteEntity } from './infrastructure/entities/merchant-invite.
 import { MerchantMemberEntity } from './infrastructure/entities/merchant-member.entity';
 import { MerchantShipmentEventEntity } from './infrastructure/entities/merchant-shipment-event.entity';
 import { MerchantShipmentEntity } from './infrastructure/entities/merchant-shipment.entity';
+import { WebhookDeliveryEntity } from './infrastructure/entities/webhook-delivery.entity';
+import { WebhookEndpointEntity } from './infrastructure/entities/webhook-endpoint.entity';
+import { WebhookEventEntity } from './infrastructure/entities/webhook-event.entity';
+import {
+  HttpsWebhookTransport,
+  WebhookTransport,
+} from './infrastructure/webhook-transport';
 import { MerchantReviewItemEntity } from './infrastructure/entities/merchant-review-item.entity';
 import { MerchantEntity } from './infrastructure/entities/merchant.entity';
 import { AdminMerchantsController } from './interface/admin-merchants.controller';
@@ -50,6 +60,7 @@ import {
   ShipmentsController,
   TestShipmentsController,
 } from './interface/shipments.controller';
+import { WebhooksController } from './interface/webhooks.controller';
 
 // External merchants (plan v2): accounts, teams, onboarding/KYC and the
 // admin review queue. Later phases add API keys, shipments, wallet and
@@ -69,6 +80,9 @@ import {
       MerchantApiRequestEntity,
       MerchantShipmentEntity,
       MerchantShipmentEventEntity,
+      WebhookEndpointEntity,
+      WebhookEventEntity,
+      WebhookDeliveryEntity,
     ]),
     // UserLookupService (team names/emails), AdminPermissionService (KYC
     // reviewers to notify), MfaService (2FA before live keys).
@@ -93,6 +107,7 @@ import {
     MerchantCatalogController,
     ShipmentsController,
     TestShipmentsController,
+    WebhooksController,
   ],
   providers: [
     MerchantContextService,
@@ -110,6 +125,10 @@ import {
     ShipmentEventsService,
     MerchantShipmentService,
     ShipmentSimulatorService,
+    WebhookEmitterService,
+    WebhookDispatcherService,
+    WebhookEndpointService,
+    { provide: WebhookTransport, useClass: HttpsWebhookTransport },
   ],
 })
 export class MerchantsModule {}

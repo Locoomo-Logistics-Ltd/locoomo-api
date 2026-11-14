@@ -177,6 +177,9 @@ backend greps logs for.
 | 422 | `ORIGIN_REQUIRED` | Quote or shipment without an origin Node while the merchant has no hub |
 | 400 | `INVALID_MODE` | `Locoomo-Mode` header isn't `test` or `live` |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | Live shipping isn't open yet (wallet release); use test mode |
+| 422 | `INVALID_WEBHOOK_URL` | Webhook URL isn't a public `https://` address |
+| 409 | `WEBHOOK_ENDPOINT_LIMIT_REACHED` | 5 webhook endpoints per mode |
+| 422 | `REPLAY_WINDOW_EXCEEDED` | Webhook replay further back than 30 days |
 | 400 | `INVALID_CURSOR` | A pagination cursor was altered or is from another list; restart without it |
 | 401 | `INVALID_API_KEY` | (API keys) unknown, revoked, expired, IP or origin not allowed |
 | 403 | `INSUFFICIENT_SCOPE` | (API keys) the key lacks the route's scope |

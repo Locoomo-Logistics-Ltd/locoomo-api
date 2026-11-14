@@ -323,16 +323,57 @@ export class MerchantNotifierService {
     );
   }
 
-  // Owner and admins: the people who act on account-level emails.
+  // Webhook endpoint auto-disabled after failing for 36 hours (§12.5).
+  async webhookEndpointDisabled(
+    merchantId: string,
+    endpoint: { url: string; mode: string },
+    manager: EntityManager,
+  ): Promise<void> {
+    const recipients = await this.teamLeads(merchantId, manager, [
+      MerchantRole.OWNER,
+      MerchantRole.ADMIN,
+      MerchantRole.DEVELOPER,
+    ]);
+    await this.send(
+      recipients,
+      {
+        subject: 'A Locoomo webhook endpoint was disabled',
+        heading: 'Webhook endpoint disabled',
+        blocks: [
+          {
+            kind: 'paragraph',
+            text: 'Every delivery to this endpoint has failed for 36 hours, so we stopped sending to it.',
+          },
+          {
+            kind: 'details',
+            rows: [
+              { label: 'Endpoint', value: endpoint.url },
+              { label: 'Mode', value: endpoint.mode },
+            ],
+          },
+          {
+            kind: 'paragraph',
+            text: 'Fix the endpoint, re-enable it in Developers › Webhooks, then replay the events you missed.',
+          },
+          {
+            kind: 'button',
+            label: 'Open webhooks',
+            url: this.dashboardUrl('/developers/webhooks'),
+          },
+        ],
+      },
+      manager,
+    );
+  }
+
+  // Owner and admins (by default): the people who act on account emails.
   private async teamLeads(
     merchantId: string,
     manager: EntityManager,
+    roles: MerchantRole[] = [MerchantRole.OWNER, MerchantRole.ADMIN],
   ): Promise<UserContact[]> {
     const leads = await manager.find(MerchantMemberEntity, {
-      where: {
-        merchantId,
-        role: In([MerchantRole.OWNER, MerchantRole.ADMIN]),
-      },
+      where: { merchantId, role: In(roles) },
     });
     return this.userLookup.getContacts(leads.map((lead) => lead.userId));
   }

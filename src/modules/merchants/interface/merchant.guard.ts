@@ -131,6 +131,7 @@ export class MerchantGuard implements CanActivate {
         via: 'session',
         keyId: null,
         userId: user.id,
+        reauthAt: user.reauthAt,
       };
     }
     return true;

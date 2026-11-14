@@ -56,6 +56,7 @@ import {
   merchantView,
 } from './merchant-state';
 import { MerchantTeamService, TeamView } from './merchant-team.service';
+import { WebhookEmitterService } from './webhook-emitter.service';
 
 export interface AdminActor {
   userId: string;
@@ -114,6 +115,7 @@ export class AdminMerchantsService {
     private readonly cloudinary: CloudinaryService,
     private readonly notifier: MerchantNotifierService,
     private readonly team: MerchantTeamService,
+    private readonly webhooks: WebhookEmitterService,
     config: ConfigService<Env, true>,
   ) {
     this.kycBox = createSecretBox(config, 'merchant-kyc');
@@ -584,6 +586,7 @@ export class AdminMerchantsService {
       },
       manager,
     );
+    await this.webhooks.merchantStatusChanged(manager, merchant.id, from, to);
   }
 
   private assertUnderReview(

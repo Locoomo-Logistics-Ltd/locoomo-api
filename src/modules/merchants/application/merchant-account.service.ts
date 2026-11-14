@@ -57,6 +57,7 @@ import {
 } from '../interface/dto/merchant-account.dto';
 import { MerchantContextService } from './merchant-context.service';
 import { MerchantNotifierService } from './merchant-notifier.service';
+import { WebhookEmitterService } from './webhook-emitter.service';
 import {
   BankAccountView,
   bankAccountView,
@@ -106,6 +107,7 @@ export class MerchantAccountService {
     private readonly cloudinary: CloudinaryService,
     private readonly contextService: MerchantContextService,
     private readonly notifier: MerchantNotifierService,
+    private readonly webhooks: WebhookEmitterService,
     config: ConfigService<Env, true>,
   ) {
     this.kycBox = createSecretBox(config, 'merchant-kyc');
@@ -490,6 +492,12 @@ export class MerchantAccountService {
         manager,
       );
       await this.notifier.statusChanged(merchant, 'submitted', manager);
+      await this.webhooks.merchantStatusChanged(
+        manager,
+        merchant.id,
+        from,
+        merchant.status,
+      );
       await this.notifier.newSubmissionForReviewers(merchant, manager);
     });
     return this.overview(actor.merchantId, actor.memberId, actor.role);
@@ -532,6 +540,12 @@ export class MerchantAccountService {
       merchant.status = MerchantStatus.CLOSED;
       merchant.closedAt = new Date();
       await manager.save(merchant);
+      await this.webhooks.merchantStatusChanged(
+        manager,
+        merchant.id,
+        from,
+        merchant.status,
+      );
       await this.audit.record(
         {
           actor: { type: 'user', id: actor.userId },

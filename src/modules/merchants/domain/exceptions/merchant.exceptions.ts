@@ -407,3 +407,32 @@ export class InvalidSimulationException extends BusinessException {
     this.details = { from, to };
   }
 }
+
+export class InvalidWebhookUrlException extends BusinessException {
+  readonly errorCode = 'INVALID_WEBHOOK_URL';
+  readonly httpStatus = 422;
+
+  constructor(problem: string) {
+    super(`Webhook ${problem}`);
+  }
+}
+
+export class WebhookEndpointLimitReachedException extends BusinessException {
+  readonly errorCode = 'WEBHOOK_ENDPOINT_LIMIT_REACHED';
+  readonly httpStatus = 409;
+
+  constructor(limit: number) {
+    super(`You can have up to ${limit} webhook endpoints per mode`);
+    this.details = { limit };
+  }
+}
+
+export class ReplayWindowExceededException extends BusinessException {
+  readonly errorCode = 'REPLAY_WINDOW_EXCEEDED';
+  readonly httpStatus = 422;
+
+  constructor(days: number) {
+    super(`Events are kept for ${days} days; replay from within that window`);
+    this.details = { days };
+  }
+}

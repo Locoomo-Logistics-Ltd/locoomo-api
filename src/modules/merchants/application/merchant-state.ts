@@ -35,6 +35,8 @@ export interface MerchantCaller {
   via: 'api_key' | 'session';
   keyId: string | null;
   userId: string | null;
+  // Sessions: when the user last confirmed it's them (step-up).
+  reauthAt?: number;
   context: AuditRequestContext;
 }
 
