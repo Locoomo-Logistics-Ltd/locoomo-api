@@ -25,7 +25,7 @@ import {
   nodeSnapshot,
 } from './merchant-shipment.service';
 import { ShipmentEventsService } from './shipment-events.service';
-import { shipmentView } from './shipment-view';
+import { ShipmentPresenter } from './shipment-presenter';
 import { WalletService } from './wallet.service';
 
 const S = ShipmentStatus;
@@ -43,6 +43,7 @@ export class ShipmentSimulatorService {
     private readonly events: ShipmentEventsService,
     private readonly nodes: NodesService,
     private readonly wallet: WalletService,
+    private readonly presenter: ShipmentPresenter,
   ) {}
 
   async simulate(
@@ -98,7 +99,7 @@ export class ShipmentSimulatorService {
       }
       return current;
     });
-    return shipmentView(saved);
+    return this.presenter.view(saved);
   }
 
   private async step(

@@ -38,6 +38,12 @@ import {
   WalletController,
 } from './interface/wallet.controller';
 import { AdminModule } from '../admin/admin.module';
+import { HandoffsModule } from '../handoffs/handoffs.module';
+import { OrdersModule } from '../orders/orders.module';
+import { TrackingModule } from '../tracking/tracking.module';
+import { LiveShipmentSyncService } from './application/live-shipment-sync.service';
+import { ShipmentExpiryService } from './application/shipment-expiry.service';
+import { ShipmentPresenter } from './application/shipment-presenter';
 import { ApiKeyEntity } from './infrastructure/entities/api-key.entity';
 import { MerchantApiRequestEntity } from './infrastructure/entities/merchant-api-request.entity';
 import { MerchantBankAccountEntity } from './infrastructure/entities/merchant-bank-account.entity';
@@ -106,6 +112,12 @@ import { WebhooksController } from './interface/webhooks.controller';
     ]),
     // ApprovalService + registry: wallet adjustments need a second admin.
     AdminModule,
+    // Live shipments (M4c): OrdersService (create/cancel/recall, status
+    // bus), HandoffsModule (ParcelRecallService, SenderContactService),
+    // TrackingModule (signed public tracking links).
+    OrdersModule,
+    HandoffsModule,
+    TrackingModule,
     // UserLookupService (team names/emails), AdminPermissionService (KYC
     // reviewers to notify), MfaService (2FA before live keys).
     IdentityModule,
@@ -158,6 +170,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     AdminWalletService,
     WalletReconciliationService,
     WalletTopUpService,
+    ShipmentPresenter,
+    LiveShipmentSyncService,
+    ShipmentExpiryService,
   ],
 })
 export class MerchantsModule {}

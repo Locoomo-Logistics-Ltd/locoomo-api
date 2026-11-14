@@ -59,8 +59,14 @@ export class RefuseDropOffService {
         },
         manager,
       );
-      // Reserved at checkout; the parcel never takes it now.
-      await this.nodesService.releaseCapacitySlot(order.originNodeId, manager);
+      // A consumer's slot was reserved at checkout; the parcel never takes
+      // it now. Merchant orders hold none until drop-off (plan §5.2).
+      if (order.source !== 'merchant') {
+        await this.nodesService.releaseCapacitySlot(
+          order.originNodeId,
+          manager,
+        );
+      }
       await this.senderNotifications.refused(
         order,
         { reason: input.reason, note: input.note ?? null },

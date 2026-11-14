@@ -7,6 +7,7 @@ import { HandoffCodeType } from '../domain/handoff-code-type.enum';
 import { OrderTransitionResult } from '../domain/order-transition-result';
 import { HandoffCodeIssuerService } from './handoff-code-issuer.service';
 import { OrderLookupService } from './order-lookup.service';
+import { ParcelRecallService } from './parcel-recall.service';
 import { ReceiverNotificationService } from './receiver-notification.service';
 
 const IDEMPOTENCY_SCOPE = 'handoffs.confirm-intake';
@@ -30,6 +31,7 @@ export class ConfirmIntakeService {
     private readonly idempotencyService: IdempotencyService,
     private readonly handoffCodeIssuerService: HandoffCodeIssuerService,
     private readonly receiverNotificationService: ReceiverNotificationService,
+    private readonly parcelRecall: ParcelRecallService,
   ) {}
 
   async confirm(
@@ -52,6 +54,16 @@ export class ConfirmIntakeService {
               orderId,
               manager,
             );
+            // Recalled by the merchant while on its way: turn it round now,
+            // without ever offering it to the buyer.
+            if (order.returnRequestedAt) {
+              await this.parcelRecall.returnFromShelf(
+                orderId,
+                'merchant_request',
+                manager,
+              );
+              return order;
+            }
             const deadline = order.collectionDeadlineAt!;
             const issued = await this.handoffCodeIssuerService.issueUntil(
               manager,

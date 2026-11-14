@@ -21,6 +21,10 @@ export interface OrderStatusChanged {
   // 'parcel_received_at_origin', 'courier_released').
   eventType: string;
   occurredAt: Date;
+  // Who sent it: 'consumer' or 'merchant' (then merchantId is set), so a
+  // subscriber can ignore orders that aren't its business without a query.
+  source: string;
+  merchantId: string | null;
 }
 
 export interface OrderStatusListener {

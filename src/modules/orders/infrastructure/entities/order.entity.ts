@@ -128,10 +128,15 @@ export class OrderEntity {
   @Column({ type: 'smallint', default: 0 })
   collectionRemindersSent!: number;
 
-  // Why it's going back: not_collected | delivery_failed (later
-  // merchant_request, refused, …).
+  // Why it's going back: not_collected | delivery_failed | merchant_request.
   @Column({ type: 'varchar', length: 40, nullable: true })
   returnReason!: string | null;
+
+  // The merchant asked for it back while it was on its way: the
+  // destination turns it round on arrival instead of offering it to the
+  // buyer (OrdersService.requestReturn).
+  @Column({ type: 'timestamptz', nullable: true })
+  returnRequestedAt!: Date | null;
 
   // Whether this parcel currently counts against its destination Node's
   // capacity (nodes.destinationHeldCount). Managed only by handoffs'

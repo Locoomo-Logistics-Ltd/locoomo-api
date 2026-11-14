@@ -44,12 +44,174 @@ export interface CreateOrderFromPaidIntentFields {
   destinationFeeKobo: number;
 }
 
+// A merchant's live shipment (plan §5.1): no consumer, no payment intent
+// (paid from the merchant wallet), receiver email optional. Unlike consumer
+// orders, it holds no origin slot until the parcel is received (§5.2).
+export interface CreateMerchantOrderFields {
+  merchantId: string;
+  originNodeId: string;
+  destinationNodeId: string;
+  receiverFullName: string;
+  receiverEmail: string | null;
+  receiverPhone: string;
+  parcelDescription: string;
+  parcelSize: ParcelSize;
+  weightKg: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  handling: string[];
+  vehicleClass: string | null;
+  amountKobo: number;
+  destinationFeeKobo: number;
+}
+
+// Statuses from which a merchant may still ask for a parcel back without
+// it having reached the buyer's shelf yet (it turns round on arrival).
+const RETURN_REQUESTABLE: readonly OrderStatus[] = [
+  OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+  OrderStatus.RIDER_ASSIGNED,
+  OrderStatus.IN_TRANSIT,
+  OrderStatus.ARRIVED_AT_DESTINATION,
+];
+
 @Injectable()
 export class OrdersService {
   constructor(
     private readonly statusEvents: OrderStatusEventBus,
     private readonly holidays: PublicHolidayService,
   ) {}
+
+  async createForMerchant(
+    fields: CreateMerchantOrderFields,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    const order = await this.saveWithTrackingCode(
+      manager.getRepository(OrderEntity),
+      {
+        ...fields,
+        source: 'merchant',
+        consumerId: null,
+        paymentIntentId: null,
+      },
+    );
+    await this.appendEvent(manager, order.id, OrderEventType.ORDER_PLACED, {
+      merchantId: fields.merchantId,
+      amountKobo: fields.amountKobo,
+    });
+    await this.publishStatusChange(
+      manager,
+      order,
+      null,
+      OrderEventType.ORDER_PLACED,
+    );
+    return order;
+  }
+
+  // Merchant edits before drop-off (route, parcel, re-quoted price).
+  async updateBeforeDropOff(
+    orderId: string,
+    changes: Partial<
+      Pick<
+        CreateMerchantOrderFields,
+        | 'destinationNodeId'
+        | 'parcelDescription'
+        | 'parcelSize'
+        | 'weightKg'
+        | 'lengthCm'
+        | 'widthCm'
+        | 'heightCm'
+        | 'handling'
+        | 'vehicleClass'
+        | 'amountKobo'
+        | 'destinationFeeKobo'
+      >
+    >,
+    manager: EntityManager,
+  ): Promise<void> {
+    const result = await manager
+      .getRepository(OrderEntity)
+      .createQueryBuilder()
+      .update()
+      .set(changes)
+      .where('id = :orderId AND status = :status', {
+        orderId,
+        status: OrderStatus.AWAITING_DROP_OFF,
+      })
+      .execute();
+    if (!result.affected) {
+      throw new IllegalOrderTransitionException(
+        orderId,
+        OrderStatus.AWAITING_DROP_OFF,
+        OrderStatus.AWAITING_DROP_OFF,
+      );
+    }
+    await this.appendEvent(manager, orderId, OrderEventType.DETAILS_UPDATED, {
+      fields: Object.keys(changes),
+    });
+  }
+
+  // New receiver contact (until collected). Returns the order's status so
+  // the caller can reissue a collection code if it's already shelved.
+  async updateReceiver(
+    orderId: string,
+    receiver: {
+      receiverFullName?: string;
+      receiverPhone?: string;
+      receiverEmail?: string | null;
+    },
+    manager: EntityManager,
+  ): Promise<OrderStatus> {
+    const [rows] = await manager.query<[{ status: OrderStatus }[], number]>(
+      `UPDATE orders
+          SET "receiverFullName" = COALESCE($2, "receiverFullName"),
+              "receiverPhone" = COALESCE($3, "receiverPhone"),
+              "receiverEmail" = CASE WHEN $4::boolean THEN $5 ELSE "receiverEmail" END,
+              "updatedAt" = now()
+        WHERE id = $1 AND status NOT IN ('completed', 'return_completed', 'cancelled', 'refused', 'exception')
+        RETURNING status`,
+      [
+        orderId,
+        receiver.receiverFullName ?? null,
+        receiver.receiverPhone ?? null,
+        receiver.receiverEmail !== undefined,
+        receiver.receiverEmail ?? null,
+      ],
+    );
+    if (!rows[0]) {
+      throw new IllegalOrderTransitionException(
+        orderId,
+        OrderStatus.READY_FOR_COLLECTION,
+        OrderStatus.READY_FOR_COLLECTION,
+      );
+    }
+    await this.appendEvent(manager, orderId, OrderEventType.DETAILS_UPDATED, {
+      fields: Object.keys(receiver),
+    });
+    return rows[0].status;
+  }
+
+  // The sender wants it back while it's on its way (plan §6.3 intercept).
+  // No status change: the destination turns it round on arrival instead of
+  // offering it to the buyer. False if it's past that point.
+  async requestReturn(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const [rows] = await manager.query<[{ id: string }[], number]>(
+      `UPDATE orders SET "returnRequestedAt" = now(), "updatedAt" = now()
+        WHERE id = $1 AND status = ANY($2) AND "returnRequestedAt" IS NULL
+        RETURNING id`,
+      [orderId, RETURN_REQUESTABLE],
+    );
+    if (!rows[0]) {
+      return false;
+    }
+    await this.appendEvent(manager, orderId, OrderEventType.RETURN_REQUESTED, {
+      reason: 'merchant_request',
+    });
+    return true;
+  }
 
   async createFromPaidIntent(
     fields: CreateOrderFromPaidIntentFields,
@@ -502,6 +664,7 @@ export class OrdersService {
   async markUncollected(
     orderId: string,
     manager: EntityManager,
+    reason: 'not_collected' | 'merchant_request' = 'not_collected',
   ): Promise<OrderEntity> {
     const order = await this.transition(
       orderId,
@@ -509,9 +672,9 @@ export class OrdersService {
       OrderStatus.RETURN_INITIATED,
       manager,
       OrderEventType.RETURN_INITIATED,
-      { reason: 'not_collected' },
+      { reason },
     );
-    await this.setReturnReason(orderId, 'not_collected', manager);
+    await this.setReturnReason(orderId, reason, manager);
     // The delivery rider's job ended at the destination; the return gets
     // its own courier (assignReturnCourier needs the slot empty).
     await manager.query(`UPDATE orders SET "riderId" = NULL WHERE id = $1`, [
@@ -519,7 +682,7 @@ export class OrdersService {
     ]);
     // The parcel stays on the destination shelf until the return courier
     // collects it; the shelf is cleared at pickup (markReturnPickedUp).
-    return { ...order, riderId: null, returnReason: 'not_collected' };
+    return { ...order, riderId: null, returnReason: reason };
   }
 
   // A courier took the return job from the destination. No status change
@@ -723,6 +886,8 @@ export class OrdersService {
         toStatus: order.status,
         eventType,
         occurredAt: new Date(),
+        source: order.source ?? 'consumer',
+        merchantId: order.merchantId ?? null,
       },
       manager,
     );
@@ -740,12 +905,20 @@ export class OrdersService {
 
   private async saveWithTrackingCode(
     orderRepo: Repository<OrderEntity>,
-    fields: CreateOrderFromPaidIntentFields,
+    fields:
+      | (CreateOrderFromPaidIntentFields & { source?: 'consumer' })
+      | (CreateMerchantOrderFields & {
+          source: 'merchant';
+          consumerId: null;
+          paymentIntentId: null;
+        }),
   ): Promise<OrderEntity> {
     for (let attempt = 1; attempt <= MAX_TRACKING_CODE_ATTEMPTS; attempt++) {
       try {
         return await orderRepo.save(
           orderRepo.create({
+            source: fields.source ?? 'consumer',
+            merchantId: 'merchantId' in fields ? fields.merchantId : null,
             paymentIntentId: fields.paymentIntentId,
             consumerId: fields.consumerId,
             originNodeId: fields.originNodeId,

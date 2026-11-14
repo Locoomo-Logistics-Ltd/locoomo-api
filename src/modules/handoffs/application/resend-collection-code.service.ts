@@ -8,7 +8,8 @@ import { HandoffCodeIssuerService } from './handoff-code-issuer.service';
 import { OrderLookupService } from './order-lookup.service';
 import { ReceiverNotificationService } from './receiver-notification.service';
 import { ReturnNotificationService } from './return-notification.service';
-import { SENDER_COLLECTION_CODE_TTL_MINUTES } from './return-intake.service';
+import { senderCodeExpiry } from './return-intake.service';
+import { PublicHolidayService } from '../../orders/application/public-holiday.service';
 
 // Only for parcels shelved before collection deadlines existed.
 const LEGACY_CODE_TTL_MINUTES = 60;
@@ -36,6 +37,7 @@ export class ResendCollectionCodeService {
     private readonly handoffCodeIssuerService: HandoffCodeIssuerService,
     private readonly receiverNotificationService: ReceiverNotificationService,
     private readonly returnNotificationService: ReturnNotificationService,
+    private readonly holidays: PublicHolidayService,
   ) {}
 
   async resend(
@@ -122,17 +124,18 @@ export class ResendCollectionCodeService {
     );
 
     const issued = await this.dataSource.transaction(async (manager) => {
-      const result = await this.handoffCodeIssuerService.issue(
+      const expiresAt = await senderCodeExpiry(order.source, this.holidays);
+      const result = await this.handoffCodeIssuerService.issueUntil(
         manager,
         orderId,
         HandoffCodeType.SENDER_COLLECTION,
         null,
-        SENDER_COLLECTION_CODE_TTL_MINUTES,
+        expiresAt,
       );
       await this.returnNotificationService.enqueueSenderCollectionCode(
         order,
         result.code,
-        SENDER_COLLECTION_CODE_TTL_MINUTES,
+        expiresAt,
         manager,
       );
       return result;

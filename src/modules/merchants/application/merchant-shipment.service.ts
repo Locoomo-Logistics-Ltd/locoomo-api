@@ -28,6 +28,9 @@ import {
   LiveShipmentsNotAvailableException,
   MerchantNotApprovedException,
   MerchantNotEditableException,
+  MerchantSuspendedException,
+  ShipmentCreationPausedException,
+  DailyLimitReachedException,
   OriginNodeUnavailableException,
   OriginRequiredException,
   ReceiverRelayNotEnabledException,
@@ -63,8 +66,12 @@ import {
 } from '../interface/dto/shipment.dto';
 import { MerchantCaller } from './merchant-state';
 import { ShipmentEventsService } from './shipment-events.service';
-import { shipmentView } from './shipment-view';
+import { ShipmentPresenter } from './shipment-presenter';
 import { WalletService } from './wallet.service';
+import { OrdersService } from '../../orders/application/orders.service';
+import { ParcelRecallService } from '../../handoffs/application/parcel-recall.service';
+import { lagosDate } from '../../../common/time/working-days';
+import { defaultTierFor, resolveLimits } from '../domain/merchant-limits';
 
 const MAX_TRACKING_CODE_ATTEMPTS = 5;
 
@@ -105,14 +112,17 @@ export class MerchantShipmentService {
     private readonly events: ShipmentEventsService,
     private readonly wallet: WalletService,
     private readonly config: ConfigService<Env, true>,
+    private readonly presenter: ShipmentPresenter,
+    private readonly orders: OrdersService,
+    private readonly parcelRecall: ParcelRecallService,
   ) {}
 
   async create(
     caller: MerchantCaller,
     dto: CreateShipmentDto,
   ): Promise<ShipmentView> {
-    const merchant = await this.writableMerchant(caller);
-    return shipmentView(await this.createOne(caller, merchant, dto));
+    const merchant = await this.writableMerchant(caller, true);
+    return this.presenter.view(await this.createOne(caller, merchant, dto));
   }
 
   // Up to 100 in one call; each item validated and created on its own.
@@ -120,7 +130,7 @@ export class MerchantShipmentService {
     caller: MerchantCaller,
     items: Record<string, unknown>[],
   ): Promise<BulkResultView[]> {
-    const merchant = await this.writableMerchant(caller);
+    const merchant = await this.writableMerchant(caller, true);
     const results: BulkResultView[] = [];
     for (const [index, item] of items.entries()) {
       const dto = plainToInstance(CreateShipmentDto, item);
@@ -142,7 +152,11 @@ export class MerchantShipmentService {
       }
       try {
         const shipment = await this.createOne(caller, merchant, dto);
-        results.push({ index, ok: true, shipment: shipmentView(shipment) });
+        results.push({
+          index,
+          ok: true,
+          shipment: this.presenter.view(shipment),
+        });
       } catch (error) {
         if (!(error instanceof AppException)) {
           throw error;
@@ -162,7 +176,7 @@ export class MerchantShipmentService {
   }
 
   async get(caller: MerchantCaller, id: string): Promise<ShipmentView> {
-    return shipmentView(
+    return this.presenter.view(
       await this.shipmentOf(this.dataSource.manager, caller, id),
     );
   }
@@ -228,7 +242,7 @@ export class MerchantShipmentService {
         t: (syncing ? s.updatedAt : s.createdAt).toISOString(),
         id: s.id,
       }),
-      shipmentView,
+      (s) => this.presenter.view(s),
     );
   }
 
@@ -278,7 +292,7 @@ export class MerchantShipmentService {
     }
 
     const saved = await this.dataSource.transaction(async (manager) => {
-      const shipment = await this.shipmentOf(manager, caller, id, true);
+      const { shipment } = await this.lockForWrite(manager, caller, id);
       const changed: string[] = [];
       if (dto.receiver) {
         if (
@@ -301,6 +315,30 @@ export class MerchantShipmentService {
           shipment.notifyReceiver,
           shipment.receiverEmail,
         );
+        if (shipment.orderId) {
+          await this.orders
+            .updateReceiver(
+              shipment.orderId,
+              {
+                receiverFullName: dto.receiver.name,
+                receiverPhone: dto.receiver.phone,
+                receiverEmail: dto.receiver.email,
+              },
+              manager,
+            )
+            .catch((error: unknown) => {
+              // Collected or ended since (orders' ILLEGAL_ORDER_TRANSITION).
+              throw error instanceof AppException &&
+                error.errorCode === 'ILLEGAL_ORDER_TRANSITION'
+                ? new ShipmentNotEditableException('receiver', shipment.status)
+                : error;
+            });
+          // Already on the shelf: the new contact gets a fresh code.
+          await this.parcelRecall.reissueReceiverCode(
+            shipment.orderId,
+            manager,
+          );
+        }
         changed.push('receiver');
       }
       if (repriced) {
@@ -320,6 +358,25 @@ export class MerchantShipmentService {
         shipment.quotedKobo = repriced.amountKobo;
         shipment.feeBreakdown = repriced.breakdown;
         shipment.vehicleClass = repriced.vehicleClass;
+        if (shipment.orderId) {
+          await this.orders.updateBeforeDropOff(
+            shipment.orderId,
+            {
+              destinationNodeId: shipment.destination.nodeId!,
+              parcelDescription: shipment.parcel.description,
+              parcelSize: shipment.parcel.size as ShipmentParcelDto['size'],
+              weightKg: shipment.parcel.weightKg,
+              lengthCm: shipment.parcel.lengthCm,
+              widthCm: shipment.parcel.widthCm,
+              heightCm: shipment.parcel.heightCm,
+              handling: shipment.parcel.handling,
+              vehicleClass: repriced.vehicleClass,
+              amountKobo: repriced.amountKobo,
+              destinationFeeKobo: repriced.destinationFeeKobo,
+            },
+            manager,
+          );
+        }
       }
       if (dto.metadata !== undefined) {
         shipment.metadata = dto.metadata;
@@ -332,13 +389,13 @@ export class MerchantShipmentService {
         data: { changed },
       });
     });
-    return shipmentView(saved);
+    return this.presenter.view(saved);
   }
 
   async cancel(caller: MerchantCaller, id: string): Promise<ShipmentView> {
     await this.writableMerchant(caller);
     const saved = await this.dataSource.transaction(async (manager) => {
-      const shipment = await this.shipmentOf(manager, caller, id, true);
+      const { shipment } = await this.lockForWrite(manager, caller, id);
       if (shipment.status !== ShipmentStatus.CREATED) {
         throw new ShipmentNotCancellableException(shipment.status);
       }
@@ -346,9 +403,16 @@ export class MerchantShipmentService {
       shipment.statusChangedAt = new Date();
       shipment.feeState = 'released';
       await this.wallet.releaseHold(manager, shipment.id);
-      return this.events.apply(manager, shipment, 'cancelled');
+      const cancelled = await this.events.apply(manager, shipment, 'cancelled');
+      // The order follows; the mirror sees the shipment already cancelled.
+      if (shipment.orderId) {
+        await this.orders.markCancelled(shipment.orderId, manager, {
+          reason: 'merchant_cancelled',
+        });
+      }
+      return cancelled;
     });
-    return shipmentView(saved);
+    return this.presenter.view(saved);
   }
 
   async returnToSender(
@@ -357,7 +421,11 @@ export class MerchantShipmentService {
   ): Promise<ShipmentView> {
     await this.writableMerchant(caller);
     const saved = await this.dataSource.transaction(async (manager) => {
-      const shipment = await this.shipmentOf(manager, caller, id, true);
+      const { shipment, orderStatus } = await this.lockForWrite(
+        manager,
+        caller,
+        id,
+      );
       const returnable: ShipmentStatus[] = [
         ShipmentStatus.RECEIVED,
         ShipmentStatus.IN_TRANSIT,
@@ -365,6 +433,23 @@ export class MerchantShipmentService {
       ];
       if (!returnable.includes(shipment.status)) {
         throw new ShipmentNotReturnableException(shipment.status);
+      }
+      if (shipment.orderId) {
+        if (orderStatus === 'ready_for_collection') {
+          // On the buyer's shelf: back now (code voided, return courier
+          // booked); the mirror moves the shipment to returning.
+          await this.parcelRecall.returnFromShelf(
+            shipment.orderId,
+            'merchant_request',
+            manager,
+          );
+          return this.shipmentOf(manager, caller, id);
+        }
+        // Still on its way: it turns round when it reaches the buyer's
+        // Node, without being offered to them.
+        if (!(await this.orders.requestReturn(shipment.orderId, manager))) {
+          throw new ShipmentNotReturnableException(shipment.status);
+        }
       }
       shipment.status = ShipmentStatus.RETURNING;
       shipment.statusChangedAt = new Date();
@@ -376,7 +461,31 @@ export class MerchantShipmentService {
         data: { reason: 'merchant_request' },
       });
     });
-    return shipmentView(saved);
+    return this.presenter.view(saved);
+  }
+
+  // For writes. A live shipment's order row is locked before the shipment,
+  // the same order every order-status change takes (the order update, then
+  // the mirror locking the shipment), so a merchant action racing a Node
+  // scan queues instead of deadlocking.
+  private async lockForWrite(
+    manager: EntityManager,
+    caller: MerchantCaller,
+    id: string,
+  ): Promise<{ shipment: MerchantShipmentEntity; orderStatus: string | null }> {
+    const peek = await this.shipmentOf(manager, caller, id);
+    let orderStatus: string | null = null;
+    if (peek.orderId) {
+      const [order] = await manager.query<{ status: string }[]>(
+        `SELECT status FROM orders WHERE id = $1 FOR UPDATE`,
+        [peek.orderId],
+      );
+      orderStatus = order?.status ?? null;
+    }
+    return {
+      shipment: await this.shipmentOf(manager, caller, id, true),
+      orderStatus,
+    };
   }
 
   // Row-locked when `lock`. Another merchant's or the other mode's id is
@@ -427,6 +536,16 @@ export class MerchantShipmentService {
     }
     const notifyReceiver = dto.notifyReceiver ?? 'locoomo';
     this.assertReachable(merchant, notifyReceiver, dto.receiver.email ?? null);
+    const live = caller.mode === 'live';
+    if (live && notifyReceiver !== 'locoomo') {
+      // The code is sent by Locoomo for live parcels until relay (M4d).
+      throw new ReceiverRelayNotEnabledException(
+        "Relaying collection codes isn't available for live shipments yet. Use notifyReceiver: locoomo.",
+      );
+    }
+    if (live) {
+      await this.assertDailyLimit(merchant);
+    }
 
     // Hubs (the default origin) arrive with M5.
     const originType = dto.origin?.type ?? 'hub';
@@ -448,11 +567,38 @@ export class MerchantShipmentService {
       try {
         return await this.dataSource.transaction(async (manager) => {
           const now = new Date();
+          // Live: a real order behind it (plan §6.1), created first so the
+          // shipment carries its LCM- tracking code. It holds no origin
+          // slot until the parcel is dropped off.
+          const order = live
+            ? await this.orders.createForMerchant(
+                {
+                  merchantId: caller.merchantId,
+                  originNodeId: origin.id,
+                  destinationNodeId: destination.id,
+                  receiverFullName: dto.receiver.name,
+                  receiverEmail: dto.receiver.email ?? null,
+                  receiverPhone: dto.receiver.phone,
+                  parcelDescription: parcel.description,
+                  parcelSize: parcel.size as ShipmentParcelDto['size'],
+                  weightKg: parcel.weightKg,
+                  lengthCm: parcel.lengthCm,
+                  widthCm: parcel.widthCm,
+                  heightCm: parcel.heightCm,
+                  handling: parcel.handling,
+                  vehicleClass: priced.vehicleClass,
+                  amountKobo: priced.amountKobo,
+                  destinationFeeKobo: priced.destinationFeeKobo,
+                },
+                manager,
+              )
+            : null;
           const shipment = manager.create(MerchantShipmentEntity, {
             merchantId: caller.merchantId,
             mode: caller.mode,
             reference: dto.reference,
-            trackingCode: generateTestTrackingCode(),
+            orderId: order?.id ?? null,
+            trackingCode: order?.trackingCode ?? generateTestTrackingCode(),
             status: ShipmentStatus.CREATED,
             sequence: 1,
             statusChangedAt: now,
@@ -520,6 +666,8 @@ export class MerchantShipmentService {
     amountKobo: number;
     breakdown: ShipmentFeeBreakdown;
     vehicleClass: string;
+    // The destination Node's share, carried on the order (revenue split).
+    destinationFeeKobo: number;
   }> {
     const quote = await this.quotes.quote(
       { originNodeId, destinationNodeId },
@@ -540,6 +688,7 @@ export class MerchantShipmentService {
       amountKobo,
       breakdown,
       vehicleClass: quote.feeBreakdown.vehicleClass,
+      destinationFeeKobo: quote.feeBreakdown.destinationFeeKobo,
     };
   }
 
@@ -571,10 +720,12 @@ export class MerchantShipmentService {
     return row?.id ?? null;
   }
 
-  // Writes need a merchant that can ship in this mode. Live shipments open
-  // with M4; until then they're refused (reads just come back empty).
+  // Writes need a merchant that can ship in this mode. Changing, cancelling
+  // or recalling existing live shipments works while suspended (in-flight
+  // parcels continue, plan §6.3); creating new ones doesn't.
   private async writableMerchant(
     caller: MerchantCaller,
+    creating = false,
   ): Promise<MerchantEntity> {
     const merchant = await this.dataSource.manager.findOneByOrFail(
       MerchantEntity,
@@ -586,15 +737,48 @@ export class MerchantShipmentService {
     ) {
       throw new MerchantNotEditableException(merchant.status);
     }
-    if (caller.mode === 'live') {
-      if (
-        merchant.status !== MerchantStatus.APPROVED &&
-        merchant.status !== MerchantStatus.SUSPENDED
-      ) {
-        throw new MerchantNotApprovedException();
-      }
+    if (caller.mode !== 'live') {
+      return merchant;
+    }
+    if (
+      merchant.status !== MerchantStatus.APPROVED &&
+      merchant.status !== MerchantStatus.SUSPENDED
+    ) {
+      throw new MerchantNotApprovedException();
+    }
+    if (!creating) {
+      return merchant;
+    }
+    if (!this.config.get('MERCHANT_LIVE_SHIPMENTS_ENABLED', { infer: true })) {
       throw new LiveShipmentsNotAvailableException();
     }
+    if (merchant.status === MerchantStatus.SUSPENDED) {
+      throw new MerchantSuspendedException();
+    }
+    if (merchant.creationPaused) {
+      throw new ShipmentCreationPausedException();
+    }
     return merchant;
+  }
+
+  // Live shipments per Lagos day (plan §4.2, D12). Generous by default; an
+  // approximate count is fine (it's a safety net, not a quota to the unit).
+  private async assertDailyLimit(merchant: MerchantEntity): Promise<void> {
+    const { liveShipmentsPerDay } = resolveLimits(
+      merchant.tier ?? defaultTierFor(merchant.type),
+      merchant.limitOverrides,
+    );
+    if (liveShipmentsPerDay === null) {
+      return;
+    }
+    const [{ count }] = await this.dataSource.query<{ count: number }[]>(
+      `SELECT count(*)::int AS count FROM merchant_shipments
+        WHERE "merchantId" = $1 AND mode = 'live'
+          AND "createdAt" >= ($2::date::timestamp AT TIME ZONE 'Africa/Lagos')`,
+      [merchant.id, lagosDate(new Date())],
+    );
+    if (count >= liveShipmentsPerDay) {
+      throw new DailyLimitReachedException(liveShipmentsPerDay);
+    }
   }
 }

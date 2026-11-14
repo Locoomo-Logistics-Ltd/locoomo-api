@@ -9,7 +9,7 @@ import {
   RecordedShipmentEvent,
   ShipmentEventsService,
 } from './shipment-events.service';
-import { shipmentView } from './shipment-view';
+import { ShipmentPresenter } from './shipment-presenter';
 
 export interface EmitInput {
   merchantId: string;
@@ -26,7 +26,10 @@ export interface EmitInput {
 // an event exists if and only if the change committed.
 @Injectable()
 export class WebhookEmitterService implements OnModuleInit {
-  constructor(private readonly shipmentEvents: ShipmentEventsService) {}
+  constructor(
+    private readonly shipmentEvents: ShipmentEventsService,
+    private readonly presenter: ShipmentPresenter,
+  ) {}
 
   onModuleInit(): void {
     this.shipmentEvents.addListener((recorded, manager) =>
@@ -107,7 +110,7 @@ export class WebhookEmitterService implements OnModuleInit {
     manager: EntityManager,
   ): Promise<void> {
     const data: Record<string, unknown> = {
-      shipment: shipmentView(shipment),
+      shipment: this.presenter.view(shipment),
       sequence: shipment.sequence,
     };
     // notifyReceiver merchant/both: the code exists only in the event

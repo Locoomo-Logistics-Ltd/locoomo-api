@@ -146,6 +146,13 @@ export const envSchema = z
       .enum(['true', 'false'])
       .default('true')
       .transform((value) => value === 'true'),
+    // Live merchant shipments (real orders, real wallets). Off until the
+    // business opens them; while off, live creation answers
+    // 403 LIVE_SHIPMENTS_NOT_AVAILABLE (reads and test mode still work).
+    MERCHANT_LIVE_SHIPMENTS_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
     // Merchant dashboard origin for links in merchant emails (invites,
     // review outcomes), e.g. https://merchant.locoomo.com. Defaults to
     // FRONTEND_URL when unset.

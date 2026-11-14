@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { escapeHtml } from '../../../common/html/escape-html';
+import { formatLagosDay } from '../../../common/time/working-days';
 import { OutboxService } from '../../notifications/application/outbox.service';
 import { SenderContactService } from './sender-contact.service';
 import { TrackingEmailService } from '../../tracking/application/tracking-email.service';
@@ -27,6 +28,9 @@ interface Station {
 // the origin Pickup Station; sender and receiver both told). Enqueued on
 // the caller's transaction like every other order email. No return fee is
 // mentioned or charged — that policy isn't defined yet.
+export type ReturnStartedReason =
+  'delivery_failed' | 'not_collected' | 'merchant_request';
+
 @Injectable()
 export class ReturnNotificationService {
   constructor(
@@ -39,7 +43,7 @@ export class ReturnNotificationService {
   async enqueueReturnStarted(
     order: OrderForReturnEmail,
     manager: EntityManager,
-    reason: 'delivery_failed' | 'not_collected' = 'delivery_failed',
+    reason: ReturnStartedReason = 'delivery_failed',
   ): Promise<void> {
     const [sender, origin, tracking] = await Promise.all([
       this.senderOf(order, manager),
@@ -51,7 +55,9 @@ export class ReturnNotificationService {
     const why =
       reason === 'not_collected'
         ? `Your parcel (${description}) wasn't collected within the collection window.`
-        : `We couldn't complete the delivery of your parcel (${description}).`;
+        : reason === 'merchant_request'
+          ? `As you asked, your parcel (${description}) is coming back to you.`
+          : `We couldn't complete the delivery of your parcel (${description}).`;
 
     if (sender?.email) {
       await this.outboxService.enqueueEmail(
@@ -71,7 +77,9 @@ export class ReturnNotificationService {
       );
     }
 
-    if (order.receiverEmail) {
+    // A recall usually follows the buyer cancelling with the merchant, who
+    // tells them; we don't.
+    if (order.receiverEmail && reason !== 'merchant_request') {
       const receiverText =
         reason === 'not_collected'
           ? `The parcel sent to you (${description}) wasn't collected in time, so it's being returned to the sender.`
@@ -97,22 +105,26 @@ export class ReturnNotificationService {
   async enqueueSenderCollectionCode(
     order: OrderForReturnEmail,
     collectionCode: string,
-    codeTtlMinutes: number,
+    expiresAt: Date,
     manager: EntityManager,
   ): Promise<void> {
     const [sender, origin] = await Promise.all([
       this.senderOf(order, manager),
       this.originOf(order, manager),
     ]);
-    // Merchant returns are collected in batches (M4/M5), not by code email.
     if (!sender?.email) {
       return;
     }
     const where = `${origin.name}, ${origin.address}, ${origin.city}`;
+    const minutes = Math.round((expiresAt.getTime() - Date.now()) / 60_000);
+    const validity =
+      minutes <= 120
+        ? `The code expires in ${minutes} minutes`
+        : `The code is valid until the end of ${formatLagosDay(expiresAt)}`;
     const instructions =
       `Your returned parcel (${order.parcelDescription}) is ready for you at ${where}. ` +
       `Give this code to the staff there, along with your name, to collect it. ` +
-      `The code expires in ${codeTtlMinutes} minutes — ask the staff to resend it if it does.`;
+      `${validity} — ask the staff to resend it if it does.`;
 
     await this.outboxService.enqueueEmail(
       {
