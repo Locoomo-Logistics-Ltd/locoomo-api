@@ -10,8 +10,8 @@ flow-by-flow guide with full request and response samples and TypeScript types.
 
 Sign-in with 2FA, "confirm it's you", sessions, the admin permissions/approvals screens,
 or the merchant dashboard (accounts, onboarding, team, admin review)? Start with
-[FRONTEND_PLATFORM_GUIDE.md](FRONTEND_PLATFORM_GUIDE.md) — what every app must change,
-with code. The merchant dashboard calls the same `/merchant/*` endpoints external
+[MERCHANT_FRONTEND_GUIDE.md](MERCHANT_FRONTEND_GUIDE.md) — the single frontend guide:
+what every app must change, plus every merchant-dashboard and admin screen, with code. The merchant dashboard calls the same `/merchant/*` endpoints external
 integrators use; their contract is [MERCHANT_API.md](MERCHANT_API.md).
 
 ## Base URL and versioning
@@ -3057,7 +3057,7 @@ Only the admin who raised the request. No body. Response `200`: the request, now
 The merchant dashboard's account, onboarding and team endpoints. **Cookie sessions only**:
 API keys never reach these, and they're not in the integrator OpenAPI document. Screen
 flows, UI copy and TypeScript types are in
-[FRONTEND_PLATFORM_GUIDE.md › Merchant dashboard](FRONTEND_PLATFORM_GUIDE.md#9-merchant-dashboard).
+[MERCHANT_FRONTEND_GUIDE.md › Part B](MERCHANT_FRONTEND_GUIDE.md#part-b-merchant-dashboard).
 
 Rules for every route below:
 

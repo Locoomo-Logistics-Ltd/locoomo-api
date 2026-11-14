@@ -985,9 +985,9 @@ Decisions and open items:
   `notifyReceiver` values, shipment drop deadlines, error codes, and webhook signing per
   Standard Webhooks with a base64 `whsec_` secret. Each phase must ship exactly what it
   documents, or update it.
-- **[FRONTEND_PLATFORM_GUIDE.md](FRONTEND_PLATFORM_GUIDE.md)** covers the Locoomo frontend
-  team's changes, account-security screens, the admin app and the merchant dashboard
-  roadmap.
+- **[MERCHANT_FRONTEND_GUIDE.md](MERCHANT_FRONTEND_GUIDE.md)** is the single guide for the
+  Locoomo frontend team: shared auth/security changes, every merchant-dashboard screen and
+  the admin app's merchant screens. Each phase that changes a screen updates it.
 - **[API.md](API.md)** is the per-endpoint reference for everything live.
 
 ## 18. Delivery approach
