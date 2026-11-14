@@ -41,18 +41,19 @@ something UI-related; tell backend.)
 12. [Shipments](#12-shipments)
 13. [Test simulator](#13-test-simulator)
 14. [Settings › Close account](#14-settings--close-account)
-15. [Coming next 🛠](#15-coming-next-)
+15. [Wallet](#15-wallet)
+16. [Coming next 🛠](#16-coming-next-)
 
 **Part C: Admin app**
-16. [Admin foundations: mandatory 2FA, permissions, approvals](#16-admin-foundations-mandatory-2fa-permissions-approvals)
-17. [Merchants: queue, review and account controls](#17-merchants-queue-review-and-account-controls)
-18. [Operations tools that affect merchant parcels](#18-operations-tools-that-affect-merchant-parcels)
+17. [Admin foundations: mandatory 2FA, permissions, approvals](#17-admin-foundations-mandatory-2fa-permissions-approvals)
+18. [Merchants: queue, review and account controls](#18-merchants-queue-review-and-account-controls)
+19. [Operations tools that affect merchant parcels](#19-operations-tools-that-affect-merchant-parcels)
 
 **Reference**
-19. [All TypeScript types](#19-all-typescript-types)
-20. [Error codes](#20-error-codes)
-21. [Endpoint index](#21-endpoint-index)
-22. [Testing locally and on staging](#22-testing-locally-and-on-staging)
+20. [All TypeScript types](#20-all-typescript-types)
+21. [Error codes](#21-error-codes)
+22. [Endpoint index](#22-endpoint-index)
+23. [Testing locally and on staging](#23-testing-locally-and-on-staging)
 
 ---
 
@@ -79,12 +80,12 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
    (§4)                 (§4.5)          (§6)              (§7)                    │
                                                                                   ▼
        Build in Test mode meanwhile: API keys, webhooks, test shipments    Locoomo reviews
-                     (§9, §10, §12, §13)                                  in the admin app (§17)
+                     (§9, §10, §12, §13)                                  in the admin app (§18)
                                                                                   │
                                                        approved ◄─────────────────┤
                                                           │        changes requested ─► fix and resubmit
                                                           ▼
-                                     Live keys, then live shipments and the wallet (🛠, §15)
+                                     Live keys, then live shipments and the wallet (🛠, §16)
 ```
 
 **Build order for the dashboard**
@@ -102,16 +103,18 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 9 | Shipments: list, create, detail with timeline, edit, cancel, return | §12 | ✅ (CSV import and labels 🛠) |
 | 10 | Test simulator on the shipment detail page | §13 | ✅ |
 | 11 | Settings › Close account | §14 | ✅ |
-| 12 | Wallet, manifests, returns, claims, audit log, go-live checklist | §15 | 🛠 |
+| 12 | Wallet: balance, statement, holds, test reset | §15 | ✅ (top-ups 🛠) |
+| 13 | Manifests, returns, claims, audit log, go-live checklist | §16 | 🛠 |
 
 **Admin app screens**
 
 | Screen | Section | Status |
 |---|---|---|
-| Mandatory 2FA, Admins (permissions), Approvals | §16 | ✅ |
-| Merchants queue, review, suspend/reinstate, settings | §17 | ✅ |
-| Public holidays, lost/damaged parcel | §18 | ✅ |
-| Merchant 360 support view | §17.6 | 🛠 |
+| Mandatory 2FA, Admins (permissions), Approvals | §17 | ✅ |
+| Merchants queue, review, suspend/reinstate, settings | §18 | ✅ |
+| Public holidays, lost/damaged parcel | §19 | ✅ |
+| Merchant wallet panel and adjustments | §18.6 | ✅ |
+| Merchant 360 support view | §18.7 | 🛠 |
 
 ---
 
@@ -136,7 +139,7 @@ All endpoints live under `{API origin}/api/v1`. Paths in this guide leave that p
 - **Staging caveat.** The staging API is on `*.up.railway.app`, a different site from
   `*.locoomo.com`, so cookies set by it are **not sent** from a `locoomo.com` page. Until
   backend moves staging to a `locoomo.com` subdomain (e.g. `api-staging.locoomo.com`), run
-  the dashboard on `localhost` against staging (see §22) or ask backend for the subdomain.
+  the dashboard on `localhost` against staging (see §23) or ask backend for the subdomain.
 
 ---
 
@@ -572,7 +575,7 @@ Use **`me.permissions`**, not the role name, to show or hide controls:
 | Create, edit, cancel shipments; simulator; manifests, CSV, claims 🛠 | `shipments.write` | ✓ | ✓ | ✓ | ✓ | | |
 | Return-batch collection codes 🛠 | `returns.collect` | ✓ | ✓ | | ✓ | | |
 | API keys, API logs, webhooks | `developers.manage` | ✓ | ✓ | ✓ | | | |
-| Wallet top-up, statements, invoices 🛠 | `wallet.manage` | ✓ | ✓ | | | ✓ | |
+| Wallet statement and holds; top-up and invoices 🛠 (the balance itself is visible to everyone) | `wallet.manage` | ✓ | ✓ | | | ✓ | |
 | Profile, KYC, bank, terms, submit | `account.manage` | ✓ | ✓ | | | | |
 | Team: invite, change roles, remove | `team.manage` | ✓ | ✓ | | | | |
 | Transfer ownership, close account | `ownership` | ✓ | | | | | |
@@ -1220,7 +1223,8 @@ screens show.
   `400 INVALID_MODE`.
 - Account, team, API-key and API-log routes ignore the header (API keys and logs take
   `?mode=` instead).
-- Test mode has its own shipments, webhooks and a **test wallet of ₦1,000,000** (for holds).
+- Test mode has its own shipments, webhooks and a **test wallet** that starts with
+  ₦1,000,000, is charged like a real one, and can be reset (§15).
   Nothing reaches real Nodes, couriers, buyers or money. Test tracking codes start with
   **`LCT-`**; live codes with `LCM-`.
 - Make test mode **obvious**: an orange "TEST MODE" strip across the top of the page.
@@ -1434,7 +1438,7 @@ On success, go to the detail page with a toast: "Shipment created. Drop it off a
 |---|---|
 | `400 VALIDATION_FAILED` | Field errors from `details[].field` |
 | `409 DUPLICATE_REFERENCE` | "You've already used this reference." + link to the existing shipment (`details.existingShipmentId`) |
-| `402 INSUFFICIENT_WALLET_BALANCE` | Test: "Your test wallet's ₦1,000,000 is all held by shipments waiting for drop-off. Cancel some to free it up." Live: "Top up your wallet" (🛠) |
+| `402 INSUFFICIENT_WALLET_BALANCE` | `details.requiredKobo` / `details.availableKobo`. Test: "Not enough test funds (₦{available} available). Reset your test wallet or cancel shipments waiting for drop-off." + link to §15.4. Live: "Not enough funds: this shipment needs ₦{required}, you have ₦{available}. Top up your wallet." (top-up 🛠) |
 | `422 DESTINATION_NODE_UNAVAILABLE` | Under the destination: "This Node isn't accepting parcels. Pick another." |
 | `422 ORIGIN_NODE_UNAVAILABLE` | Under the drop-off: same copy |
 | `422 ORIGIN_REQUIRED` | Under the drop-off: "Pick where you'll drop it off." |
@@ -1630,7 +1634,107 @@ Owner only (`ownership`). A "Danger zone" card at the bottom of Settings.
 
 ---
 
-## 15. Coming next 🛠
+## 15. Wallet
+
+✅ Reading the wallet and the test reset are ready. Top-ups (card and bank transfer) are 🛠
+and arrive next: build the screen now and leave a disabled "Top up" button.
+
+**How the money works**, for help text:
+
+- Each merchant has **one wallet per mode** (Test / Live, from the `Locoomo-Mode` toggle).
+- Creating a shipment **holds** its quoted fee. When the parcel is dropped off, the hold is
+  **charged** at the final price. Cancelled, expired or refused shipments release their hold
+  and cost nothing.
+- **Available = balance − held.** New shipments need enough available balance, or they're
+  refused with `402 INSUFFICIENT_WALLET_BALANCE`.
+- The balance can go **below zero** if a parcel is re-priced after measuring. Parcels keep
+  moving; only new shipments are blocked until a top-up.
+- The **test wallet** starts with ₦1,000,000, is charged like a real one, and can be reset.
+
+### 15.1 Wallet summary (header card, and the Wallet page)
+
+**`GET /merchant/wallet`** (any member; sends `Locoomo-Mode`) → `Wallet`
+
+```json
+{
+  "mode": "test",
+  "currency": "NGN",
+  "balanceKobo": 99820000,
+  "heldKobo": 360000,
+  "availableKobo": 99460000,
+  "updatedAt": "2026-11-15T10:05:00.000Z"
+}
+```
+
+```
+Wallet · TEST                                             [Reset test wallet]
+┌───────────────────────┬───────────────────────┬────────────────────────┐
+│ Available             │ Held for shipments    │ Balance                │
+│ ₦994,600.00           │ ₦3,600.00             │ ₦998,200.00            │
+└───────────────────────┴───────────────────────┴────────────────────────┘
+```
+
+- Show **Available** biggest: it's what they can ship with.
+- `balanceKobo < 0`: red, with "Your balance is negative. New shipments are paused until you
+  top up." (live) or "Reset your test wallet to keep testing." (test).
+- A small "Available ₦…" chip in the shipment create form saves a trip here.
+- Refetch after creating, cancelling or simulating a shipment.
+
+### 15.2 Statement (entries)
+
+**`GET /merchant/wallet/entries?type=&from=&to=&limit=&cursor=`** (`wallet.manage`) →
+`CursorPage<WalletEntry>`, newest first.
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "type": "shipment_charge",
+      "amountKobo": -180000,
+      "balanceAfterKobo": 99820000,
+      "description": "Shipment LCT-7K3M-Q9TD",
+      "shipmentId": "0c7e5a7b-…",
+      "createdAt": "2026-11-14T11:02:00.000Z"
+    }
+  ],
+  "nextCursor": null,
+  "hasMore": false
+}
+```
+
+Table: date, description, type label, amount (green with "+" for credits, plain "−" for
+debits), balance after. Link the row to the shipment when `shipmentId` is set. Filters: type,
+date range (`from` inclusive, `to` exclusive). Infinite scroll.
+
+| `type` | Label |
+|---|---|
+| `top_up` | Top-up |
+| `shipment_charge` | Shipment |
+| `shipment_adjustment` | Re-priced after measuring |
+| `adjustment` | Adjustment by Locoomo |
+| `claim_credit` | Claim payout |
+| `refund` | Refund to bank |
+| `test_funding` | Test funds |
+
+Unknown types: show the raw value.
+
+### 15.3 Holds
+
+**`GET /merchant/wallet/holds?status=active&limit=&cursor=`** (`wallet.manage`) →
+`CursorPage<WalletHold>`. A "Held for shipments" tab: one row per shipment waiting for
+drop-off (`status: active`), with the amount and a link to the shipment. `captured` and
+`released` holds are history; show them only behind a filter.
+
+### 15.4 Reset test wallet
+
+**`POST /merchant/test/wallet/reset`** (test mode, `shipments.write`) → `Wallet`. Sets the
+balance back to ₦1,000,000; open holds stay. Show the button only in Test mode. Confirm:
+"Reset your test balance to ₦1,000,000?" Live mode answers `403 TEST_MODE_ONLY`.
+
+---
+
+## 16. Coming next 🛠
 
 Build these behind feature flags against the shapes below. Final shapes land with the backend
 phase; we'll update this section.
@@ -1638,7 +1742,7 @@ phase; we'll update this section.
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
 | **Live shipments** | Same as §12 with `Locoomo-Mode: live` | Opens with the wallet. Enable the Live toggle then. Live shipments get a public `trackingUrl` |
-| **Wallet** | `GET /merchant/wallet` → `{ balanceKobo, heldKobo, availableKobo }`, card top-up, dedicated bank-transfer account, statement | `wallet.manage`. Show held vs available. Low-balance threshold setting |
+| **Wallet top-ups** | Card top-up, dedicated bank-transfer account number, receipts | `wallet.manage`. Enables the "Top up" button on §15. Low-balance threshold setting |
 | **Invoices** | `GET /merchant/invoices/{yyyy-mm}` (PDF/CSV) | Monthly statement and tax invoice |
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
 | **Returns to collect** | `GET /merchant/returns?state=ready`, `POST /merchant/return-batches { nodeId, shipmentIds }` → collection code | `returns.collect`. Show the batch code big, like a boarding pass. 10 working days free storage |
@@ -1653,9 +1757,9 @@ phase; we'll update this section.
 
 # Part C: Admin app
 
-## 16. Admin foundations: mandatory 2FA, permissions, approvals
+## 17. Admin foundations: mandatory 2FA, permissions, approvals
 
-### 16.1 Mandatory 2FA ✅
+### 17.1 Mandatory 2FA ✅
 
 Every admin must turn on 2FA: existing admins within **14 days of release**, new admins within
 14 days of their invite.
@@ -1668,7 +1772,7 @@ Every admin must turn on 2FA: existing admins within **14 days of release**, new
 - Admins can't turn 2FA off (no "Turn off" button when `required` is true;
   `403 MFA_REQUIRED_FOR_ROLE` otherwise).
 
-### 16.2 Permissions ✅
+### 17.2 Permissions ✅
 
 Admins have **permissions** on top of the admin role. Older screens work for every admin;
 newer ones (merchant review, money moves) need a permission and answer `403 FORBIDDEN`
@@ -1678,7 +1782,7 @@ otherwise.
 |---|---|---|
 | `super` | **Full access**: everything, including managing admins | All |
 | `kyc` | Merchant verification | Queue, review, approve, request changes, reject, view KYC files |
-| `finance` | Money: wallets, adjustments, claims, refunds, pricing | 🛠 wallets and claims |
+| `finance` | Money: wallets, adjustments, claims, refunds, pricing | Wallet panel and adjustments (§18.6); 🛠 claims |
 | `ops` | Operations: reroutes, suspensions, hubs, exceptions | Queue, suspend/reinstate, settings, public holidays, lost/damaged |
 | `support` | Support tools | Queue and detail (read-only), 🛠 Merchant 360 |
 
@@ -1695,7 +1799,7 @@ To hide menu items, load the admin's own permissions from `GET /admin/admins` if
 `super`; otherwise handle `403` gracefully. Every existing admin was given Full access at
 release: narrow them down from this screen.
 
-### 16.3 Approvals queue (two-admin rule) ✅
+### 17.3 Approvals queue (two-admin rule) ✅
 
 Money moves and other risky actions are **requested** by one admin and **approved** by
 another before they run. (Wallet adjustments for merchants will be raised from the merchant's
@@ -1726,7 +1830,7 @@ Approvals                                          [Pending ▾]
 
 ---
 
-## 17. Merchants: queue, review and account controls
+## 18. Merchants: queue, review and account controls
 
 | Endpoint | Permission (any of; `super` always qualifies) |
 |---|---|
@@ -1737,7 +1841,7 @@ Approvals                                          [Pending ▾]
 These routes keep working when the merchant platform is switched off. Every action is in the
 audit log.
 
-### 17.1 Merchants queue ✅
+### 18.1 Merchants queue ✅
 
 **`GET /admin/merchants?status=submitted&q=ada&page=1&limit=20`**
 
@@ -1771,7 +1875,7 @@ audit log.
 - `waitingHours` (set while waiting for a decision): amber past 8 hours, red past 24. The
   target is a decision within one working day.
 
-### 17.2 Merchant review ✅
+### 18.2 Merchant review ✅
 
 **`GET /admin/merchants/:id`**
 
@@ -1821,7 +1925,7 @@ field (required when rejecting, shown to the merchant).
   `reason` 3–500 chars, required when rejecting. Moves `submitted → in_review`. Response
   `200`: the detail.
 
-### 17.3 Decisions ✅
+### 18.3 Decisions ✅
 
 | Button | Call | Rules |
 |---|---|---|
@@ -1848,7 +1952,7 @@ business 100,000/day, ₦2bn, −₦1m; enterprise unlimited.
 
 Disable **Approve** while any panel is set to Reject, and **Request changes** while none is.
 
-### 17.4 Account controls ✅ (`ops`)
+### 18.4 Account controls ✅ (`ops`)
 
 - **Suspend:** `POST /admin/merchants/:id/suspend { reason }`, from any status except
   `closed`. The team can sign in and read but not edit; new live shipments, live keys and
@@ -1870,24 +1974,54 @@ Disable **Approve** while any panel is set to Reject, and **Request changes** wh
 
   Response `200`: the detail.
 
-### 17.5 Statuses in the admin app
+### 18.5 Statuses in the admin app
 
 Same values as the dashboard (§5.4). Suggested badges: `draft` grey, `submitted` blue,
 `in_review` blue, `changes_requested` amber, `approved` green, `rejected` red, `suspended`
 red, `closed` grey.
 
-### 17.6 Coming 🛠
+### 18.6 Merchant wallet panel ✅ (`finance`, `ops`, `support` to view; `finance` to adjust)
+
+A "Wallet" tab on the merchant page, with a Test / Live switch (`?mode=`, default `live`).
+
+| Call | Returns |
+|---|---|
+| `GET /admin/merchants/:id/wallet?mode=live` | `Wallet` (same shape as the dashboard's, §15.1) |
+| `GET /admin/merchants/:id/wallet/entries?mode=&type=&from=&to=&limit=&cursor=` | `CursorPage<WalletEntry>` (§15.2) |
+| `GET /admin/merchants/:id/wallet/holds?mode=&status=&limit=&cursor=` | `CursorPage<WalletHold>` (§15.3) |
+
+**Adjust balance** (`finance` only; hide the button otherwise). A dialog:
+
+- Credit / Debit toggle and an amount in naira (send **kobo**, negative for a debit).
+- "Reason (internal)": required, 3–1000 chars. The approving admin sees it.
+- "Note on the merchant's statement": optional, ≤ 200 chars. Default "Adjustment by
+  Locoomo".
+
+**`POST /admin/merchants/:id/wallet/adjustments`**
+
+```json
+{ "mode": "live", "amountKobo": 2500000, "reason": "Goodwill credit for delayed parcel LCM-4F2K-9XPT", "merchantNote": "Goodwill credit" }
+```
+
+→ `201 { approvalId, status: "pending", summary: "Credit ₦25,000.00 to Ada Stores (live wallet)", expiresAt }`.
+
+**Nothing moves yet.** Toast: "Sent for approval. Another finance admin must approve it in
+Approvals." It appears in the Approvals queue (§17.3). When a **different** `finance` admin
+approves it, the money moves and the approval's `result` is
+`{ entryId, amountKobo, balanceAfterKobo }`. A debit may take the balance below zero; warn
+in the dialog when it would.
+
+### 18.7 Coming 🛠
 
 - **Merchant 360** (read-only support view): API key metadata, webhook health, wallet,
   shipments, audit log. There's no "log in as merchant"; this view replaces it.
-- **Wallet adjustments** raised from the merchant page (two-admin rule, §16.3).
 - **All orders** and **Reroutes** for merchant parcels.
 
 ---
 
-## 18. Operations tools that affect merchant parcels
+## 19. Operations tools that affect merchant parcels
 
-### 18.1 Public holidays ✅ (`ops`)
+### 19.1 Public holidays ✅ (`ops`)
 
 Buyers have **7 working days** to collect a parcel. Public holidays don't count, so ops must
 add them (federal holidays are often announced late).
@@ -1902,7 +2036,7 @@ Screen: a list for the current year with "Add holiday" (date picker + name) and 
 per row. Help text: "A new holiday affects parcels shelved after it's added. Existing
 deadlines aren't recalculated."
 
-### 18.2 Lost or damaged parcel ✅ (`ops`)
+### 19.2 Lost or damaged parcel ✅ (`ops`)
 
 On the admin order page, a "Report lost or damaged" action for parcels in our custody:
 
@@ -1921,7 +2055,7 @@ parcel as {type}? This can't be undone."
 
 # Reference
 
-## 19. All TypeScript types
+## 20. All TypeScript types
 
 ```ts
 // ─── Envelope and errors ────────────────────────────────────────────────
@@ -2254,6 +2388,43 @@ export interface BulkResult {
 }
 export type SimulateTarget = ShipmentStatus | 'fee_adjusted' | 'destination_changed';
 
+// ─── Wallet ─────────────────────────────────────────────────────────────
+export interface Wallet {
+  mode: Mode;
+  currency: 'NGN';
+  balanceKobo: number;                     // may be negative
+  heldKobo: number;
+  availableKobo: number;                   // balance − held
+  updatedAt: string;
+}
+export type WalletEntryType =
+  | 'top_up' | 'shipment_charge' | 'shipment_adjustment' | 'adjustment'
+  | 'claim_credit' | 'refund' | 'test_funding';
+export interface WalletEntry {
+  id: string;
+  type: WalletEntryType | string;          // tolerate new types
+  amountKobo: number;                      // signed: credits +, debits −
+  balanceAfterKobo: number;
+  description: string;
+  shipmentId: string | null;
+  createdAt: string;
+}
+export interface WalletHold {
+  id: string;
+  shipmentId: string;
+  status: 'active' | 'captured' | 'released';
+  amountKobo: number;
+  capturedKobo: number | null;             // what was finally charged
+  createdAt: string;
+  resolvedAt: string | null;
+}
+export interface WalletAdjustmentRequested {
+  approvalId: string;
+  status: 'pending';
+  summary: string;
+  expiresAt: string;
+}
+
 // ─── Admin ──────────────────────────────────────────────────────────────
 export type AdminPermission = 'super' | 'kyc' | 'finance' | 'ops' | 'support';
 export interface AdminAccount {
@@ -2306,7 +2477,7 @@ export interface PublicHoliday { date: string; name: string }   // date: YYYY-MM
 
 ---
 
-## 20. Error codes
+## 21. Error codes
 
 Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP status.
 
@@ -2407,7 +2578,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 
 | HTTP | Code | What the UI does |
 |---|---|---|
-| 409 | `LAST_SUPER_ADMIN` | §16.2 |
+| 409 | `LAST_SUPER_ADMIN` | §17.2 |
 | 403 | `SELF_APPROVAL_NOT_ALLOWED` | Hide Approve on own requests |
 | 409 | `APPROVAL_NOT_PENDING` | Refresh the list |
 | 409 | `REVIEW_HAS_REJECTED_ITEMS` | Disable Approve while a section is rejected |
@@ -2416,7 +2587,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 
 ---
 
-## 21. Endpoint index
+## 22. Endpoint index
 
 All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAUTH_REQUIRED`.
 
@@ -2476,6 +2647,9 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | PATCH | `/merchant/shipments/:id` | `shipments.write` | Mode |
 | POST | `/merchant/shipments/:id/cancel`, `/merchant/shipments/:id/return-to-sender` | `shipments.write` | Mode |
 | POST | `/merchant/test/shipments/:id/simulate` | `shipments.write` | Test mode only |
+| GET | `/merchant/wallet` | any member | Mode |
+| GET | `/merchant/wallet/entries`, `/merchant/wallet/holds` | `wallet.manage` | Mode |
+| POST | `/merchant/test/wallet/reset` | `shipments.write` | Test mode only |
 
 **Admin app**
 
@@ -2493,10 +2667,12 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | GET / POST | `/admin/public-holidays` | `ops` |
 | DELETE | `/admin/public-holidays/:date` | `ops` |
 | POST | `/admin/orders/:id/exception` | `ops` |
+| GET | `/admin/merchants/:id/wallet`, `…/wallet/entries`, `…/wallet/holds` | `finance`, `ops`, `support` |
+| POST | `/admin/merchants/:id/wallet/adjustments` | `finance` (runs after a second `finance` admin approves) |
 
 ---
 
-## 22. Testing locally and on staging
+## 23. Testing locally and on staging
 
 - **Point the dashboard at staging from `localhost`.** Ask backend to add your local origin
   (e.g. `http://localhost:5173`) to staging's `CORS_ORIGIN`. Note the cookie caveat in §2: if

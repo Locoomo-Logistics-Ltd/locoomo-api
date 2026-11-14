@@ -6,6 +6,7 @@ import { assertRecentAuth } from '../../../common/auth/recent-auth';
 import { EntityNotFoundException } from '../../../common/exceptions';
 import {
   CursorPage,
+  cursorTime,
   decodeCursor,
   toCursorPage,
 } from '../../../common/pagination/cursor';
@@ -288,7 +289,7 @@ export class WebhookEndpointService {
     if (after) {
       params.push(after.t, after.id);
       where.push(
-        `(d."createdAt", d.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
+        `(${cursorTime('d."createdAt"')}, d.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
       );
     }
     const rows = await this.dataSource.query<
@@ -307,7 +308,7 @@ export class WebhookEndpointService {
          FROM webhook_deliveries d
          JOIN webhook_events ev ON ev.id = d."eventId"
         WHERE ${where.join(' AND ')}
-        ORDER BY d."createdAt" DESC, d.id DESC
+        ORDER BY ${cursorTime('d."createdAt"')} DESC, d.id DESC
         LIMIT $3`,
       params,
     );

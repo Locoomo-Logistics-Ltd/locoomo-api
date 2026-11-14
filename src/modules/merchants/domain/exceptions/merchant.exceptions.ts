@@ -391,10 +391,10 @@ export class TestModeOnlyException extends BusinessException {
   readonly errorCode = 'TEST_MODE_ONLY';
   readonly httpStatus = 403;
 
-  constructor() {
-    super(
-      'The simulator only works on test shipments (use a test key or Locoomo-Mode: test)',
-    );
+  constructor(
+    message = 'The simulator only works on test shipments (use a test key or Locoomo-Mode: test)',
+  ) {
+    super(message);
   }
 }
 

@@ -3494,6 +3494,13 @@ newest first. Metadata only, never bodies.
 `nextCursor` back as `cursor` for the next page (`400 INVALID_CURSOR` if it's been altered).
 Show `correlationId` with a copy button: support needs it.
 
+### Wallet: `GET /api/v1/merchant/wallet` · `…/wallet/entries` · `…/wallet/holds` · `POST …/test/wallet/reset`
+
+Same endpoints integrators call with `wallet:read` keys; contract and samples in
+[MERCHANT_API.md §14.1](MERCHANT_API.md#141-reading-your-wallet). Dashboard sessions pick
+the wallet with `Locoomo-Mode`. Any member can read the summary (`GET /wallet`);
+entries and holds need `wallet.manage`; the test reset needs `shipments.write`.
+
 ## Admin: orders
 
 `POST /api/v1/admin/orders/:id/exception` (`ops`): record a parcel lost or damaged in our
@@ -3643,6 +3650,48 @@ flight continue). Both email the team.
 
 `limits` **replaces** all overrides (`{}` = back to tier defaults). `creationPaused` stops
 new live shipments for this merchant only. Response `200`: the detail.
+
+## Admin: merchant wallets
+
+A merchant has one wallet per mode. Reading needs `finance`, `ops` or `support`; raising an
+adjustment needs `finance`, and it only runs when a **second** `finance` admin approves it
+in [Approvals](#approvals-two-admin-rule).
+
+| Endpoint | |
+|---|---|
+| `GET /api/v1/admin/merchants/:id/wallet?mode=live` | `{ mode, currency, balanceKobo, heldKobo, availableKobo, updatedAt }`. `mode` defaults to `live` |
+| `GET …/wallet/entries?mode=&type=&from=&to=&limit=&cursor=` | The merchant's statement, newest first (shape: [MERCHANT_API.md §14.1](MERCHANT_API.md#141-reading-your-wallet)) |
+| `GET …/wallet/holds?mode=&status=&limit=&cursor=` | Fees held for shipments |
+| `POST …/wallet/adjustments` | Raise a credit or debit for approval (below) |
+
+### `POST /api/v1/admin/merchants/:id/wallet/adjustments` (`finance`)
+
+```json
+{ "mode": "live", "amountKobo": 2500000, "reason": "Goodwill credit for delayed parcel LCM-4F2K-9XPT", "merchantNote": "Goodwill credit" }
+```
+
+| Field | Rules |
+|---|---|
+| `mode` | `test` or `live` |
+| `amountKobo` | Non-zero whole kobo, at most ₦1bn either way. Positive credits, negative debits |
+| `reason` | 3–1000 chars. Internal: shown to the approving admin and in the audit log |
+| `merchantNote` | Optional, ≤ 200 chars. Shown on the merchant's statement. Default "Adjustment by Locoomo" |
+
+Response `201`:
+
+```json
+{ "approvalId": "uuid", "status": "pending", "summary": "Credit ₦25,000.00 to Ada Stores (live wallet)", "expiresAt": "…" }
+```
+
+Nothing moves yet. A different `finance` (or `super`) admin approves it with
+`POST /api/v1/admin/approvals/:approvalId/approve`; the approval's `result` is then
+`{ entryId, amountKobo, balanceAfterKobo }` and the merchant sees an `adjustment` line.
+A debit may take the balance below zero. Errors: `403 FORBIDDEN` (not `finance`),
+`404 NOT_FOUND` (unknown merchant), `400 VALIDATION_FAILED`.
+
+**Reconciliation.** Every night a worker checks each wallet's cached balance against its
+ledger and its held amount against its active holds. Any mismatch is emailed to `finance`
+admins and logged; nothing is corrected automatically.
 
 ## Idempotency-Key (safe retries)
 

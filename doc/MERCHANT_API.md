@@ -869,11 +869,13 @@ don't handle and still respond 2xx.
 ## 13. Sandbox and testing
 
 - Use `sk_test_…` / `pk_test_…`. Test mode has its own shipments, webhooks and a **test
-  wallet of ₦1,000,000** for holds: shipments not yet dropped off can't hold more than that
-  in total (`402 INSUFFICIENT_WALLET_BALANCE`). Cancelling releases a hold; charges in test
-  mode don't drain it. Nothing reaches real
-  Nodes, couriers, buyers or money. **Test tracking codes start with `LCT-`**, and real
-  Nodes refuse them if one is ever scanned by mistake.
+  wallet that starts with ₦1,000,000**. It works exactly like a live wallet
+  ([§14](#14-billing-wallet-pricing-invoices)): creating a shipment holds its fee, a
+  simulated drop-off charges it, and a shipment that can't be paid for is refused with
+  `402 INSUFFICIENT_WALLET_BALANCE`. Top it back up to ₦1,000,000 any time with
+  `POST /test/wallet/reset` (open holds stay). Nothing reaches real Nodes, couriers, buyers
+  or money. **Test tracking codes start with `LCT-`**, and real Nodes refuse them if one is
+  ever scanned by mistake.
 - Test shipments don't move on their own. Drive them:
 
   ```bash
@@ -897,10 +899,11 @@ don't handle and still respond 2xx.
 
 ## 14. Billing: wallet, pricing, invoices
 
-- **Prepaid wallet.** Top up by card (dashboard) or by **bank transfer to your dedicated
-  account number** (shown in *Wallet*; transfers credit automatically within minutes).
-  Card top-ups are credited minus the card processor's fee; bank transfers are credited in
-  full. `GET /wallet` returns `{ "balanceKobo", "heldKobo", "availableKobo" }`.
+- **Prepaid wallet**, one per mode. Top up by card (dashboard) or by **bank transfer to
+  your dedicated account number** (shown in *Wallet*; transfers credit automatically within
+  minutes). Card top-ups are credited minus the card processor's fee; bank transfers are
+  credited in full. *(Top-ups are coming next; until then live wallets are funded by your
+  account manager.)*
 - **Hold, then charge.** Creating a shipment **holds** the quoted fee. When we receive the
   parcel, we **charge** the final fee: re-priced from where it was actually dropped and
   what we measured (`shipment.fee_adjusted` if different). Cancelled, expired or refused
@@ -918,6 +921,67 @@ don't handle and still respond 2xx.
   email.
 - Wallet funds are prepaid service credit, used for Locoomo services. Unused balance is
   refunded to your verified bank account when you close your account.
+
+### 14.1 Reading your wallet
+
+Scope `wallet:read` (given to new secret keys by default). The key's mode picks the wallet.
+
+**`GET /wallet`**
+
+```json
+{
+  "mode": "live",
+  "currency": "NGN",
+  "balanceKobo": 5000000,
+  "heldKobo": 360000,
+  "availableKobo": 4640000,
+  "updatedAt": "2026-11-15T10:05:00.000Z"
+}
+```
+
+`availableKobo = balanceKobo − heldKobo` is what new shipments can use. `balanceKobo` can
+be negative after a re-measure (see above).
+
+**`GET /wallet/entries?type=&from=&to=&limit=&cursor=`**: your statement, newest first
+(cursor pagination, §5.4). `from` is inclusive and `to` exclusive (ISO times).
+
+```json
+{
+  "items": [
+    {
+      "id": "…",
+      "type": "shipment_charge",
+      "amountKobo": -180000,
+      "balanceAfterKobo": 4820000,
+      "description": "Shipment LCM-7K3M-Q9TD",
+      "shipmentId": "0c7e5a7b-…",
+      "createdAt": "2026-11-14T11:02:00.000Z"
+    }
+  ],
+  "nextCursor": null,
+  "hasMore": false
+}
+```
+
+| `type` | Meaning | Sign |
+|---|---|---|
+| `top_up` | Card or bank-transfer top-up *(coming next)* | + |
+| `shipment_charge` | A shipment's fee, charged when we received it | − |
+| `shipment_adjustment` | Re-priced after we measured it | − (or + if it came out cheaper) |
+| `adjustment` | A correction by Locoomo (approved by two Locoomo staff) | ± |
+| `claim_credit` | An approved claim *(coming with claims)* | + |
+| `refund` | Balance refunded to your bank account *(on closure)* | − |
+| `test_funding` | Test mode only: the starting ₦1,000,000 and resets | ± |
+
+New types may be added (§3).
+
+**`GET /wallet/holds?status=active|captured|released&limit=&cursor=`**: fees set aside
+for shipments, newest first: `{ id, shipmentId, status, amountKobo, capturedKobo,
+createdAt, resolvedAt }`. `capturedKobo` is what was finally charged.
+
+**`POST /test/wallet/reset`** (test mode only, scope `shipments:write`): sets the test
+balance back to ₦1,000,000 and returns the wallet. Holds for shipments not yet dropped off
+stay. Live mode → `403 TEST_MODE_ONLY`.
 
 ---
 
@@ -1017,6 +1081,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-14 | **Wallets are live** (§14.1): `GET /wallet`, `/wallet/entries` (your statement) and `/wallet/holds`, per mode. **The test wallet is now a real ledger**: a simulated drop-off charges it, re-measures adjust it, and `POST /test/wallet/reset` tops it back up to ₦1,000,000. **Fixed:** cursor pagination could skip rows (newest-first lists) or repeat them (`updatedSince` sync) when several rows shared a timestamp; cursors issued before the fix still work. Next: top-ups, then live shipments |
 | 2026-11-14 | **Webhooks are live; the sandbox is complete.** Endpoints (API and dashboard), Standard Webhooks signing with 24-hour secret rolls, retries, auto-disable, replay, *Send test event* and the delivery log. Next: live shipments and the wallet |
 | 2026-11-14 | **Test shipments and the simulator are live**: create (single and bulk), read, list and sync, timeline, edit, cancel, return to sender, and `POST /test/shipments/{id}/simulate`. `origin` is required until hubs open. Webhooks are next; imports and labels come with live shipments |
 | 2026-11-14 | **Nodes and quotes are live**: `GET /nodes`, `GET /nodes/{id}` (now with `acceptingParcels`), `GET /quotes`, from your server or the buyer's browser with a publishable key. `originNodeId` is required on quotes until hubs open. Quote breakdowns show VAT as included, not added |

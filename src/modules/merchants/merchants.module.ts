@@ -23,6 +23,18 @@ import { WebhookEmitterService } from './application/webhook-emitter.service';
 import { WebhookEndpointService } from './application/webhook-endpoint.service';
 import { MerchantNotifierService } from './application/merchant-notifier.service';
 import { MerchantTeamService } from './application/merchant-team.service';
+import { AdminWalletService } from './application/admin-wallet.service';
+import { WalletReconciliationService } from './application/wallet-reconciliation.service';
+import { WalletService } from './application/wallet.service';
+import { MerchantWalletEntity } from './infrastructure/entities/merchant-wallet.entity';
+import { WalletEntryEntity } from './infrastructure/entities/wallet-entry.entity';
+import { WalletHoldEntity } from './infrastructure/entities/wallet-hold.entity';
+import { AdminMerchantWalletController } from './interface/admin-merchant-wallet.controller';
+import {
+  TestWalletController,
+  WalletController,
+} from './interface/wallet.controller';
+import { AdminModule } from '../admin/admin.module';
 import { ApiKeyEntity } from './infrastructure/entities/api-key.entity';
 import { MerchantApiRequestEntity } from './infrastructure/entities/merchant-api-request.entity';
 import { MerchantBankAccountEntity } from './infrastructure/entities/merchant-bank-account.entity';
@@ -83,7 +95,12 @@ import { WebhooksController } from './interface/webhooks.controller';
       WebhookEndpointEntity,
       WebhookEventEntity,
       WebhookDeliveryEntity,
+      MerchantWalletEntity,
+      WalletEntryEntity,
+      WalletHoldEntity,
     ]),
+    // ApprovalService + registry: wallet adjustments need a second admin.
+    AdminModule,
     // UserLookupService (team names/emails), AdminPermissionService (KYC
     // reviewers to notify), MfaService (2FA before live keys).
     IdentityModule,
@@ -108,6 +125,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     ShipmentsController,
     TestShipmentsController,
     WebhooksController,
+    WalletController,
+    TestWalletController,
+    AdminMerchantWalletController,
   ],
   providers: [
     MerchantContextService,
@@ -129,6 +149,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     WebhookDispatcherService,
     WebhookEndpointService,
     { provide: WebhookTransport, useClass: HttpsWebhookTransport },
+    WalletService,
+    AdminWalletService,
+    WalletReconciliationService,
   ],
 })
 export class MerchantsModule {}

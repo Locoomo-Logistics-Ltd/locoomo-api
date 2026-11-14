@@ -456,6 +456,43 @@ describe('Merchant shipments, test mode (e2e)', () => {
       expect(order).toEqual([b.id, a.id]);
     });
 
+    it('pages through rows that share a timestamp exactly once', async () => {
+      // Rows changed in one transaction share a microsecond timestamp, which
+      // a millisecond cursor can't tell apart.
+      const same = [await create(), await create(), await create()];
+      const ids = same.map((s) => s.id);
+      const at = '2031-01-01T00:00:00.123456Z';
+      await dataSource.query(
+        `UPDATE merchant_shipments SET "updatedAt" = $1, "createdAt" = $1 WHERE id = ANY($2)`,
+        [at, ids],
+      );
+
+      const walk = async (query: string): Promise<string[]> => {
+        const seen: string[] = [];
+        let cursor: string | null = null;
+        for (let page = 0; page < 10; page++) {
+          const result: Page = data<Page>(
+            await api(key)
+              .get(
+                `/shipments?limit=1&${query}${cursor ? `&cursor=${cursor}` : ''}`,
+              )
+              .expect(200),
+          );
+          seen.push(...result.items.map((s) => s.id));
+          cursor = result.nextCursor;
+          if (!cursor) {
+            return seen;
+          }
+        }
+        throw new Error(`Paging never ended: ${seen.join(', ')}`);
+      };
+
+      const synced = await walk('updatedSince=2031-01-01T00:00:00Z');
+      expect([...synced].sort()).toEqual([...ids].sort());
+      const listed = await walk('createdFrom=2031-01-01T00:00:00Z');
+      expect([...listed].sort()).toEqual([...ids].sort());
+    });
+
     it('keeps merchants and modes apart', async () => {
       const mine = await create();
       expect(
@@ -659,8 +696,17 @@ describe('Merchant shipments, test mode (e2e)', () => {
 
     it('refuses new holds beyond the ₦1,000,000 test wallet', async () => {
       const big = await create();
+      // Grow its hold (and the wallet's held total with it) to the whole
+      // ₦1,000,000, keeping the ledger consistent.
       await dataSource.query(
-        `UPDATE merchant_shipments SET "quotedKobo" = 100000000 WHERE id = $1`,
+        `UPDATE merchant_wallets w
+            SET "heldKobo" = w."heldKobo" - h."amountKobo" + 100000000
+           FROM wallet_holds h
+          WHERE h."shipmentId" = $1 AND w.id = h."walletId"`,
+        [big.id],
+      );
+      await dataSource.query(
+        `UPDATE wallet_holds SET "amountKobo" = 100000000 WHERE "shipmentId" = $1`,
         [big.id],
       );
       const refused = await api(key)
