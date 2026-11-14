@@ -514,8 +514,9 @@ Two kinds of endpoint:
   [API.md › Merchant accounts](API.md#merchant-accounts-dashboard).
 - **Shipping**: the same endpoints integrators call with API keys; the dashboard calls them
   with the session (any team member). Contract: [MERCHANT_API.md](MERCHANT_API.md).
-  `GET /merchant/nodes`, `/nodes/{id}` and `/quotes` are live ✅ (use them for the
-  destination picker and price preview); `/shipments` and the rest are 🛠.
+  Live ✅: `GET /merchant/nodes`, `/nodes/{id}`, `/quotes` (destination picker, price
+  preview), `/shipments` (create, bulk, list, detail, timeline, edit, cancel, return to
+  sender) and the test simulator. Manifests, returns, wallet and claims are 🛠.
 
 ### 9.1 Hosting and auth
 
@@ -539,8 +540,10 @@ subdomain (e.g. `api-staging.locoomo.com`); ask backend.
 - Every merchant route needs a **verified email** (`403 EMAIL_NOT_VERIFIED` → §7).
 - Locoomo admin accounts are refused (`403 ADMINS_CANNOT_JOIN_MERCHANTS`). Show "Use a
   non-admin account for the merchant dashboard."
-- 🛠 From the API-keys release: every shipping request sends `Locoomo-Mode: test` or
-  `live` from a Test/Live toggle. Not read yet; adding it now is harmless.
+- **Every shipping request sends `Locoomo-Mode: test` or `live`** from the Test/Live
+  toggle (missing = `test`; anything else → `400 INVALID_MODE`). Account, team and key
+  routes ignore it. Live shipping answers `403 MERCHANT_NOT_APPROVED` before approval and
+  `403 LIVE_SHIPMENTS_NOT_AVAILABLE` until the wallet release; keep the toggle on Test.
 - `503 MERCHANT_PLATFORM_DISABLED` means Locoomo switched merchant services off. Show a
   full-page "We'll be right back" and retry every minute.
 
@@ -557,12 +560,12 @@ subdomain (e.g. `api-staging.locoomo.com`); ask backend.
 | 7 | **Developers › API keys** | Create, roll and revoke test/live keys; the secret is shown **once** | ✅ |
 | 8 | Developers › Webhooks | Endpoints, events, signing secret (shown once), delivery log, replay, send test | 🛠 next |
 | 9 | **Developers › API logs** | Requests made with the merchant's keys (30 days) | ✅ |
-| 10 | Shipments | List, detail and timeline, create form, CSV import, cancel, return, label PDF | 🛠 |
+| 10 | **Shipments** | List (filters, cursor), detail and timeline, create form, cancel, return to sender | ✅ (CSV import, label PDF 🛠) |
 | 11 | Manifests | Group shipments for a hub drop, QR/PDF for the driver | 🛠 |
 | 12 | Returns to collect | Parcels back at the hub, collection code per batch | 🛠 |
 | 13 | Wallet | Balance, held funds, top-up, bank-transfer account, statement, invoices | 🛠 |
 | 14 | Claims | Lost or damaged claims | 🛠 |
-| 15 | Test simulator | Move a test shipment through each status | 🛠 |
+| 15 | **Test simulator** | On a test shipment's detail page: buttons per next status (`POST /merchant/test/shipments/{id}/simulate`) | ✅ (webhook view 🛠) |
 | 16 | Audit log | Who did what in the team | 🛠 |
 
 ### 9.3 First load: where does this user go?

@@ -14,7 +14,7 @@ export interface ValidationDetail {
 // elements as `children`, where an array element's `property` is its index
 // ("3"). Walk the tree depth-first so every leaf constraint becomes one
 // detail with its full path.
-function toValidationDetails(
+export function toValidationDetails(
   errors: ValidationError[],
   parentPath = '',
 ): ValidationDetail[] {

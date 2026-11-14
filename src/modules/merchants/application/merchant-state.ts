@@ -2,6 +2,7 @@ import type { EntityManager } from 'typeorm';
 import type { AuditRequestContext } from '../../../common/audit/audit.service';
 import { EntityNotFoundException } from '../../../common/exceptions';
 import { MerchantLimits, resolveLimits } from '../domain/merchant-limits';
+import type { ApiKeyMode } from '../domain/api-key';
 import { MerchantRole, ReviewItemKey } from '../domain/merchant.enums';
 import { CURRENT_MERCHANT_TERMS_VERSION } from '../domain/merchant-terms';
 import {
@@ -23,6 +24,17 @@ export interface MerchantActor {
   // Step-up timestamp of the session (for actions that need it only
   // sometimes, e.g. live keys).
   reauthAt?: number;
+  context: AuditRequestContext;
+}
+
+// Whoever calls an integrator endpoint: an API key, or a team member's
+// dashboard session (mode from the Locoomo-Mode header).
+export interface MerchantCaller {
+  merchantId: string;
+  mode: ApiKeyMode;
+  via: 'api_key' | 'session';
+  keyId: string | null;
+  userId: string | null;
   context: AuditRequestContext;
 }
 

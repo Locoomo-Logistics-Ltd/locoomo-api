@@ -272,3 +272,138 @@ export class OriginRequiredException extends BusinessException {
     );
   }
 }
+
+export class InvalidModeException extends BusinessException {
+  readonly errorCode = 'INVALID_MODE';
+  readonly httpStatus = 400;
+
+  constructor() {
+    super('The Locoomo-Mode header must be "test" or "live"');
+  }
+}
+
+export class LiveShipmentsNotAvailableException extends AuthorizationException {
+  readonly errorCode = 'LIVE_SHIPMENTS_NOT_AVAILABLE';
+  readonly httpStatus = 403;
+
+  constructor() {
+    super(
+      'Live shipments open with the wallet release. Use test mode until then.',
+    );
+  }
+}
+
+export class DuplicateReferenceException extends BusinessException {
+  readonly errorCode = 'DUPLICATE_REFERENCE';
+  readonly httpStatus = 409;
+
+  constructor(existingShipmentId: string) {
+    super('A shipment with this reference already exists in this mode');
+    this.details = { existingShipmentId };
+  }
+}
+
+export class DestinationNodeUnavailableException extends BusinessException {
+  readonly errorCode = 'DESTINATION_NODE_UNAVAILABLE';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super('That Node isn’t accepting parcels. Pick another from GET /nodes.');
+  }
+}
+
+export class OriginNodeUnavailableException extends BusinessException {
+  readonly errorCode = 'ORIGIN_NODE_UNAVAILABLE';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super('The origin Node isn’t available for drop-off. Pick another.');
+  }
+}
+
+export class ReceiverUnreachableException extends BusinessException {
+  readonly errorCode = 'RECEIVER_UNREACHABLE';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super(
+      'We can’t reach this receiver: add receiver.email, or relay the collection code yourself (notifyReceiver).',
+    );
+  }
+}
+
+export class ReceiverRelayNotEnabledException extends BusinessException {
+  readonly errorCode = 'RECEIVER_RELAY_NOT_ENABLED';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super(
+      'Relaying collection codes (notifyReceiver: merchant or both) must be enabled on your account first. Ask your account manager.',
+    );
+  }
+}
+
+export class InsufficientWalletBalanceException extends BusinessException {
+  readonly errorCode = 'INSUFFICIENT_WALLET_BALANCE';
+  readonly httpStatus = 402;
+
+  constructor(requiredKobo: number, availableKobo: number) {
+    super('Your wallet balance is too low for this shipment');
+    this.details = { requiredKobo, availableKobo };
+  }
+}
+
+export class ShipmentNotCancellableException extends BusinessException {
+  readonly errorCode = 'SHIPMENT_NOT_CANCELLABLE';
+  readonly httpStatus = 409;
+
+  constructor(status: string) {
+    super(
+      'Only shipments not yet dropped off can be cancelled. Use return-to-sender instead.',
+    );
+    this.details = { status };
+  }
+}
+
+export class ShipmentNotEditableException extends BusinessException {
+  readonly errorCode = 'SHIPMENT_NOT_EDITABLE';
+  readonly httpStatus = 409;
+
+  constructor(field: string, status: string) {
+    super(`${field} can’t be changed while the shipment is ${status}`);
+    this.details = { field, status };
+  }
+}
+
+export class ShipmentNotReturnableException extends BusinessException {
+  readonly errorCode = 'SHIPMENT_NOT_RETURNABLE';
+  readonly httpStatus = 409;
+
+  constructor(status: string) {
+    super(
+      'Return to sender is possible from received until ready_for_collection',
+    );
+    this.details = { status };
+  }
+}
+
+export class TestModeOnlyException extends BusinessException {
+  readonly errorCode = 'TEST_MODE_ONLY';
+  readonly httpStatus = 403;
+
+  constructor() {
+    super(
+      'The simulator only works on test shipments (use a test key or Locoomo-Mode: test)',
+    );
+  }
+}
+
+export class InvalidSimulationException extends BusinessException {
+  readonly errorCode = 'INVALID_SIMULATION';
+  readonly httpStatus = 409;
+
+  constructor(from: string, to: string) {
+    super(`A ${from} shipment can’t be simulated to ${to}`);
+    this.details = { from, to };
+  }
+}

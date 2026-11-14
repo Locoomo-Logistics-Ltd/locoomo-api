@@ -88,7 +88,8 @@ a prepaid wallet.
      -d '{
        "reference": "ORDER-10001",
        "destinationNodeId": "8b0e…",
-       "receiver": { "name": "Chioma Okafor", "phone": "08031234567" },
+       "origin": { "type": "node", "nodeId": "<the Node you drop at>" },
+       "receiver": { "name": "Chioma Okafor", "phone": "08031234567", "email": "chioma@example.com" },
        "parcel": { "description": "Phone case", "size": "small", "weightKg": 0.3 }
      }'
    ```
@@ -404,7 +405,7 @@ Scope `shipments:write`. Send `Idempotency-Key`.
 |---|---|
 | `reference` | Required. Your id for this parcel, 1–64 chars, unique per account and mode |
 | `destinationNodeId` | Required. From `/nodes` |
-| `origin` | Optional. `{ "type": "hub" }` (default; your assigned hub) or `{ "type": "node", "nodeId": "…" }` for drop-off at a specific Node. If the parcel is actually dropped elsewhere, we re-price from where it really arrived |
+| `origin` | `{ "type": "hub" }` (your assigned hub; the default once you have one) or `{ "type": "node", "nodeId": "…" }` for drop-off at a specific Node. **Required as `node` until a hub is assigned to your account** (`422 ORIGIN_REQUIRED`). If the parcel is actually dropped elsewhere, we re-price from where it really arrived |
 | `receiver.name` | Required, 2–100 chars |
 | `receiver.phone` | Required, valid phone |
 | `receiver.email` | Optional. We recommend it: email is always sent, SMS where available |
@@ -416,7 +417,7 @@ Scope `shipments:write`. Send `Idempotency-Key`.
 | `parcel.declaredValueKobo` | Optional. Basis for claims; compensation is capped (see [§15](#15-claims-lost-or-damaged-parcels)) |
 | `externalBarcode` | Optional. A barcode already on the parcel; our hub scanners accept it instead of our label ([§9](#9-labels-and-parcel-identification)) |
 | `notifyReceiver` | Optional. `locoomo` (default): we send the collection code by SMS/email. `merchant`: you relay it in your own app, since we include it in the `ready_for_collection` webhook. `both`: both. `merchant`/`both` must be enabled on your account first |
-| `metadata` | Optional. Up to 50 string keys, 8 KB total, echoed back everywhere |
+| `metadata` | Optional. Up to 50 keys (≤ 40 chars) with string values (≤ 500 chars), 8 KB total, echoed back everywhere |
 
 Response `201`: the [Shipment object](#74-the-shipment-object), status `created`.
 
@@ -427,7 +428,14 @@ What happens at creation:
   SMS must be available; otherwise `422 RECEIVER_UNREACHABLE`. Add an email, or use
   `merchant`/`both`.
 - If the parcel isn't dropped within **60 days** (hub) or **14 days** (Node), the shipment
-  expires, the hold is released and you get `shipment.expired`.
+  expires, the hold is released and you get `shipment.expired`. The deadline is in
+  `dropDeadline`.
+- Other errors: `422 DESTINATION_NODE_UNAVAILABLE` (closed or withdrawn; a full Node is
+  accepted, see §6), `422 ORIGIN_NODE_UNAVAILABLE`, `422 RECEIVER_RELAY_NOT_ENABLED`
+  (`notifyReceiver` `merchant`/`both` not enabled yet), `422 NO_DELIVERY_OPTION`.
+- **Live mode** opens with the wallet release (see the changelog). Until then live
+  creation returns `403 LIVE_SHIPMENTS_NOT_AVAILABLE` (or `403 MERCHANT_NOT_APPROVED`);
+  live reads work and are empty.
 
 ### 7.2 Read and list
 
@@ -435,14 +443,18 @@ What happens at creation:
 - `GET /shipments?reference=TEMU-ORD-88412-1`
 - `GET /shipments?status=ready_for_collection&destinationNodeId=…&manifestId=…&createdFrom=…&createdTo=…&updatedSince=…&limit=&cursor=`
 - `GET /shipments/{id}/timeline`: the event history (what, when, which Node), oldest
-  first.
+  first. Besides statuses it includes `updated`, `fee_adjusted` and `destination_changed`.
+
+Lists are newest first. With `updatedSince` they're **oldest change first** (`updatedAt`
+ascending), which is what a sync loop wants: page through to the end and remember the
+time you started.
 
 ```json
 [
-  { "type": "created", "at": "2026-11-12T09:14:00.000Z", "nodeName": null },
-  { "type": "received", "at": "2026-11-14T11:02:00.000Z", "nodeName": "Ikeja Hub" },
-  { "type": "in_transit", "at": "2026-11-14T15:40:00.000Z", "nodeName": "Ikeja Hub" },
-  { "type": "ready_for_collection", "at": "2026-11-15T10:05:00.000Z", "nodeName": "Yaba Node — Herbert Macaulay" }
+  { "type": "created", "at": "2026-11-12T09:14:00.000Z", "nodeName": null, "sequence": 1 },
+  { "type": "received", "at": "2026-11-14T11:02:00.000Z", "nodeName": "Ikeja Hub", "sequence": 2 },
+  { "type": "in_transit", "at": "2026-11-14T15:40:00.000Z", "nodeName": "Ikeja Hub", "sequence": 3 },
+  { "type": "ready_for_collection", "at": "2026-11-15T10:05:00.000Z", "nodeName": "Yaba Node — Herbert Macaulay", "sequence": 4 }
 ]
 ```
 
@@ -454,13 +466,13 @@ What happens at creation:
   ```json
   {
     "results": [
-      { "index": 0, "ok": true, "shipment": { "id": "…", "trackingCode": "LCM-…" } },
+      { "index": 0, "ok": true, "shipment": { "id": "…", "trackingCode": "LCM-…", "…": "the full Shipment object" } },
       { "index": 1, "ok": false, "error": { "code": "VALIDATION_FAILED", "details": [{ "field": "items[1].receiver.phone", "constraint": "isPhoneE164", "message": "…" }] } }
     ]
   }
   ```
 
-- `POST /shipment-imports` takes up to **10,000** rows (JSON body ≤ 1 MB, or a CSV upload
+- *(Coming with live shipments.)* `POST /shipment-imports` takes up to **10,000** rows (JSON body ≤ 1 MB, or a CSV upload
   ≤ 5 MB) and processes them in the background. Poll
   `GET /shipment-imports/{id}` → `{ status: "processing" | "done", created, failed, rows: [...] }`.
   The CSV template is downloadable from the dashboard.
@@ -524,7 +536,8 @@ What happens at creation:
 
 | Field | Notes |
 |---|---|
-| `trackingUrl` | Public tracking page. Put it in your order emails; it's safe to share with the buyer |
+| `trackingUrl` | Public tracking page. Put it in your order emails; it's safe to share with the buyer. `null` in test mode |
+| `dropDeadline` | Drop the parcel off before this, or the shipment expires |
 | `sequence` | Increases on every change. Use it to discard out-of-order webhooks ([§12.4](#124-ordering-and-duplicates)) |
 | `destination.changed` | `true` if we rerouted to another Node (the buyer was told) |
 | `parcel.measured` | What we measured at drop-off, if it differed |
@@ -538,9 +551,9 @@ What happens at creation:
 
 | Endpoint | Allowed when | Effect |
 |---|---|---|
-| `PATCH /shipments/{id}` | `receiver.*`: until `collected` (the buyer gets a fresh code). `destinationNodeId`, `parcel.*`: only while `created` (re-quoted; the hold is adjusted) | Updated shipment; `shipment.updated` webhook |
+| `PATCH /shipments/{id}` | `receiver.*`: until `collected` (the buyer gets a fresh code; `"email": null` removes it). `destinationNodeId`, `parcel` (send the whole object): only while `created` (re-quoted; the hold is adjusted). `metadata`: replaced, any time | Updated shipment; `shipment.updated` webhook. Otherwise `409 SHIPMENT_NOT_EDITABLE` |
 | `POST /shipments/{id}/cancel` | Only while `created` (not yet dropped off) | `cancelled`, hold released. Otherwise `409 SHIPMENT_NOT_CANCELLABLE` |
-| `POST /shipments/{id}/return-to-sender` | From `received` until `ready_for_collection` (e.g. the buyer cancelled their order) | The parcel comes back to your hub/Node ([§11](#11-collection-delivery-exceptions-and-returns)). No extra fee in v1 |
+| `POST /shipments/{id}/return-to-sender` | From `received` until `ready_for_collection` (e.g. the buyer cancelled their order) | The parcel comes back to your hub/Node ([§11](#11-collection-delivery-exceptions-and-returns)). No extra fee in v1. Otherwise `409 SHIPMENT_NOT_RETURNABLE` |
 
 A cancel that races with the drop-off scan has one winner. If the parcel was scanned
 first, you get `409 SHIPMENT_NOT_CANCELLABLE`; use return-to-sender instead.
@@ -581,7 +594,7 @@ created ──► received ──► in_transit ──► ready_for_collection �
 
 ## 9. Labels and parcel identification
 
-- `GET /shipments/{id}/label?format=a6` (or `a4`) returns a PDF with the tracking code as a
+- *(Coming with live shipments.)* `GET /shipments/{id}/label?format=a6` (or `a4`) returns a PDF with the tracking code as a
   **Code 128 barcode and a QR code**, the destination Node, and the receiver's first name.
   Print it and stick it on the parcel. `POST /label-batches` builds one PDF for many
   shipments (in the background).
@@ -830,7 +843,9 @@ don't handle and still respond 2xx.
 ## 13. Sandbox and testing
 
 - Use `sk_test_…` / `pk_test_…`. Test mode has its own shipments, webhooks and a **test
-  wallet pre-funded with ₦1,000,000** (reset it in the dashboard). Nothing reaches real
+  wallet of ₦1,000,000** for holds: shipments not yet dropped off can't hold more than that
+  in total (`402 INSUFFICIENT_WALLET_BALANCE`). Cancelling releases a hold; charges in test
+  mode don't drain it. Nothing reaches real
   Nodes, couriers, buyers or money. **Test tracking codes start with `LCT-`**, and real
   Nodes refuse them if one is ever scanned by mistake.
 - Test shipments don't move on their own. Drive them:
@@ -843,7 +858,13 @@ don't handle and still respond 2xx.
 
   `to` accepts any status from [§8](#8-shipment-statuses), plus `fee_adjusted` and
   `destination_changed`. Intermediate steps fire their webhooks in order, exactly as in
-  live.
+  live: `created` → `collected` goes through `received`, `in_transit` and
+  `ready_for_collection`. Returns go via `ready_for_collection` (not collected).
+  Options: `exceptionType` (`lost` | `damaged`) with `to: "exception"`, and
+  `destinationNodeId` with `to: "destination_changed"` (default: the nearest other Node).
+  `fee_adjusted` needs a received parcel and raises the charge by 15% with a `measured`
+  weight. An impossible move returns `409 INVALID_SIMULATION`; a live shipment
+  `403 TEST_MODE_ONLY`.
 - Test top-ups use Paystack's test cards.
 
 ---
@@ -904,9 +925,15 @@ don't handle and still respond 2xx.
 | 409 | `DUPLICATE_REFERENCE` | `reference` already used; `existingShipmentId` included |
 | 409 | `SHIPMENT_NOT_CANCELLABLE` | Already dropped off; use return-to-sender |
 | 409 | `SHIPMENT_NOT_EDITABLE` | That field can't change in the current status |
+| 409 | `SHIPMENT_NOT_RETURNABLE` | Return to sender only from `received` to `ready_for_collection` |
+| 409 | `INVALID_SIMULATION` | (Sandbox) that move isn't possible from the current status |
+| 403 | `TEST_MODE_ONLY` | (Sandbox) the simulator only works on test shipments |
+| 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | Live shipments aren't open yet; use test mode |
 | 409 | `IDEMPOTENCY_IN_PROGRESS` | Retry shortly with the same key |
 | 413 | `PAYLOAD_TOO_LARGE` | Over 1 MB; use imports |
 | 422 | `DESTINATION_NODE_UNAVAILABLE` | That Node isn't accepting parcels; pick another from `/nodes` |
+| 422 | `ORIGIN_NODE_UNAVAILABLE` | The origin Node isn't available for drop-off |
+| 422 | `RECEIVER_RELAY_NOT_ENABLED` | `notifyReceiver` `merchant`/`both` must be enabled on your account first |
 | 422 | `NO_DELIVERY_OPTION` | Too big or heavy for any vehicle, or no courier covers the route |
 | 422 | `ORIGIN_REQUIRED` | Quote without `originNodeId` and no hub assigned yet |
 | 422 | `RECEIVER_UNREACHABLE` | Add `receiver.email`, or relay the code yourself |
@@ -961,6 +988,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-14 | **Test shipments and the simulator are live**: create (single and bulk), read, list and sync, timeline, edit, cancel, return to sender, and `POST /test/shipments/{id}/simulate`. `origin` is required until hubs open. Webhooks are next; imports and labels come with live shipments |
 | 2026-11-14 | **Nodes and quotes are live**: `GET /nodes`, `GET /nodes/{id}` (now with `acceptingParcels`), `GET /quotes`, from your server or the buyer's browser with a publishable key. `originNodeId` is required on quotes until hubs open. Quote breakdowns show VAT as included, not added |
 | 2026-11-14 | **API keys are live**: create test keys in *Developers › API keys* (live keys once approved), restrict them by IP or origin, roll and revoke them, and see every request in *Developers › API logs*. `GET /ping` checks a key. Rate limits apply as in §5.5. Nodes/quotes, test shipments and webhooks are next |
 | 2026-11-14 | **Accounts and onboarding are live** in the merchant dashboard: create a business, invite your team with roles, complete KYC and submit for review. API keys, the sandbox, Nodes/quotes, test shipments and webhooks are next |

@@ -863,6 +863,26 @@ Decisions:
 - **VAT**: prices stay VAT-inclusive; `VAT_ENABLED` (default off) only itemises the included
   VAT. The contract's sample was corrected (VAT was shown as added on top). Finance confirms F3.
 
+### M2c Test shipments and simulator: done (2026-11-14)
+
+| Item | Where |
+|---|---|
+| `merchant_shipments` (receiver, parcel, Node snapshots, fee hold/charge, collection, return, exception; `UQ(merchantId, mode, reference)`; test codes must be `LCT-`) and `merchant_shipment_events` (history + `sequence`). Migration 360 | `merchants/infrastructure/entities/` |
+| Status machine, simulator paths, working-day collection deadline (Lagos, Mon–Fri), test tracking/collection codes | `merchants/domain/shipment.ts` |
+| Create (idempotent, duplicate reference → 409 with the existing id, receiver reachability, relay opt-in, priced through checkout's quote), bulk (per-item validation and errors), get, list (cursor; `updatedSince` oldest-first), timeline, PATCH (receiver until collected; route and parcel while created, re-quoted), cancel, return to sender | `merchant-shipment.service.ts`, `shipments.controller.ts` |
+| Simulator: walks every intermediate status, plus `fee_adjusted`, `destination_changed` (nearest other Node), `exception` | `shipment-simulator.service.ts` |
+| Every change: `sequence` +1 and an event row in the same transaction, then listeners (webhooks hook in here in M2d; the relayed collection code is passed to listeners, never stored) | `shipment-events.service.ts` |
+| `@MerchantApi(scope, permission)`: one route for API keys and dashboard sessions; sessions choose the mode with `Locoomo-Mode` | `merchant.guard.ts` |
+| Sandbox wallet: ₦1,000,000 of holds → `402 INSUFFICIENT_WALLET_BALANCE` | `merchant-shipment.service.ts` |
+
+Decisions:
+- **Origin is required** (`{type:"node"}`) until hubs exist (M5), same as quotes; the
+  quick start was updated.
+- **Live shipping returns `403 LIVE_SHIPMENTS_NOT_AVAILABLE`** until M4 (orders, wallet,
+  labels). Live reads work and are empty.
+- **Deferred to M4:** shipment imports (CSV/10k), labels, the test-wallet reset, the
+  drop-deadline expiry job, live `trackingUrl`.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).
