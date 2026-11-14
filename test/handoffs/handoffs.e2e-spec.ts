@@ -6,6 +6,8 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { DataSource, Repository } from 'typeorm';
 import { AppModule } from '../../src/app.module';
+import { addWorkingDays, lagosDate } from '../../src/common/time/working-days';
+import { CollectionWindowService } from '../../src/modules/handoffs/application/collection-window.service';
 import { configureApp } from '../../src/bootstrap';
 import { UserRole } from '../../src/common/auth/user-role.enum';
 import { RevenueSplitEntryEntity } from '../../src/modules/earnings/infrastructure/entities/revenue-split-entry.entity';
@@ -596,6 +598,8 @@ describe('Handoffs (e2e)', () => {
         role: UserRole.ADMIN,
         status: UserStatus.ACTIVE,
         consentAcceptedAt: new Date(),
+        // Settings like public holidays need a permission (ops).
+        adminPermissions: ['super'],
       }),
     );
     const adminToken = jwtService.sign({ sub: admin.id, role: UserRole.ADMIN });
@@ -3602,5 +3606,283 @@ describe('Handoffs (e2e)', () => {
         });
       });
     });
+  });
+
+  describe('collection window: deadline, reminders, return of uncollected parcels (M3a)', () => {
+    let window: CollectionWindowService;
+    let db: DataSource;
+
+    beforeAll(() => {
+      window = app.get(CollectionWindowService);
+      db = app.get(DataSource);
+    });
+
+    it('gives the receiver until the end of the 7th working day, and a code valid that long', async () => {
+      const rider = await createActiveRider(
+        'cw-deadline-rider@handoffs.e2e.test',
+      );
+      const before = new Date();
+      const orderId = await createReadyForCollectionOrder(
+        'cw-deadline@handoffs.e2e.test',
+        rider.cookie,
+      );
+      const order = await orders.findOneByOrFail({ id: orderId });
+      expect(order.collectionDeadlineAt?.toISOString()).toBe(
+        addWorkingDays(before, 7).toISOString(),
+      );
+      const code = await handoffCodes.findOneByOrFail({
+        orderId,
+        type: HandoffCodeType.RECEIVER_COLLECTION,
+      });
+      expect(code.expiresAt.toISOString()).toBe(
+        order.collectionDeadlineAt?.toISOString(),
+      );
+      const email = await outboxEvents
+        .createQueryBuilder('o')
+        .where("o.payload ->> 'to' = :to", { to: receiverEmail })
+        .orderBy('o."createdAt"', 'DESC')
+        .getOneOrFail();
+      expect((email.payload as { text: string }).text).toContain(
+        'Collect it by',
+      );
+    });
+
+    it('lets ops add holidays that push the deadline out', async () => {
+      // The first working day after today becomes a holiday.
+      const holiday = lagosDate(addWorkingDays(new Date(), 1));
+      await asAdmin(
+        request(app.getHttpServer()).post('/api/v1/admin/public-holidays'),
+      )
+        .send({ date: holiday, name: 'Test holiday' })
+        .expect(201);
+      try {
+        const rider = await createActiveRider(
+          'cw-holiday-rider@handoffs.e2e.test',
+        );
+        const before = new Date();
+        const orderId = await createReadyForCollectionOrder(
+          'cw-holiday@handoffs.e2e.test',
+          rider.cookie,
+        );
+        const order = await orders.findOneByOrFail({ id: orderId });
+        expect(order.collectionDeadlineAt?.toISOString()).toBe(
+          addWorkingDays(before, 7, new Set([holiday])).toISOString(),
+        );
+        const list = await asAdmin(
+          request(app.getHttpServer()).get('/api/v1/admin/public-holidays'),
+        ).expect(200);
+        expect((list.body as SuccessBody).data).toEqual(
+          expect.arrayContaining([{ date: holiday, name: 'Test holiday' }]),
+        );
+      } finally {
+        await asAdmin(
+          request(app.getHttpServer()).delete(
+            `/api/v1/admin/public-holidays/${holiday}`,
+          ),
+        ).expect(204);
+      }
+    });
+
+    it('reminds the receiver on working days 5 and 6, once each', async () => {
+      const rider = await createActiveRider(
+        'cw-remind-rider@handoffs.e2e.test',
+      );
+      const shelvedAt = new Date();
+      const orderId = await createReadyForCollectionOrder(
+        'cw-remind@handoffs.e2e.test',
+        rider.cookie,
+      );
+      const day5 = new Date(addWorkingDays(shelvedAt, 4).getTime() + 3_600_000);
+      const day6 = new Date(addWorkingDays(shelvedAt, 5).getTime() + 3_600_000);
+
+      await window.run(new Date(day5.getTime() - 7_200_000));
+      expect(
+        (await orders.findOneByOrFail({ id: orderId })).collectionRemindersSent,
+      ).toBe(0);
+      await window.run(day5);
+      await window.run(day5);
+      expect(
+        (await orders.findOneByOrFail({ id: orderId })).collectionRemindersSent,
+      ).toBe(1);
+      const reminder = await outboxEvents
+        .createQueryBuilder('o')
+        .where("o.payload ->> 'to' = :to", { to: receiverEmail })
+        .orderBy('o."createdAt"', 'DESC')
+        .getOneOrFail();
+      expect((reminder.payload as { subject: string }).subject).toMatch(
+        /^Reminder: collect your parcel by /,
+      );
+      await window.run(day6);
+      expect(
+        (await orders.findOneByOrFail({ id: orderId })).collectionRemindersSent,
+      ).toBe(2);
+      // Collected before the deadline: never returned.
+      const code = await extractCodeForOrder(orderId);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(200);
+      const order = await orders.findOneByOrFail({ id: orderId });
+      await window.run(
+        new Date(order.collectionDeadlineAt!.getTime() + 60_000),
+      );
+      expect((await orders.findOneByOrFail({ id: orderId })).status).toBe(
+        OrderStatus.COMPLETED,
+      );
+    });
+
+    it('returns an uncollected parcel: code voided, return courier booked, rider brings it back', async () => {
+      const rider = await createActiveRider(
+        'cw-return-rider@handoffs.e2e.test',
+      );
+      const consumerEmail = 'cw-return@handoffs.e2e.test';
+      const orderId = await createReadyForCollectionOrder(
+        consumerEmail,
+        rider.cookie,
+      );
+      const staleCode = await extractCodeForOrder(orderId);
+      const shelved = await orders.findOneByOrFail({ id: orderId });
+
+      await window.run(
+        new Date(shelved.collectionDeadlineAt!.getTime() + 60_000),
+      );
+      const returning = await orders.findOneByOrFail({ id: orderId });
+      expect(returning).toMatchObject({
+        status: OrderStatus.RETURN_INITIATED,
+        returnReason: 'not_collected',
+        riderId: null,
+      });
+      // The receiver can no longer collect.
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code: staleCode, identityConfirmed: true })
+        .expect((res) => expect(res.status).toBeGreaterThanOrEqual(400));
+      const [leg] = await db.query<{ legType: string; status: string }[]>(
+        `SELECT "legType", status FROM delivery_legs WHERE "orderId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+        [orderId],
+      );
+      expect(leg).toEqual({ legType: 'return', status: 'requested' });
+      const senderEmail = await outboxEvents
+        .createQueryBuilder('o')
+        .where("o.payload ->> 'to' = :to", { to: consumerEmail })
+        .orderBy('o."createdAt"', 'DESC')
+        .getOneOrFail();
+      expect((senderEmail.payload as { text: string }).text).toContain(
+        "wasn't collected within the collection window",
+      );
+
+      // The destination Node sees it waiting to go back.
+      const queue = await request(app.getHttpServer())
+        .get('/api/v1/handoffs/my-node/orders?queue=to_dispatch&limit=100')
+        .set('Cookie', [destinationOperatorCookie])
+        .expect(200);
+      expect(
+        (
+          (queue.body as SuccessBody).data.items as {
+            id: string;
+            nextAction: string;
+          }[]
+        ).find((item) => item.id === orderId),
+      ).toMatchObject({ nextAction: 'hand_to_rider' });
+
+      // A rider sees it as a return job, picking up at the destination.
+      const returnRider = await createActiveRider(
+        'cw-return-rider2@handoffs.e2e.test',
+      );
+      const available = await request(app.getHttpServer())
+        .get(
+          `/api/v1/handoffs/available-orders?latitude=${riderLat}&longitude=${riderLng}&limit=100`,
+        )
+        .set('Cookie', [returnRider.cookie])
+        .expect(200);
+      const job = (
+        (available.body as SuccessBody).data.items as {
+          id: string;
+          jobType: string;
+          pickupNodeId: string;
+          dropoffNodeId: string;
+        }[]
+      ).find((item) => item.id === orderId);
+      expect(job).toMatchObject({
+        jobType: 'return',
+        pickupNodeId: destinationNodeId,
+        dropoffNodeId: originNodeId,
+      });
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/accept`)
+        .set('Cookie', [returnRider.cookie])
+        .expect(200);
+      expect((await orders.findOneByOrFail({ id: orderId })).riderId).toBe(
+        returnRider.userId,
+      );
+
+      // Pickup is confirmed by the destination Node, not the origin.
+      const pickup = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [returnRider.cookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+      const pickupCode = (pickup.body as SuccessBody).data.code as string;
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [originOperatorCookie])
+        .send({ type: 'rider_pickup', code: pickupCode })
+        .expect(404);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ type: 'rider_pickup', code: pickupCode })
+        .expect(200);
+      const inTransit = await orders.findOneByOrFail({ id: orderId });
+      expect(inTransit).toMatchObject({
+        status: OrderStatus.RETURN_IN_TRANSIT,
+        shelfNodeId: null,
+      });
+
+      // Hand-over at the origin Node.
+      const arrival = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [returnRider.cookie])
+        .send({ type: 'rider_arrival' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [originOperatorCookie])
+        .send({
+          type: 'rider_arrival',
+          code: (arrival.body as SuccessBody).data.code as string,
+        })
+        .expect(200);
+      expect((await orders.findOneByOrFail({ id: orderId })).status).toBe(
+        OrderStatus.RETURNED_TO_ORIGIN,
+      );
+
+      // From here the existing return flow: origin shelves it for the sender.
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/return-intake`)
+        .set('Cookie', [originOperatorCookie])
+        .expect(200);
+      expect((await orders.findOneByOrFail({ id: orderId })).status).toBe(
+        OrderStatus.READY_FOR_SENDER_COLLECTION,
+      );
+    });
+
+    // The code in the latest email to the shared receiver for this order.
+    async function extractCodeForOrder(orderId: string): Promise<string> {
+      const { trackingCode } = await orders.findOneByOrFail({ id: orderId });
+      const event = await outboxEvents
+        .createQueryBuilder('o')
+        .where("o.payload ->> 'to' = :to", { to: receiverEmail })
+        .andWhere("o.payload ->> 'text' LIKE :tracking", {
+          tracking: `%${trackingCode}%`,
+        })
+        .andWhere("o.payload ->> 'text' LIKE 'Your collection code is:%'")
+        .orderBy('o."createdAt"', 'DESC')
+        .getOneOrFail();
+      return /\b(\d{6})\b/.exec((event.payload as { text: string }).text)![1];
+    }
   });
 });

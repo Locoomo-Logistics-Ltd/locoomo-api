@@ -26,6 +26,7 @@ interface TrackedOrderRow {
   status: string;
   receiverPhone: string;
   updatedAt: Date;
+  collectionDeadlineAt: Date | null;
   originName: string;
   originAddress: string;
   originCity: string;
@@ -121,6 +122,10 @@ export class PublicTrackingService {
       ? await this.courierLabelFor(order.id)
       : null;
     dto.etaMinutes = null;
+    dto.collectBy =
+      order.status === 'ready_for_collection'
+        ? order.collectionDeadlineAt
+        : null;
     dto.nextStep = nextStepFor(status, names);
     dto.updatedAt = order.updatedAt;
     return dto;
@@ -146,6 +151,7 @@ export class PublicTrackingService {
   ): Promise<TrackedOrderRow | undefined> {
     const rows = await this.dataSource.query<TrackedOrderRow[]>(
       `SELECT o.id, o."trackingCode", o.status, o."receiverPhone", o."updatedAt",
+              o."collectionDeadlineAt",
               origin.name AS "originName", origin.address AS "originAddress",
               origin.city AS "originCity", origin.state AS "originState",
               origin."openingHours" AS "originOpeningHours",

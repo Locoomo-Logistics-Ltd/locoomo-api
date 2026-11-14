@@ -84,4 +84,13 @@ describe('maskReceiver', () => {
       'A. O. N. · ***4567',
     );
   });
+
+  it('asks the destination to hand an uncollected parcel to the return courier', () => {
+    expect(nextActionFor('return_initiated', 'destination')).toBe(
+      'hand_to_rider',
+    );
+    expect(
+      nextActionFor('return_initiated', 'destination', 'give_code_to_courier'),
+    ).toBe('hand_to_courier');
+  });
 });

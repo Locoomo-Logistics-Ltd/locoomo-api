@@ -15,7 +15,13 @@ export const ORDER_TRANSITIONS: Partial<Record<OrderStatus, OrderStatus[]>> = {
     OrderStatus.RETURN_INITIATED,
   ],
   [OrderStatus.ARRIVED_AT_DESTINATION]: [OrderStatus.READY_FOR_COLLECTION],
-  [OrderStatus.READY_FOR_COLLECTION]: [OrderStatus.COMPLETED],
+  // Or, not collected within the window (D15), back to the sender.
+  [OrderStatus.READY_FOR_COLLECTION]: [
+    OrderStatus.COMPLETED,
+    OrderStatus.RETURN_INITIATED,
+  ],
+  // A return courier picked it up (from the destination shelf, or the
+  // forward courier turning back).
   [OrderStatus.RETURN_INITIATED]: [OrderStatus.RETURN_IN_TRANSIT],
   [OrderStatus.RETURN_IN_TRANSIT]: [OrderStatus.RETURNED_TO_ORIGIN],
   [OrderStatus.RETURNED_TO_ORIGIN]: [OrderStatus.READY_FOR_SENDER_COLLECTION],

@@ -40,14 +40,11 @@ export class DeliveryProgressListener
     notice: DeliveryEventNotice,
     manager: EntityManager,
   ): Promise<void> {
-    // A return travels on the same leg as the delivery (the courier brings
-    // its own job back: returning → returned). Separately booked return
-    // legs aren't used yet.
-    if (notice.legType !== DeliveryLegType.FORWARD) {
-      this.logger.warn(
-        `Ignoring ${notice.event} on ${notice.legType} leg ${notice.legId} — separate return legs aren't supported`,
-      );
-      return;
+    // Two kinds of return: the forward courier turning back mid-delivery
+    // (same leg: returning → returned, handled below), and a separately
+    // booked RETURN leg from the destination shelf (uncollected parcels).
+    if (notice.legType === DeliveryLegType.RETURN) {
+      return this.onReturnLeg(notice, manager);
     }
 
     switch (notice.event) {
@@ -161,6 +158,71 @@ export class DeliveryProgressListener
         // one being added to the vocabulary without a case here.
         this.logger.warn(
           `Unhandled delivery event ${String(notice.event)} for order ${notice.orderId}`,
+        );
+    }
+  }
+
+  // A courier bringing an uncollected parcel from the destination shelf
+  // back to the origin Node (CollectionWindowService books the leg). The
+  // order is RETURN_INITIATED until pickup.
+  private async onReturnLeg(
+    notice: DeliveryEventNotice,
+    manager: EntityManager,
+  ): Promise<void> {
+    switch (notice.event) {
+      case DeliveryEventType.ASSIGNED:
+        // In-house riders already hold a capacity slot (AcceptOrderService).
+        await this.ordersService.assignReturnCourier(
+          notice.orderId,
+          {
+            riderId: notice.courierUserId ?? null,
+            providerKey: notice.providerKey,
+          },
+          manager,
+        );
+        return;
+
+      case DeliveryEventType.PICKED_UP:
+        // Off the destination shelf.
+        await this.ordersService.markReturnPickedUp(notice.orderId, manager);
+        return;
+
+      case DeliveryEventType.DELIVERED: {
+        // Back on the origin counter, waiting for the sender (return intake).
+        const order = await this.ordersService.markReturnedToOrigin(
+          notice.orderId,
+          manager,
+        );
+        await this.nodesService.holdReturnedParcel(order.originNodeId, manager);
+        if (notice.courierUserId) {
+          await this.riderCapacityService.releaseDeliverySlot(
+            notice.courierUserId,
+            manager,
+          );
+        }
+        return;
+      }
+
+      case DeliveryEventType.RELEASED:
+      case DeliveryEventType.CANCELLED:
+        // Before pickup: the parcel is still on the destination shelf;
+        // logistics routes the return to the next courier.
+        await this.ordersService.releaseReturnCourier(notice.orderId, manager, {
+          providerKey: notice.providerKey,
+          event: notice.event,
+          reason: notice.reason,
+        });
+        return;
+
+      case DeliveryEventType.ATTEMPT_FAILED:
+        return;
+
+      default:
+        // A courier failing the return trip itself (RETURNING/RETURNED on
+        // a return leg) needs a person: ops sees the leg in the admin
+        // deliveries list.
+        this.logger.error(
+          `Return leg ${notice.legId} for order ${notice.orderId} reported ${String(notice.event)}; needs ops follow-up`,
         );
     }
   }

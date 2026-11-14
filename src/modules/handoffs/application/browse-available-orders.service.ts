@@ -22,13 +22,23 @@ import { AvailableOrdersQueryDto } from '../interface/dto/available-orders-query
 // The in-house pool: received at origin, no rider yet, and not handed to
 // another courier. An order with no leg at all (dropped off before
 // logistics existed) is still offered.
-const IN_POOL = `o.status = 'parcel_received_at_origin' AND o."riderId" IS NULL
+const FORWARD_POOL = `o.status = 'parcel_received_at_origin' AND o."riderId" IS NULL
   AND NOT EXISTS (
     SELECT 1 FROM delivery_legs l
      WHERE l."orderId" = o.id
        AND l.status IN ('requested', 'assigned', 'picked_up', 'returning')
        AND l."providerKey" <> '${IN_HOUSE_PROVIDER_KEY}'
   )`;
+// Return jobs: an uncollected parcel whose return leg was booked with the
+// in-house pool and not yet claimed (CollectionWindowService).
+const RETURN_POOL = `o.status = 'return_initiated' AND o."riderId" IS NULL
+  AND EXISTS (
+    SELECT 1 FROM delivery_legs l
+     WHERE l."orderId" = o.id AND l."legType" = 'return'
+       AND l.status = 'requested'
+       AND l."providerKey" = '${IN_HOUSE_PROVIDER_KEY}'
+  )`;
+const IN_POOL = `((${FORWARD_POOL}) OR (${RETURN_POOL}))`;
 
 @Injectable()
 export class BrowseAvailableOrdersService {
@@ -45,7 +55,11 @@ export class BrowseAvailableOrdersService {
               o."parcelDescription", o."parcelSize", o."createdAt",
               origin.name AS "originNodeName", origin.address AS "originNodeAddress",
               dest.name AS "destinationNodeName", dest.address AS "destinationNodeAddress",
-              ST_Distance(origin.location, ${origin}) AS "distanceMeters"
+              CASE WHEN o.status = 'return_initiated' THEN 'return' ELSE 'delivery' END AS "jobType",
+              ST_Distance(
+                CASE WHEN o.status = 'return_initiated' THEN dest.location ELSE origin.location END,
+                ${origin}
+              ) AS "distanceMeters"
          FROM orders o
          JOIN nodes origin ON origin.id = o."originNodeId"
          JOIN nodes dest ON dest.id = o."destinationNodeId"

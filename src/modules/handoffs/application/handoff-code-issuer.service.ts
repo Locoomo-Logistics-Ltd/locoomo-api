@@ -22,8 +22,25 @@ export class HandoffCodeIssuerService {
     requestedByUserId: string | null,
     ttlMinutes: number,
   ): Promise<HandoffCodeIssued> {
+    return this.issueUntil(
+      manager,
+      orderId,
+      type,
+      requestedByUserId,
+      new Date(Date.now() + ttlMinutes * 60_000),
+    );
+  }
+
+  // Same, valid until a fixed time (a receiver's code lasts the whole
+  // collection window, D15).
+  async issueUntil(
+    manager: EntityManager,
+    orderId: string,
+    type: HandoffCodeType,
+    requestedByUserId: string | null,
+    expiresAt: Date,
+  ): Promise<HandoffCodeIssued> {
     const rawCode = generateHandoffCode();
-    const expiresAt = new Date(Date.now() + ttlMinutes * 60_000);
 
     const repo = manager.getRepository(HandoffCodeEntity);
     // Supersede any prior unused code for this (order, type) pair — only

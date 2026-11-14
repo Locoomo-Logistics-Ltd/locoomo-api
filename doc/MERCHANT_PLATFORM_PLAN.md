@@ -904,6 +904,37 @@ Fixed while testing: TypeORM raw `UPDATE … RETURNING` returns `[rows, count]` 
 **Rollout:** run at least one `worker` (or `all`) process: deliveries are sent by the
 background dispatcher, not the API process.
 
+### M3a Collection window and returns from the shelf: done (2026-11-14)
+
+M3 ships in slices: **M3a collection window** → M3b two-counter capacity → M3c new states
+(cancel, refuse, intercept, exception), ID-check collection and proof of delivery, sender
+contact → M3d origin rebind and merchant return batches.
+
+Applies to consumer orders today (resolves E6) and to merchant orders from M4.
+
+| Item | Where |
+|---|---|
+| `public_holidays` + admin CRUD (`ops`), cached holiday set, working-day arithmetic (Lagos, Mon–Fri) shared with merchants | `orders/application/public-holiday.service.ts`, `common/time/working-days.ts` |
+| `orders.collectionDeadlineAt` (end of the 7th working day after shelving), `collectionRemindersSent`, `returnReason`. Parcels already waiting got a 9-calendar-day window at migration. Migration 362 | `orders.service.ts` |
+| Receiver code valid until the deadline (was 60 min); resend keeps the deadline; "collect by" in email + SMS (SMS where configured) | `confirm-intake`, `resend-collection-code`, `receiver-notification` |
+| Job (worker, every 10 min): reminders after working days 4 and 5 (one per run, no bursts after downtime); at the deadline `ready_for_collection → return_initiated` (`not_collected`), receiver code voided, delivery rider cleared, RETURN leg booked, sender + receiver emailed | `handoffs/application/collection-window.service.ts` |
+| RETURN legs drive the order: assigned (no status change; rider recorded), picked up → `return_in_transit` (destination shelf cleared), delivered → `returned_to_origin` (+ origin slot held); released → back to waiting | `delivery-progress.listener.ts` |
+| In-house riders see return jobs (`jobType: "return"`, `pickupNode*`/`dropoffNode*`); handovers run destination → origin; destination Node's `to_dispatch` queue and `nextAction` show them | `browse-available-orders`, `confirm-handoff`, `counter-view`, `list-my-node-orders` |
+| `collectionDeadlineAt` / `returnReason` on the sender's order; `collectBy` on public tracking | |
+
+Fixed while testing:
+- The forward rider stayed on the order after delivery, which would have blocked any return
+  courier. Now cleared when the parcel goes back.
+- Handover idempotency was keyed per order and type, so a return pickup was mistaken for a
+  replay of the forward pickup and silently ignored. Now keyed per direction too.
+
+Decisions:
+- **Migrations stay single-transaction.** The plan's `CREATE INDEX CONCURRENTLY` rule
+  (§11.7) needs `migrationsTransactionMode: 'each'`. The new partial index is small, so it's a
+  normal index; switch modes before `orders` gets large.
+- **The destination capacity slot** for a shelved parcel isn't counted yet; that is M3b.
+- A courier failing the *return* trip itself is logged for ops (rare; it needs a person).
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

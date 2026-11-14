@@ -6,8 +6,9 @@ import { TrackingEmailService } from '../../tracking/application/tracking-email.
 
 interface OrderForReturnEmail {
   trackingCode: string;
-  consumerId: string;
-  receiverEmail: string;
+  // Null for merchant parcels (sender contact comes with M4).
+  consumerId: string | null;
+  receiverEmail: string | null;
   parcelDescription: string;
   originNodeId: string;
 }
@@ -29,9 +30,11 @@ export class ReturnNotificationService {
     private readonly trackingEmailService: TrackingEmailService,
   ) {}
 
+  // `not_collected`: the receiver didn't come within the collection window.
   async enqueueReturnStarted(
     order: OrderForReturnEmail,
     manager: EntityManager,
+    reason: 'delivery_failed' | 'not_collected' = 'delivery_failed',
   ): Promise<void> {
     const [sender, origin, tracking] = await Promise.all([
       this.senderOf(order, manager),
@@ -39,40 +42,49 @@ export class ReturnNotificationService {
       this.trackingEmailService.trackingBlock(order.trackingCode),
     ]);
     const where = `${origin.name}, ${origin.address}, ${origin.city}`;
+    const description = order.parcelDescription;
+    const why =
+      reason === 'not_collected'
+        ? `Your parcel (${description}) wasn't collected within the collection window.`
+        : `We couldn't complete the delivery of your parcel (${description}).`;
 
-    await this.outboxService.enqueueEmail(
-      {
-        to: sender.email,
-        subject: 'Your parcel is being returned',
-        text:
-          `We couldn't complete the delivery of your parcel (${order.parcelDescription}). ` +
-          `It's on its way back to ${where}.\n\n` +
-          `We'll email you a collection code when it's ready to pick up there.\n\n${tracking.text}`,
-        html:
-          `<p>We couldn't complete the delivery of your parcel (${escapeHtml(order.parcelDescription)}). ` +
-          `It's on its way back to <strong>${escapeHtml(where)}</strong>.</p>` +
-          `<p>We'll email you a collection code when it's ready to pick up there.</p>` +
-          tracking.html,
-        attachments: tracking.attachments,
-      },
-      manager,
-    );
+    if (sender?.email) {
+      await this.outboxService.enqueueEmail(
+        {
+          to: sender.email,
+          subject: 'Your parcel is being returned',
+          text:
+            `${why} It's on its way back to ${where}.\n\n` +
+            `We'll email you a collection code when it's ready to pick up there.\n\n${tracking.text}`,
+          html:
+            `<p>${escapeHtml(why)} It's on its way back to <strong>${escapeHtml(where)}</strong>.</p>` +
+            `<p>We'll email you a collection code when it's ready to pick up there.</p>` +
+            tracking.html,
+          attachments: tracking.attachments,
+        },
+        manager,
+      );
+    }
 
-    await this.outboxService.enqueueEmail(
-      {
-        to: order.receiverEmail,
-        subject: 'Your parcel could not be delivered',
-        text:
-          `We couldn't complete the delivery of the parcel sent to you (${order.parcelDescription}), ` +
-          `so it's being returned to the sender. You don't need to do anything.\n\n${tracking.text}`,
-        html:
-          `<p>We couldn't complete the delivery of the parcel sent to you (${escapeHtml(order.parcelDescription)}), ` +
-          `so it's being returned to the sender. You don't need to do anything.</p>` +
-          tracking.html,
-        attachments: tracking.attachments,
-      },
-      manager,
-    );
+    if (order.receiverEmail) {
+      const receiverText =
+        reason === 'not_collected'
+          ? `The parcel sent to you (${description}) wasn't collected in time, so it's being returned to the sender.`
+          : `We couldn't complete the delivery of the parcel sent to you (${description}), so it's being returned to the sender. You don't need to do anything.`;
+      await this.outboxService.enqueueEmail(
+        {
+          to: order.receiverEmail,
+          subject:
+            reason === 'not_collected'
+              ? 'Your parcel is going back to the sender'
+              : 'Your parcel could not be delivered',
+          text: `${receiverText}\n\n${tracking.text}`,
+          html: `<p>${escapeHtml(receiverText)}</p>` + tracking.html,
+          attachments: tracking.attachments,
+        },
+        manager,
+      );
+    }
   }
 
   // Sent on return intake and on resend. The code comes first in the text —
@@ -87,6 +99,10 @@ export class ReturnNotificationService {
       this.senderOf(order, manager),
       this.originOf(order, manager),
     ]);
+    // Merchant returns are collected in batches (M4/M5), not by code email.
+    if (!sender?.email) {
+      return;
+    }
     const where = `${origin.name}, ${origin.address}, ${origin.city}`;
     const instructions =
       `Your returned parcel (${order.parcelDescription}) is ready for you at ${where}. ` +
@@ -110,7 +126,10 @@ export class ReturnNotificationService {
   private async senderOf(
     order: OrderForReturnEmail,
     manager: EntityManager,
-  ): Promise<{ email: string }> {
+  ): Promise<{ email: string } | undefined> {
+    if (!order.consumerId) {
+      return undefined;
+    }
     const [sender] = await manager.query<{ email: string }[]>(
       `SELECT email FROM users WHERE id = $1`,
       [order.consumerId],

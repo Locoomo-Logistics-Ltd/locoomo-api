@@ -10,14 +10,17 @@ import { ReceiverNotificationService } from './receiver-notification.service';
 import { ReturnNotificationService } from './return-notification.service';
 import { SENDER_COLLECTION_CODE_TTL_MINUTES } from './return-intake.service';
 
-const COLLECTION_CODE_TTL_MINUTES = 60;
+// Only for parcels shelved before collection deadlines existed.
+const LEGACY_CODE_TTL_MINUTES = 60;
 
 interface OrderForResend {
   status: string;
   trackingCode: string;
-  receiverEmail: string;
+  receiverEmail: string | null;
+  receiverPhone: string | null;
   parcelDescription: string;
   destinationNodeId: string;
+  collectionDeadlineAt: Date | null;
 }
 
 // Receiver-facing collection codes are never returned via this API (see
@@ -52,7 +55,8 @@ export class ResendCollectionCodeService {
     );
 
     const rows = await this.dataSource.query<OrderForResend[]>(
-      `SELECT status, "trackingCode", "receiverEmail", "parcelDescription", "destinationNodeId"
+      `SELECT status, "trackingCode", "receiverEmail", "receiverPhone",
+              "parcelDescription", "destinationNodeId", "collectionDeadlineAt"
          FROM orders WHERE id = $1`,
       [orderId],
     );
@@ -65,17 +69,22 @@ export class ResendCollectionCodeService {
     }
 
     const issued = await this.dataSource.transaction(async (manager) => {
-      const result = await this.handoffCodeIssuerService.issue(
+      // A new code replaces the old one but keeps the same deadline: a
+      // resend doesn't extend the collection window.
+      const collectBy =
+        order.collectionDeadlineAt ??
+        new Date(Date.now() + LEGACY_CODE_TTL_MINUTES * 60_000);
+      const result = await this.handoffCodeIssuerService.issueUntil(
         manager,
         orderId,
         HandoffCodeType.RECEIVER_COLLECTION,
         null,
-        COLLECTION_CODE_TTL_MINUTES,
+        collectBy,
       );
       await this.receiverNotificationService.enqueueNewCollectionCode(
         order,
         result.code,
-        COLLECTION_CODE_TTL_MINUTES,
+        collectBy,
         manager,
       );
       return result;

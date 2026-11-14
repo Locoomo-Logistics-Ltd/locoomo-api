@@ -28,7 +28,17 @@ export class ConfirmHandoffService {
     // Ownership first, outside the transaction — same reasoning as
     // drop-off: immutable data, and a wrong-Node request should 404 before
     // it ever touches the idempotency table.
-    if (type === HandoffCodeType.RIDER_PICKUP) {
+    // A return job (uncollected parcel) runs the other way: the rider
+    // collects at the destination Node and hands over at the origin.
+    const [current] = await this.dataSource.query<{ status: string }[]>(
+      `SELECT status FROM orders WHERE id = $1`,
+      [orderId],
+    );
+    const isReturn =
+      current?.status === 'return_initiated' ||
+      current?.status === 'return_in_transit';
+    const atOrigin = (type === HandoffCodeType.RIDER_PICKUP) !== isReturn;
+    if (atOrigin) {
       await this.orderLookupService.assertOriginNodeOwnership(
         orderId,
         operatorUserId,
@@ -40,7 +50,9 @@ export class ConfirmHandoffService {
       );
     }
 
-    const scope = `handoffs.confirm-handoff.${type}`;
+    // Per direction: a returned order has its own pickup and arrival, and
+    // they must not be mistaken for replays of the forward ones.
+    const scope = `handoffs.confirm-handoff.${type}${isReturn ? '.return' : ''}`;
     const { result, alreadyProcessed } = await this.dataSource.transaction(
       (manager) =>
         this.idempotencyService.withIdempotency(

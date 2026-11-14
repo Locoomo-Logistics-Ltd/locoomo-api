@@ -3484,6 +3484,12 @@ newest first. Metadata only, never bodies.
 `nextCursor` back as `cursor` for the next page (`400 INVALID_CURSOR` if it's been altered).
 Show `correlationId` with a copy button: support needs it.
 
+## Admin: public holidays
+
+`GET/POST /api/v1/admin/public-holidays`, `DELETE /api/v1/admin/public-holidays/:date`
+(`ops`). Holidays don't count as working days in collection windows (7 working days,
+Lagos time). Details and samples: [LOGISTICS_API.md §8.0](LOGISTICS_API.md#80-public-holidays--adminpublic-holidays-ops).
+
 ## Admin: merchants
 
 The admin app's merchant review queue and account controls. Not affected by the merchant

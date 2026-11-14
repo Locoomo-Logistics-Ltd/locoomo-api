@@ -7,6 +7,7 @@ import {
   OrderStatusEventBus,
 } from './order-status-event-bus';
 import { OrdersService } from './orders.service';
+import { PublicHolidayService } from './public-holiday.service';
 
 function fakeManager(returnedRow: Record<string, unknown> | undefined): {
   manager: EntityManager;
@@ -40,7 +41,10 @@ describe('OrdersService status events', () => {
         return Promise.resolve();
       },
     });
-    service = new OrdersService(bus);
+    service = new OrdersService(bus, {
+      collectionDeadline: () =>
+        Promise.resolve(new Date('2026-11-24T22:59:59Z')),
+    } as unknown as PublicHolidayService);
   });
 
   it('publishes from/to status and event type inside the caller transaction', async () => {

@@ -27,6 +27,8 @@ export class PublicTrackingResponseDto {
   };
   courierLabel!: string | null;
   etaMinutes!: number | null;
+  // While ready for collection: the end of the collection window.
+  collectBy!: Date | null;
   nextStep!: string;
   updatedAt!: Date;
 }

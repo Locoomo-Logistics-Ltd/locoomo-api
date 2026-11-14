@@ -17,6 +17,7 @@ export interface AvailableOrderRow {
   parcelSize: ParcelSize;
   createdAt: Date;
   distanceMeters: number;
+  jobType: 'delivery' | 'return';
 }
 
 export class AvailableOrderResponseDto {
@@ -31,7 +32,18 @@ export class AvailableOrderResponseDto {
   parcelDescription!: string;
   parcelSize!: ParcelSize;
   createdAt!: Date;
+  // From the rider to the pickup Node.
   distanceMeters!: number;
+  // `delivery`: origin → destination. `return`: an uncollected parcel from
+  // the destination shelf back to the origin.
+  jobType!: 'delivery' | 'return';
+  // Where to collect and where to hand over, whichever the job type.
+  pickupNodeId!: string;
+  pickupNodeName!: string;
+  pickupNodeAddress!: string;
+  dropoffNodeId!: string;
+  dropoffNodeName!: string;
+  dropoffNodeAddress!: string;
 
   static fromRow(row: AvailableOrderRow): AvailableOrderResponseDto {
     const dto = new AvailableOrderResponseDto();
@@ -47,6 +59,22 @@ export class AvailableOrderResponseDto {
     dto.parcelSize = row.parcelSize;
     dto.createdAt = row.createdAt;
     dto.distanceMeters = Number(row.distanceMeters);
+    dto.jobType = row.jobType;
+    const isReturn = row.jobType === 'return';
+    dto.pickupNodeId = isReturn ? row.destinationNodeId : row.originNodeId;
+    dto.pickupNodeName = isReturn
+      ? row.destinationNodeName
+      : row.originNodeName;
+    dto.pickupNodeAddress = isReturn
+      ? row.destinationNodeAddress
+      : row.originNodeAddress;
+    dto.dropoffNodeId = isReturn ? row.originNodeId : row.destinationNodeId;
+    dto.dropoffNodeName = isReturn
+      ? row.originNodeName
+      : row.destinationNodeName;
+    dto.dropoffNodeAddress = isReturn
+      ? row.originNodeAddress
+      : row.destinationNodeAddress;
     return dto;
   }
 }
