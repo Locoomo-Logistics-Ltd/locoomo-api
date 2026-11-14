@@ -434,7 +434,7 @@ What happens at creation:
   "mode": "live",
   "reference": "TEMU-ORD-88412-1",
   "trackingCode": "LCM-7K3M-Q9TD",
-  "trackingUrl": "https://locoomo.com/track/LCM-7K3M-Q9TD?t=Vd3…",
+  "trackingUrl": "https://app.locoomo.com/track/LCM-7K3M-Q9TD?t=Vd3…",
   "status": "ready_for_collection",
   "sequence": 5,
   "statusChangedAt": "2026-11-15T10:05:00.000Z",

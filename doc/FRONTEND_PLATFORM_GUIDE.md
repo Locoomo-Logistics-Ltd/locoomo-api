@@ -517,6 +517,16 @@ Two kinds of endpoint:
 
 ### 9.1 Hosting and auth
 
+| Environment | API | Consumer app | Merchant dashboard |
+|---|---|---|---|
+| Production | `https://api.locoomo.com` | `https://app.locoomo.com` | `https://merchant.locoomo.com` (DNS not created yet) |
+| Staging | `https://api-loccomo.up.railway.app` | `https://staging.locoomo.com` | your choice, e.g. `merchant-staging.locoomo.com` |
+
+Staging caveat: `*.up.railway.app` is a different site from `*.locoomo.com`, so
+`SameSite=Strict` session cookies are **not sent** from a `locoomo.com` page to the
+staging API. Cookie sign-in on staging needs the staging API on a `locoomo.com`
+subdomain (e.g. `api-staging.locoomo.com`); ask backend.
+
 - **Host it same-site with the API**, e.g. `merchant.locoomo.com`. Session cookies are
   `SameSite=Strict`, so a different registrable domain won't work. Tell backend the origin
   so it's added to `CORS_ORIGIN` and set as `MERCHANT_DASHBOARD_URL` (links in merchant
