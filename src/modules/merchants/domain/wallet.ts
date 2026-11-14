@@ -30,6 +30,47 @@ export enum WalletEntryType {
 
 export type HoldStatus = 'active' | 'captured' | 'released';
 
+export type TopUpMethod = 'card' | 'bank_transfer';
+// abandoned: a card payment never completed within a day. A late success
+// still credits it.
+export type TopUpStatus = 'pending' | 'succeeded' | 'failed' | 'abandoned';
+
+// Card top-up bounds: ₦1,000 to ₦10,000,000 per payment.
+export const MIN_CARD_TOP_UP_KOBO = 100_000;
+export const MAX_CARD_TOP_UP_KOBO = 1_000_000_000;
+
+// Ledger idempotency key for a Paystack charge.
+export const paystackExternalRef = (reference: string): string =>
+  `paystack:${reference}`;
+
+// Our reference for a card top-up (Paystack accepts caller references).
+export const cardTopUpReference = (topUpId: string): string =>
+  `wallet-${topUpId}`;
+
+// What reaches the wallet: card fees are passed through (F2), transfer
+// fees are absorbed by Locoomo.
+export function creditedAmount(
+  method: TopUpMethod,
+  amountKobo: number,
+  feeKobo: number,
+): number {
+  return method === 'card' ? Math.max(amountKobo - feeKobo, 0) : amountKobo;
+}
+
+// Live wallets can't be topped up past the merchant's ceiling (D12; null =
+// unlimited). Transfers that already happened are always credited.
+export function exceedsWalletCeiling(
+  balanceKobo: number,
+  topUpKobo: number,
+  maxWalletBalanceKobo: number | null | undefined,
+): boolean {
+  return (
+    maxWalletBalanceKobo !== null &&
+    maxWalletBalanceKobo !== undefined &&
+    balanceKobo + topUpKobo > maxWalletBalanceKobo
+  );
+}
+
 export interface WalletTotals {
   balanceKobo: number;
   heldKobo: number;

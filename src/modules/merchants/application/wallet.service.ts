@@ -353,6 +353,48 @@ export class WalletService {
     });
   }
 
+  // Money from outside (a Paystack charge). Idempotent on `externalRef`:
+  // returns null when that charge was already credited.
+  async creditExternal(
+    manager: EntityManager,
+    input: {
+      merchantId: string;
+      mode: ApiKeyMode;
+      type: WalletEntryType;
+      amountKobo: number;
+      description: string;
+      externalRef: string;
+      createdByUserId?: string | null;
+    },
+  ): Promise<{
+    entry: WalletEntryEntity;
+    wallet: MerchantWalletEntity;
+  } | null> {
+    const wallet = await this.walletFor(
+      manager,
+      input.merchantId,
+      input.mode,
+      true,
+    );
+    // Checked under the wallet lock, so two deliveries of one charge can't
+    // both pass (the unique index is the backstop).
+    const existing = await manager.findOne(WalletEntryEntity, {
+      where: { externalRef: input.externalRef },
+      select: { id: true },
+    });
+    if (existing || input.amountKobo <= 0) {
+      return null;
+    }
+    const entry = await this.post(manager, wallet, {
+      type: input.type,
+      amountKobo: input.amountKobo,
+      description: input.description,
+      externalRef: input.externalRef,
+      createdByUserId: input.createdByUserId ?? null,
+    });
+    return { entry, wallet };
+  }
+
   // Test mode: back to ₦1,000,000. Holds stay (their shipments still exist).
   async resetTestWallet(
     manager: EntityManager,

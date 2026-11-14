@@ -16,6 +16,8 @@ import { OutboxService } from '../../notifications/application/outbox.service';
 import { MerchantRole, ReviewItemKey } from '../domain/merchant.enums';
 import { MerchantEntity } from '../infrastructure/entities/merchant.entity';
 import { MerchantMemberEntity } from '../infrastructure/entities/merchant-member.entity';
+import { WalletTopUpEntity } from '../infrastructure/entities/wallet-top-up.entity';
+import { formatNaira } from '../domain/wallet';
 
 export type MerchantStatusEmail =
   | 'submitted'
@@ -349,6 +351,50 @@ export class MerchantNotifierService {
             kind: 'button',
             label: 'Open webhooks',
             url: this.dashboardUrl('/developers/webhooks'),
+          },
+        ],
+      },
+      manager,
+    );
+  }
+
+  // Receipt for a top-up (plan §8.2): owner, admins and finance members.
+  async walletFunded(
+    merchant: MerchantEntity,
+    topUp: WalletTopUpEntity,
+    balanceAfterKobo: number,
+    manager: EntityManager,
+  ): Promise<void> {
+    const recipients = await this.teamLeads(merchant.id, manager, [
+      MerchantRole.OWNER,
+      MerchantRole.ADMIN,
+      MerchantRole.FINANCE,
+    ]);
+    const rows = [
+      { label: 'Business', value: merchant.tradingName },
+      {
+        label: 'Method',
+        value: topUp.method === 'card' ? 'Card payment' : 'Bank transfer',
+      },
+      { label: 'Amount paid', value: formatNaira(topUp.amountKobo) },
+      ...(topUp.feeKobo > 0
+        ? [{ label: 'Card processing fee', value: formatNaira(topUp.feeKobo) }]
+        : []),
+      { label: 'Added to wallet', value: formatNaira(topUp.creditedKobo ?? 0) },
+      { label: 'New balance', value: formatNaira(balanceAfterKobo) },
+      { label: 'Reference', value: topUp.reference },
+      ...(topUp.mode === 'test' ? [{ label: 'Mode', value: 'Test' }] : []),
+    ];
+    await this.send(
+      recipients,
+      {
+        subject: `Wallet top-up received: ${formatNaira(topUp.creditedKobo ?? 0)}`,
+        heading: 'Top-up received',
+        blocks: [
+          { kind: 'details', rows },
+          {
+            kind: 'paragraph',
+            text: `Your statement is in the merchant dashboard: ${this.dashboardUrl('/wallet')}`,
           },
         ],
       },

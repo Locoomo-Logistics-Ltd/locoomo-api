@@ -59,6 +59,16 @@ export const MerchantApi = (
     SetMetadata(MERCHANT_API_KEY, true),
   );
 
+// Dashboard-only route that still works per mode (Locoomo-Mode) and reads
+// @CurrentMerchantCaller(). API keys are refused (no AllowApiKey).
+export const MerchantSessionApi = (
+  permission: MerchantPermission,
+): MethodDecorator & ClassDecorator =>
+  applyDecorators(
+    MerchantAccess(permission),
+    SetMetadata(MERCHANT_API_KEY, true),
+  );
+
 // Dashboard sessions pick test or live per request (the Test/Live toggle).
 export const MODE_HEADER = 'locoomo-mode';
 

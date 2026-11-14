@@ -694,7 +694,7 @@ None of these block the build. They're config values or terms text.
 | F5 | Liability cap ₦50,000; 30-day claim window; prohibited-items list | legal/ops |
 | F6 | Wallet as non-withdrawable prepaid service credit (refund only on closure). **Needs legal sign-off re CBN** | legal |
 | F7 | Data retention periods in §11.6; NDPC registration check; DPA text | legal/DPO |
-| F8 | Whether Paystack DVA needs the owner's BVN for these merchants | finance (Paystack account manager) |
+| F8 | ~~Whether Paystack DVA needs the owner's BVN for these merchants~~ **Resolved 2026-11-14: no BVN needed.** DVAs are created at approval from the KYC already collected | finance (Paystack account manager) |
 | F9 | SMS sender ID "Locoomo" with the merchant name in the message body; SMS cost absorbed | commercial |
 | F10 | Refunds when a consumer parcel is refused at drop-off or lost/damaged in our care (amount, who approves, Paystack refund vs credit) | finance/ops |
 
@@ -1012,6 +1012,41 @@ compare on the millisecond-truncated time (`cursorTime`), with a regression test
 
 Test-safety: the scratchpad test env was cleared again; it was rebuilt with fresh random
 test secrets and the `locoomo_test` guard **before** any migration or e2e run.
+
+### M4b Top-ups: done (2026-11-14)
+
+| Item | Where |
+|---|---|
+| `wallet_top_ups` (card and bank transfer; unique Paystack reference) and `merchant_funding_accounts` (one Paystack customer + Dedicated Virtual Account per merchant). Migration 367 | `merchants/infrastructure/entities/` |
+| Paystack wallet calls in payments, exported: card initialize/verify, customers, DVAs, per-customer transaction listing; key per mode (`PAYSTACK_TEST_SECRET_KEY`, or the main key when it is a test key) | `payments/application/paystack-wallet.gateway.ts` |
+| Payment webhooks: charges that aren't checkout intents go to a router the merchants module registers with (payments never imports merchants); test-key signatures accepted and kept out of intent lookup | `payment-webhook-router.ts`, `handle-payment-webhook.service.ts` |
+| Card top-up (dashboard only, both modes; live needs approval and respects `maxWalletBalanceKobo`), status check that settles with Paystack, history | `wallet-top-up.service.ts`, `wallet.controller.ts` |
+| DVA opened on demand (live, approved, contact email + phone), idempotent and serialised per merchant | same |
+| One crediting path: re-verify with Paystack, advisory lock per reference, ledger `externalRef` unique; card fee deducted, transfer credited in full; `wallet.funded` webhook + emailed receipt (owner, admins, finance) | same |
+| Sweep (worker, 15 min): pending cards after 2 min (credit / fail / abandon after 24 h; late success still credits), DVA transactions re-read with a 24 h look-back | same |
+| Admin: `GET /admin/merchants/:id/wallet/top-ups` | `admin-merchant-wallet.controller.ts` |
+
+Decisions:
+- **F8 resolved: no BVN.** DVAs need only the merchant's contact email and phone.
+- **DVAs are opened on demand** (the merchant clicks "Get my account number"), not inside
+  the approval transaction: a Paystack call can't sit in a DB transaction, and not every
+  merchant wants transfers. Live wallet only.
+- **Paystack customer = the contact email.** Paystack returns the existing customer for a
+  known email, so a second merchant with the same contact email is refused
+  (`FUNDING_ACCOUNT_CONFLICT`) rather than sharing an account.
+- **Test-mode card top-ups** need a test key; production without
+  `PAYSTACK_TEST_SECRET_KEY` answers `TOP_UPS_UNAVAILABLE` (the reset covers it).
+- Reconciliation of Paystack totals against credited top-ups is covered by the sweep's
+  re-reads; the nightly job still checks the ledger itself.
+
+**Rollout:**
+1. In the Paystack dashboard, point the webhook URL for the key in use (test on staging,
+   live on production) at `{API}/api/v1/payments/webhooks/paystack`; it's the same URL
+   checkout already uses.
+2. Optional: `PAYSTACK_TEST_SECRET_KEY` in production for test-mode card top-ups (then also
+   register the same URL as the *test* webhook URL in Paystack).
+3. Production DVAs: confirm Dedicated Virtual Accounts are enabled on the Locoomo Paystack
+   account (`wema-bank` by default; override with `PAYSTACK_DVA_PREFERRED_BANK`).
 
 ### Documentation
 

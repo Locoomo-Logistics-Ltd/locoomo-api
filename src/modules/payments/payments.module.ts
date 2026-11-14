@@ -22,6 +22,8 @@ import { PaymentIntentEntity } from './infrastructure/entities/payment-intent.en
 import { PricingRuleEntity } from './infrastructure/entities/pricing-rule.entity';
 import { PaymentProviderRegistry } from './infrastructure/payment-provider.registry';
 import { PaystackBankService } from './application/paystack-bank.service';
+import { PaymentWebhookRouter } from './application/payment-webhook-router';
+import { PaystackWalletGateway } from './application/paystack-wallet.gateway';
 import { PaystackPaymentProvider } from './infrastructure/paystack-payment-provider';
 import { BanksController } from './interface/banks.controller';
 import { PaymentIntentsController } from './interface/payment-intents.controller';
@@ -62,6 +64,8 @@ import { PricingController } from './interface/pricing.controller';
     PaystackPaymentProvider,
     PaymentProviderRegistry,
     PaystackBankService,
+    PaystackWalletGateway,
+    PaymentWebhookRouter,
   ],
   // PaystackBankService: riders/node-operators inject this for their own
   // PATCH me/payout-account verification — narrow cross-module export, same
@@ -72,10 +76,15 @@ import { PricingController } from './interface/pricing.controller';
   // Consumer booking uses — never duplicated.
   // DeliveryQuoteService: merchants' GET /merchant/quotes prices through the
   // same calculation checkout uses.
+  // PaystackWalletGateway + PaymentWebhookRouter: merchant wallet top-ups
+  // (card and Dedicated Virtual Accounts) call Paystack through the gateway
+  // and register a handler for charges that aren't checkout intents.
   exports: [
     PaystackBankService,
     CreatePaymentIntentService,
     DeliveryQuoteService,
+    PaystackWalletGateway,
+    PaymentWebhookRouter,
   ],
 })
 export class PaymentsModule {}

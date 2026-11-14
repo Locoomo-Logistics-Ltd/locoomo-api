@@ -8,6 +8,8 @@ import { PaymentProviderName } from '../domain/payment-provider-name.enum';
 import { PaymentIntentEntity } from '../infrastructure/entities/payment-intent.entity';
 import { PaymentProviderRegistry } from '../infrastructure/payment-provider.registry';
 import { ConfirmPaymentIntentPaidService } from './confirm-payment-intent-paid.service';
+import { PaymentWebhookRouter } from './payment-webhook-router';
+import { PaystackWalletGateway } from './paystack-wallet.gateway';
 
 export const PAYMENT_WEBHOOK_IDEMPOTENCY_SCOPE = 'payments.webhook';
 
@@ -20,6 +22,8 @@ export class HandlePaymentWebhookService {
     private readonly paymentProviderRegistry: PaymentProviderRegistry,
     private readonly idempotencyService: IdempotencyService,
     private readonly confirmPaymentIntentPaidService: ConfirmPaymentIntentPaidService,
+    private readonly webhookRouter: PaymentWebhookRouter,
+    private readonly walletGateway: PaystackWalletGateway,
   ) {}
 
   async handle(
@@ -29,7 +33,14 @@ export class HandlePaymentWebhookService {
   ): Promise<void> {
     const provider = this.paymentProviderRegistry.get(providerName);
 
-    if (!provider.verifyWebhookSignature(rawBody, signatureHeader)) {
+    const mainKey = provider.verifyWebhookSignature(rawBody, signatureHeader);
+    // Merchant test-mode top-ups may be signed with a separate test key.
+    // Consumer checkout never uses it, so such events skip intent lookup.
+    const testKey =
+      !mainKey &&
+      providerName === PaymentProviderName.PAYSTACK &&
+      this.walletGateway.isTestKeySignature(rawBody, signatureHeader);
+    if (!mainKey && !testKey) {
       throw new InvalidWebhookSignatureException(providerName);
     }
 
@@ -49,13 +60,19 @@ export class HandlePaymentWebhookService {
           manager,
           async () => {
             const intentRepo = manager.getRepository(PaymentIntentEntity);
-            const intent = await intentRepo.findOneBy({
-              providerReference: event.providerReference,
-            });
+            const intent = testKey
+              ? null
+              : await intentRepo.findOneBy({
+                  providerReference: event.providerReference,
+                });
             if (!intent) {
-              this.logger.warn(
-                `Webhook for unknown providerReference ${event.providerReference}`,
-              );
+              // Not checkout: maybe a merchant wallet top-up (card or
+              // bank transfer to a dedicated account).
+              if (!(await this.webhookRouter.route(event, manager))) {
+                this.logger.warn(
+                  `Webhook for unknown providerReference ${event.providerReference}`,
+                );
+              }
               return;
             }
             if (intent.status !== PaymentIntentStatus.PENDING) {
