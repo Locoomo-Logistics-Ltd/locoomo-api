@@ -978,6 +978,41 @@ Decisions and open items:
   it to 365. Test commands now go through a wrapper that refuses any DB other than
   `locoomo_test`.
 
+### M4a Wallet ledger: done (2026-11-14)
+
+M4 ships in slices: **M4a wallet ledger** → M4b top-ups (card, DVA, sweep) → M4c live
+shipments (order bridge, capture at intake with origin rebind, status mirror, cancel and
+intercept, drop-deadline expiry, live `trackingUrl`, earnings) → M4d labels, CSV imports,
+receiver relay → M4e discounts, VAT, statements/invoices, negative floor, low-balance alerts
+→ M4f claims and merchant return batches (from M3d).
+
+| Item | Where |
+|---|---|
+| `merchant_wallets` (per merchant + mode; cached `balanceKobo`/`heldKobo`), `wallet_entries` (append-only, signed, `balanceAfterKobo`, unique `externalRef` for M4b), `wallet_holds` (one per shipment). Existing test shipments awaiting drop-off carried over as holds. Migration 366 | `merchants/infrastructure/entities/` |
+| `WalletService`: hold, re-size, release, capture (never refuses; may go negative, §8.4), post-capture re-price, admin adjustment, test reset. Wallet row locked in the caller's transaction; lock order shipment → hold → wallet | `wallet.service.ts` |
+| Shipments and simulator move money through it: create holds (402 rolls the create back), re-route re-sizes, cancel/expire/refuse release, drop-off captures, `fee_adjusted` charges the difference | `merchant-shipment.service.ts`, `shipment-simulator.service.ts` |
+| Merchant API: `GET /wallet` (any member), `/wallet/entries`, `/wallet/holds` (`wallet.manage`; key scope `wallet:read`), `POST /test/wallet/reset` | `wallet.controller.ts` |
+| Admin: wallet, entries, holds (`finance`/`ops`/`support`); adjustments raised by `finance` as `merchant.wallet_adjustment` approvals and executed by a second `finance` admin (E12), audited | `admin-wallet.service.ts`, `admin-merchant-wallet.controller.ts` |
+| Nightly reconciliation (worker, once per Lagos day after 02:00): cached totals vs ledger and active holds; drift emailed to `finance` admins, never auto-corrected | `wallet-reconciliation.service.ts` |
+
+Decisions:
+- **The test wallet is a real ledger** (plan §8.2 "resettable"), so test drop-offs now
+  drain it. This changes the sandbox's earlier "charges don't drain it" behaviour; the
+  changelog says so and `POST /test/wallet/reset` restores ₦1,000,000.
+- **Wallets are created on first use**, so a live wallet exists (at zero) as soon as anyone
+  looks at it. Balances are `bigint` (enterprise wallets exceed int32 kobo).
+- **Merchant rows cascade to wallets**, matching every other merchant table. Merchants are
+  never deleted by the app (closure is a status), so ledgers are never lost that way.
+
+Fixed: **cursor pagination** compared millisecond cursors against microsecond timestamps.
+Rows written in one transaction share a timestamp, so a page boundary inside such a group
+skipped rows (newest-first lists) or, for `updatedSince` sync, returned the same row
+forever. All cursor lists (shipments, API logs, webhook deliveries, wallet) now sort and
+compare on the millisecond-truncated time (`cursorTime`), with a regression test.
+
+Test-safety: the scratchpad test env was cleared again; it was rebuilt with fresh random
+test secrets and the `locoomo_test` guard **before** any migration or e2e run.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

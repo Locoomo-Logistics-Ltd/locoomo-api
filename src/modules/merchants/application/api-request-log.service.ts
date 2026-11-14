@@ -10,6 +10,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import {
   CursorPage,
+  cursorTime,
   decodeCursor,
   toCursorPage,
 } from '../../../common/pagination/cursor';
@@ -85,7 +86,7 @@ export class ApiRequestLogService
     if (after) {
       params.push(after.t, after.id);
       where.push(
-        `(r."createdAt", r.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
+        `(${cursorTime('r."createdAt"')}, r.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
       );
     }
     const rows = await this.dataSource.query<Row[]>(
@@ -94,7 +95,7 @@ export class ApiRequestLogService
          FROM merchant_api_requests r
          LEFT JOIN api_keys k ON k.id = r."apiKeyId"
         WHERE ${where.join(' AND ')}
-        ORDER BY r."createdAt" DESC, r.id DESC
+        ORDER BY ${cursorTime('r."createdAt"')} DESC, r.id DESC
         LIMIT $3`,
       params,
     );

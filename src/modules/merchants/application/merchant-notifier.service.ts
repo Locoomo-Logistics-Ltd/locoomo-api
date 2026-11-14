@@ -192,12 +192,7 @@ export class MerchantNotifierService {
     merchant: MerchantEntity,
     manager: EntityManager,
   ): Promise<void> {
-    const admins = (await this.adminPermissions.list()).filter(
-      (admin) =>
-        String(admin.status) === 'active' &&
-        (admin.adminPermissions.includes(AdminPermission.KYC) ||
-          admin.adminPermissions.includes(AdminPermission.SUPER)),
-    );
+    const admins = await this.adminsWith(AdminPermission.KYC);
     if (admins.length === 0) {
       this.logger.warn(
         `Merchant ${merchant.id} submitted but no active admin has the kyc permission`,
@@ -205,12 +200,7 @@ export class MerchantNotifierService {
       return;
     }
     await this.send(
-      admins.map((admin) => ({
-        id: admin.id,
-        email: admin.email,
-        firstName: admin.firstName,
-        lastName: admin.lastName,
-      })),
+      admins,
       {
         subject: `KYC review: ${merchant.tradingName}`,
         heading: 'New merchant to review',
@@ -364,6 +354,76 @@ export class MerchantNotifierService {
       },
       manager,
     );
+  }
+
+  // Nightly reconciliation found cached wallet totals that don't match the
+  // ledger (plan §8.1). Finance investigates; nothing is auto-corrected.
+  async walletDrift(
+    drifts: {
+      merchantId: string;
+      mode: string;
+      balanceKobo: number;
+      ledgerKobo: number;
+      heldKobo: number;
+      activeHoldsKobo: number;
+    }[],
+    manager: EntityManager,
+  ): Promise<void> {
+    const admins = await this.adminsWith(AdminPermission.FINANCE);
+    if (admins.length === 0) {
+      this.logger.error(
+        `Wallet drift on ${drifts.length} wallet(s) but no active admin has the finance permission`,
+      );
+      return;
+    }
+    await this.send(
+      admins,
+      {
+        subject: `Wallet reconciliation: ${drifts.length} wallet(s) out of balance`,
+        heading: 'Wallets out of balance',
+        blocks: [
+          {
+            kind: 'paragraph',
+            text: 'These wallets’ cached totals don’t match their ledger entries and active holds. Nothing was changed. Investigate before approving any adjustment.',
+          },
+          ...drifts.slice(0, 20).map((drift): EmailBlock => ({
+            kind: 'details',
+            rows: [
+              { label: 'Merchant ID', value: drift.merchantId },
+              { label: 'Mode', value: drift.mode },
+              {
+                label: 'Balance (cached / ledger)',
+                value: `${drift.balanceKobo} / ${drift.ledgerKobo} kobo`,
+              },
+              {
+                label: 'Held (cached / active holds)',
+                value: `${drift.heldKobo} / ${drift.activeHoldsKobo} kobo`,
+              },
+            ],
+          })),
+        ],
+      },
+      manager,
+    );
+  }
+
+  // Active admins with this permission (or super).
+  private async adminsWith(
+    permission: AdminPermission,
+  ): Promise<UserContact[]> {
+    return (await this.adminPermissions.list())
+      .filter(
+        (admin) =>
+          String(admin.status) === 'active' &&
+          (admin.adminPermissions.includes(permission) ||
+            admin.adminPermissions.includes(AdminPermission.SUPER)),
+      )
+      .map((admin) => ({
+        id: admin.id,
+        email: admin.email,
+        firstName: admin.firstName,
+        lastName: admin.lastName,
+      }));
   }
 
   // Owner and admins (by default): the people who act on account emails.

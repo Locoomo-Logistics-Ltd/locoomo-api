@@ -26,6 +26,7 @@ import {
 } from './merchant-shipment.service';
 import { ShipmentEventsService } from './shipment-events.service';
 import { shipmentView } from './shipment-view';
+import { WalletService } from './wallet.service';
 
 const S = ShipmentStatus;
 // How much a simulated re-measure raises the fee.
@@ -41,6 +42,7 @@ export class ShipmentSimulatorService {
     private readonly shipments: MerchantShipmentService,
     private readonly events: ShipmentEventsService,
     private readonly nodes: NodesService,
+    private readonly wallet: WalletService,
   ) {}
 
   async simulate(
@@ -118,6 +120,12 @@ export class ShipmentSimulatorService {
         shipment.feeState = 'charged';
         shipment.chargedKobo = shipment.quotedKobo;
         nodeName = shipment.origin.nodeName;
+        await this.wallet.captureHold(
+          manager,
+          shipment.id,
+          shipment.quotedKobo,
+          `Shipment ${shipment.trackingCode}`,
+        );
         break;
       case S.IN_TRANSIT:
         nodeName = shipment.origin.nodeName;
@@ -159,9 +167,11 @@ export class ShipmentSimulatorService {
       case S.CANCELLED:
       case S.EXPIRED:
         shipment.feeState = 'released';
+        await this.wallet.releaseHold(manager, shipment.id);
         break;
       case S.REFUSED:
         shipment.feeState = 'released';
+        await this.wallet.releaseHold(manager, shipment.id);
         nodeName = shipment.origin.nodeName;
         data = { reason: 'prohibited_item' };
         break;
@@ -197,6 +207,13 @@ export class ShipmentSimulatorService {
       weightKg: Math.round((shipment.parcel.weightKg ?? 1) * 1.5 * 100) / 100,
       size: shipment.parcel.size,
     };
+    await this.wallet.adjustShipmentCharge(manager, {
+      merchantId: shipment.merchantId,
+      mode: shipment.mode,
+      shipmentId: shipment.id,
+      differenceKobo: newKobo - previousKobo,
+      description: `Shipment ${shipment.trackingCode}: re-priced after measuring`,
+    });
     return this.events.apply(manager, shipment, 'fee_adjusted', {
       nodeName: shipment.origin.nodeName,
       data: {

@@ -25,6 +25,15 @@ export class InvalidCursorException extends BusinessException {
   }
 }
 
+// SQL for a timestamp column as cursors see it. Cursors carry JS
+// (millisecond) times while Postgres stores microseconds, and rows written
+// in one transaction share an exact timestamp. Sort and compare on this, or
+// a page boundary inside such a group skips rows (newest-first lists) or
+// repeats them forever (oldest-first sync).
+export function cursorTime(column: string): string {
+  return `date_trunc('milliseconds', ${column})`;
+}
+
 export function encodeCursor(position: CursorPosition): string {
   return Buffer.from(JSON.stringify(position)).toString('base64url');
 }

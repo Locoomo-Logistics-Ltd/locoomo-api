@@ -10,6 +10,7 @@ import {
 } from '../../../common/exceptions';
 import {
   CursorPage,
+  cursorTime,
   decodeCursor,
   toCursorPage,
 } from '../../../common/pagination/cursor';
@@ -24,7 +25,6 @@ import { DeliveryQuoteService } from '../../payments/application/delivery-quote.
 import {
   DestinationNodeUnavailableException,
   DuplicateReferenceException,
-  InsufficientWalletBalanceException,
   LiveShipmentsNotAvailableException,
   MerchantNotApprovedException,
   MerchantNotEditableException,
@@ -64,11 +64,8 @@ import {
 import { MerchantCaller } from './merchant-state';
 import { ShipmentEventsService } from './shipment-events.service';
 import { shipmentView } from './shipment-view';
+import { WalletService } from './wallet.service';
 
-// Sandbox wallet (MERCHANT_API.md §13): holds can't exceed ₦1,000,000, so
-// integrators can exercise 402 INSUFFICIENT_WALLET_BALANCE. Real wallets
-// (and resetting this one) arrive with M4.
-export const TEST_WALLET_KOBO = 100_000_000;
 const MAX_TRACKING_CODE_ATTEMPTS = 5;
 
 export const nodeSnapshot = (node: AvailableNode): ShipmentNodeSnapshot => ({
@@ -106,6 +103,7 @@ export class MerchantShipmentService {
     private readonly quotes: DeliveryQuoteService,
     private readonly outbox: OutboxService,
     private readonly events: ShipmentEventsService,
+    private readonly wallet: WalletService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -210,21 +208,17 @@ export class MerchantShipmentService {
       qb.andWhere('s."updatedAt" >= :updatedSince', {
         updatedSince: query.updatedSince,
       });
+      const updated = cursorTime('s."updatedAt"');
       if (after) {
-        qb.andWhere(
-          '(s."updatedAt", s.id) > (:t::timestamptz, :id::uuid)',
-          after,
-        );
+        qb.andWhere(`(${updated}, s.id) > (:t::timestamptz, :id::uuid)`, after);
       }
-      qb.orderBy('s."updatedAt"', 'ASC').addOrderBy('s.id', 'ASC');
+      qb.orderBy(updated, 'ASC').addOrderBy('s.id', 'ASC');
     } else {
+      const created = cursorTime('s."createdAt"');
       if (after) {
-        qb.andWhere(
-          '(s."createdAt", s.id) < (:t::timestamptz, :id::uuid)',
-          after,
-        );
+        qb.andWhere(`(${created}, s.id) < (:t::timestamptz, :id::uuid)`, after);
       }
-      qb.orderBy('s."createdAt"', 'DESC').addOrderBy('s.id', 'DESC');
+      qb.orderBy(created, 'DESC').addOrderBy('s.id', 'DESC');
     }
     const rows = await qb.take(query.limit + 1).getMany();
     return toCursorPage(
@@ -314,11 +308,7 @@ export class MerchantShipmentService {
         if (shipment.status !== ShipmentStatus.CREATED) {
           throw new ShipmentNotEditableException('parcel', shipment.status);
         }
-        await this.assertTestBalance(
-          manager,
-          caller,
-          repriced.amountKobo - shipment.quotedKobo,
-        );
+        await this.wallet.changeHold(manager, shipment.id, repriced.amountKobo);
         if (destination) {
           shipment.destination = nodeSnapshot(destination);
           changed.push('destination');
@@ -355,6 +345,7 @@ export class MerchantShipmentService {
       shipment.status = ShipmentStatus.CANCELLED;
       shipment.statusChangedAt = new Date();
       shipment.feeState = 'released';
+      await this.wallet.releaseHold(manager, shipment.id);
       return this.events.apply(manager, shipment, 'cancelled');
     });
     return shipmentView(saved);
@@ -456,7 +447,6 @@ export class MerchantShipmentService {
     for (let attempt = 1; ; attempt++) {
       try {
         return await this.dataSource.transaction(async (manager) => {
-          await this.assertTestBalance(manager, caller, priced.amountKobo);
           const now = new Date();
           const shipment = manager.create(MerchantShipmentEntity, {
             merchantId: caller.merchantId,
@@ -490,10 +480,18 @@ export class MerchantShipmentService {
             createdByKeyId: caller.keyId,
             createdByUserId: caller.userId,
           });
-          return this.events.apply(manager, shipment, 'created', {
+          const saved = await this.events.apply(manager, shipment, 'created', {
             bump: false,
             nodeName: null,
           });
+          // 402 here rolls the whole create back.
+          await this.wallet.placeHold(manager, {
+            merchantId: caller.merchantId,
+            mode: caller.mode,
+            shipmentId: saved.id,
+            amountKobo: priced.amountKobo,
+          });
+          return saved;
         });
       } catch (error) {
         const constraint = constraintOf(error);
@@ -555,30 +553,6 @@ export class MerchantShipmentService {
     }
     if (notifyReceiver === 'locoomo' && !email && !this.outbox.isSmsEnabled()) {
       throw new ReceiverUnreachableException();
-    }
-  }
-
-  private async assertTestBalance(
-    manager: EntityManager,
-    caller: MerchantCaller,
-    extraKobo: number,
-  ): Promise<void> {
-    if (caller.mode !== 'test' || extraKobo <= 0) {
-      return;
-    }
-    // Serialises concurrent creates for this merchant's test wallet.
-    await manager.query(`SELECT id FROM merchants WHERE id = $1 FOR UPDATE`, [
-      caller.merchantId,
-    ]);
-    const [{ held }] = await manager.query<{ held: number }[]>(
-      `SELECT COALESCE(SUM("quotedKobo"), 0)::bigint::float8 AS held
-         FROM merchant_shipments
-        WHERE "merchantId" = $1 AND mode = 'test' AND "feeState" = 'held'`,
-      [caller.merchantId],
-    );
-    const available = TEST_WALLET_KOBO - held;
-    if (extraKobo > available) {
-      throw new InsufficientWalletBalanceException(extraKobo, available);
     }
   }
 

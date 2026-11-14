@@ -1,0 +1,571 @@
+import { randomUUID } from 'crypto';
+import { INestApplication } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import request from 'supertest';
+import { App } from 'supertest/types';
+import { DataSource, Repository } from 'typeorm';
+import { AppModule } from '../../src/app.module';
+import { configureApp } from '../../src/bootstrap';
+import { AdminPermission } from '../../src/common/auth/admin-permission.enum';
+import { UserRole } from '../../src/common/auth/user-role.enum';
+import { hashPassword } from '../../src/modules/identity/domain/password-hasher';
+import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
+import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
+import { ApiRateLimiter } from '../../src/modules/merchants/application/api-rate-limiter';
+import { WalletReconciliationService } from '../../src/modules/merchants/application/wallet-reconciliation.service';
+import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
+
+const PASSWORD = 'Correct-Horse-Battery-1';
+const DOMAIN = 'wallet.e2e.test';
+const NODE_PREFIX = 'MWAL-';
+const CENTRE = { latitude: 7.42, longitude: 3.95 };
+const FUNDING = 100_000_000;
+
+interface ErrorBody {
+  error: { code: string; details?: unknown };
+}
+interface Wallet {
+  mode: string;
+  currency: string;
+  balanceKobo: number;
+  heldKobo: number;
+  availableKobo: number;
+}
+interface Entry {
+  id: string;
+  type: string;
+  amountKobo: number;
+  balanceAfterKobo: number;
+  description: string;
+  shipmentId: string | null;
+}
+interface Hold {
+  shipmentId: string;
+  status: string;
+  amountKobo: number;
+  capturedKobo: number | null;
+}
+interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+interface Shipment {
+  id: string;
+  trackingCode: string;
+  fee: { quotedKobo: number; chargedKobo: number | null; state: string };
+}
+
+function cookiesFrom(response: request.Response): string[] {
+  const raw = response.headers['set-cookie'] as unknown as string[] | undefined;
+  return (raw ?? []).map((cookie) => cookie.split(';')[0]);
+}
+
+describe('Merchant wallet (e2e)', () => {
+  let app: INestApplication<App>;
+  let users: Repository<UserEntity>;
+  let dataSource: DataSource;
+  let ownerCookies: string[];
+  let merchantId: string;
+  let key: string;
+  let shipmentsOnlyKey: string;
+  let finance: string[];
+  let financeChecker: string[];
+  let financeUserId: string;
+  let ops: string[];
+  const node = { origin: '', home: '', far: '' };
+
+  const http = (): ReturnType<typeof request> => request(app.getHttpServer());
+  const code = (response: request.Response): string =>
+    (response.body as ErrorBody).error.code;
+  const data = <T>(response: request.Response): T =>
+    (response.body as { data: T }).data;
+
+  const api = (k: string) => ({
+    get: (url: string) =>
+      http().get(`/api/v1/merchant${url}`).set('Authorization', `Bearer ${k}`),
+    post: (url: string, body: object = {}) =>
+      http()
+        .post(`/api/v1/merchant${url}`)
+        .set('Authorization', `Bearer ${k}`)
+        .send(body),
+    patch: (url: string, body: object) =>
+      http()
+        .patch(`/api/v1/merchant${url}`)
+        .set('Authorization', `Bearer ${k}`)
+        .send(body),
+  });
+
+  const wallet = async (): Promise<Wallet> =>
+    data<Wallet>(await api(key).get('/wallet').expect(200));
+  const entries = async (query = ''): Promise<Page<Entry>> =>
+    data<Page<Entry>>(
+      await api(key).get(`/wallet/entries${query}`).expect(200),
+    );
+
+  const shipmentBody = (overrides: Record<string, unknown> = {}) => ({
+    reference: `W-${randomUUID().slice(0, 8)}`,
+    destinationNodeId: node.home,
+    origin: { type: 'node', nodeId: node.origin },
+    receiver: {
+      name: 'Chioma Okafor',
+      phone: '08031234567',
+      email: 'c@example.com',
+    },
+    parcel: { description: 'Earbuds', size: 'small', weightKg: 0.4 },
+    ...overrides,
+  });
+  const create = async (): Promise<Shipment> =>
+    data<Shipment>(
+      await api(key).post('/shipments', shipmentBody()).expect(201),
+    );
+  const simulate = (id: string, to: string) =>
+    api(key).post(`/test/shipments/${id}/simulate`, { to }).expect(200);
+
+  async function makeUser(
+    name: string,
+    overrides: Partial<UserEntity> = {},
+  ): Promise<UserEntity> {
+    return users.save(
+      users.create({
+        email: `${name}@${DOMAIN}`,
+        passwordHash: await hashPassword(PASSWORD),
+        firstName: name,
+        lastName: 'Tester',
+        role: UserRole.CONSUMER,
+        status: UserStatus.ACTIVE,
+        consentAcceptedAt: new Date(),
+        emailVerifiedAt: new Date(),
+        ...overrides,
+      }),
+    );
+  }
+
+  async function signIn(user: UserEntity): Promise<string[]> {
+    return cookiesFrom(
+      await http()
+        .post('/api/v1/auth/login')
+        .send({ email: user.email, password: PASSWORD })
+        .expect(200),
+    );
+  }
+
+  const makeAdmin = (name: string, permissions: AdminPermission[]) =>
+    makeUser(name, { role: UserRole.ADMIN, adminPermissions: permissions });
+
+  async function createNode(admin: string[], name: string, offsetKm: number) {
+    const response = await http()
+      .post('/api/v1/nodes')
+      .set('Cookie', admin)
+      .send({
+        name: `${NODE_PREFIX}${name}`,
+        address: `${name} road`,
+        city: 'Ibadan',
+        state: 'Oyo',
+        latitude: CENTRE.latitude + offsetKm / 111,
+        longitude: CENTRE.longitude,
+        capacity: 10,
+        ...NODE_CONTACT_FIELDS,
+      })
+      .expect(201);
+    return data<{ id: string }>(response).id;
+  }
+
+  async function newKey(body: object): Promise<string> {
+    return data<{ secret: string }>(
+      await http()
+        .post('/api/v1/merchant/api-keys')
+        .set('Cookie', ownerCookies)
+        .send({ mode: 'test', name: 'k', kind: 'secret', ...body })
+        .expect(201),
+    ).secret;
+  }
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(ApiRateLimiter)
+      .useValue({
+        consume: () =>
+          Promise.resolve({
+            allowed: true,
+            limit: 1000,
+            remaining: 999,
+            resetSeconds: 1,
+            retryAfterSeconds: 1,
+          }),
+        failedAttempt: () => Promise.resolve(false),
+      })
+      .compile();
+    app = moduleFixture.createNestApplication();
+    configureApp(app);
+    await app.init();
+    users = moduleFixture.get(getRepositoryToken(UserEntity));
+    dataSource = moduleFixture.get(DataSource);
+
+    const superAdmin = await signIn(
+      await makeAdmin('super', [AdminPermission.SUPER]),
+    );
+    await http()
+      .post('/api/v1/admin/pricing')
+      .set('Cookie', superAdmin)
+      .send({ baseFeeNaira: 500, perKmRateNaira: 100, destinationFeeNaira: 50 })
+      .expect(201);
+    node.origin = await createNode(superAdmin, 'Origin', 0);
+    node.home = await createNode(superAdmin, 'Home', 2);
+    node.far = await createNode(superAdmin, 'Far', 9);
+
+    const financeUser = await makeAdmin('finance', [AdminPermission.FINANCE]);
+    financeUserId = financeUser.id;
+    finance = await signIn(financeUser);
+    financeChecker = await signIn(
+      await makeAdmin('checker', [AdminPermission.FINANCE]),
+    );
+    ops = await signIn(await makeAdmin('ops', [AdminPermission.OPS]));
+
+    ownerCookies = await signIn(await makeUser('owner'));
+    merchantId = data<{ merchant: { id: string } }>(
+      await http()
+        .post('/api/v1/merchant/account')
+        .set('Cookie', ownerCookies)
+        .send({ type: 'business', tradingName: 'Wallet Stores' })
+        .expect(201),
+    ).merchant.id;
+    key = await newKey({});
+    shipmentsOnlyKey = await newKey({ scopes: ['shipments:read'] });
+  });
+
+  afterAll(async () => {
+    try {
+      const pattern = `%@${DOMAIN}`;
+      const owned = `SELECT m.id FROM merchants m JOIN users u ON u.id = m."createdByUserId" WHERE u.email LIKE $1`;
+      await dataSource.query(
+        `DELETE FROM merchant_api_requests WHERE "merchantId" IN (${owned})`,
+        [pattern],
+      );
+      await dataSource.query(
+        `DELETE FROM approval_requests WHERE "requestedByUserId" IN (SELECT id FROM users WHERE email LIKE $1)`,
+        [pattern],
+      );
+      await dataSource.query(
+        `DELETE FROM audit_events WHERE "merchantId" IN (${owned}) OR "actorId" IN (SELECT id FROM users WHERE email LIKE $1)`,
+        [pattern],
+      );
+      await dataSource.query(
+        `DELETE FROM merchants WHERE "createdByUserId" IN (SELECT id FROM users WHERE email LIKE $1)`,
+        [pattern],
+      );
+      await dataSource.query(
+        `DELETE FROM pricing_rules WHERE "createdByAdminId" IN (SELECT id FROM users WHERE email LIKE $1)`,
+        [pattern],
+      );
+      await dataSource.query(`DELETE FROM nodes WHERE name LIKE $1`, [
+        `${NODE_PREFIX}%`,
+      ]);
+      await dataSource.query(`DELETE FROM users WHERE email LIKE $1`, [
+        pattern,
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  describe('test wallet', () => {
+    it('starts funded with ₦1,000,000 and shows the funding entry', async () => {
+      expect(await wallet()).toMatchObject({
+        mode: 'test',
+        currency: 'NGN',
+        balanceKobo: FUNDING,
+        heldKobo: 0,
+        availableKobo: FUNDING,
+      });
+      const page = await entries();
+      expect(page.items).toEqual([
+        expect.objectContaining({
+          type: 'test_funding',
+          amountKobo: FUNDING,
+          balanceAfterKobo: FUNDING,
+        }),
+      ]);
+    });
+
+    it('holds the quoted fee at creation and releases it on cancel', async () => {
+      const shipment = await create();
+      const quoted = shipment.fee.quotedKobo;
+      expect(await wallet()).toMatchObject({
+        balanceKobo: FUNDING,
+        heldKobo: quoted,
+        availableKobo: FUNDING - quoted,
+      });
+      const holds = data<Page<Hold>>(
+        await api(key).get('/wallet/holds?status=active').expect(200),
+      );
+      expect(holds.items).toEqual([
+        expect.objectContaining({
+          shipmentId: shipment.id,
+          status: 'active',
+          amountKobo: quoted,
+        }),
+      ]);
+
+      await api(key).post(`/shipments/${shipment.id}/cancel`).expect(200);
+      expect(await wallet()).toMatchObject({
+        balanceKobo: FUNDING,
+        heldKobo: 0,
+      });
+      const released = data<Page<Hold>>(
+        await api(key).get('/wallet/holds?status=released').expect(200),
+      );
+      expect(released.items[0]).toMatchObject({
+        shipmentId: shipment.id,
+        status: 'released',
+      });
+    });
+
+    it('re-sizes the hold when a re-route changes the price', async () => {
+      const shipment = await create();
+      const moved = data<Shipment>(
+        await api(key)
+          .patch(`/shipments/${shipment.id}`, { destinationNodeId: node.far })
+          .expect(200),
+      );
+      expect(moved.fee.quotedKobo).toBeGreaterThan(shipment.fee.quotedKobo);
+      expect((await wallet()).heldKobo).toBe(moved.fee.quotedKobo);
+      await api(key).post(`/shipments/${shipment.id}/cancel`).expect(200);
+    });
+
+    it('captures at drop-off and charges the difference after re-measuring', async () => {
+      const shipment = await create();
+      const quoted = shipment.fee.quotedKobo;
+      await simulate(shipment.id, 'received');
+      expect(await wallet()).toMatchObject({
+        balanceKobo: FUNDING - quoted,
+        heldKobo: 0,
+      });
+
+      const adjusted = data<Shipment>(
+        await simulate(shipment.id, 'fee_adjusted'),
+      );
+      const extra = adjusted.fee.chargedKobo! - quoted;
+      expect(extra).toBeGreaterThan(0);
+      expect((await wallet()).balanceKobo).toBe(FUNDING - quoted - extra);
+
+      const lines = (await entries()).items;
+      expect(lines.slice(0, 2)).toEqual([
+        expect.objectContaining({
+          type: 'shipment_adjustment',
+          amountKobo: -extra,
+          shipmentId: shipment.id,
+        }),
+        expect.objectContaining({
+          type: 'shipment_charge',
+          amountKobo: -quoted,
+          shipmentId: shipment.id,
+          description: `Shipment ${shipment.trackingCode}`,
+        }),
+      ]);
+      const filtered = await entries('?type=shipment_charge');
+      expect(filtered.items.every((e) => e.type === 'shipment_charge')).toBe(
+        true,
+      );
+    });
+
+    it('releases the hold when a parcel is refused or expires', async () => {
+      const refused = await create();
+      await simulate(refused.id, 'refused');
+      const expired = await create();
+      await simulate(expired.id, 'expired');
+      expect((await wallet()).heldKobo).toBe(0);
+    });
+
+    it('resets the balance to ₦1,000,000 and keeps open holds', async () => {
+      const open = await create();
+      const reset = data<Wallet>(
+        await api(key).post('/test/wallet/reset').expect(200),
+      );
+      expect(reset).toMatchObject({
+        balanceKobo: FUNDING,
+        heldKobo: open.fee.quotedKobo,
+      });
+      expect((await entries()).items[0]).toMatchObject({
+        type: 'test_funding',
+        description: 'Test wallet reset',
+        balanceAfterKobo: FUNDING,
+      });
+      await api(key).post(`/shipments/${open.id}/cancel`).expect(200);
+    });
+
+    it('pages through entries without skipping rows written together', async () => {
+      const all: Entry[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await entries(
+          `?limit=1${cursor ? `&cursor=${cursor}` : ''}`,
+        );
+        all.push(...page.items);
+        cursor = page.nextCursor;
+      } while (cursor);
+      const everything = (await entries('?limit=200')).items;
+      expect(all.map((e) => e.id)).toEqual(everything.map((e) => e.id));
+    });
+  });
+
+  describe('access', () => {
+    it('needs the wallet:read scope for keys', async () => {
+      expect(code(await api(shipmentsOnlyKey).get('/wallet').expect(403))).toBe(
+        'INSUFFICIENT_SCOPE',
+      );
+    });
+
+    it('works from the dashboard per mode, and reset is test-only', async () => {
+      const live = data<Wallet>(
+        await http()
+          .get('/api/v1/merchant/wallet')
+          .set('Cookie', ownerCookies)
+          .set('Locoomo-Mode', 'live')
+          .expect(200),
+      );
+      expect(live).toMatchObject({ mode: 'live', balanceKobo: 0, heldKobo: 0 });
+      const liveReset = await http()
+        .post('/api/v1/merchant/test/wallet/reset')
+        .set('Cookie', ownerCookies)
+        .set('X-Locoomo-Client', 'web')
+        .set('Locoomo-Mode', 'live')
+        .expect(403);
+      expect(code(liveReset)).toBe('TEST_MODE_ONLY');
+    });
+  });
+
+  describe('admin adjustments (two-admin rule)', () => {
+    it('credits the wallet only after a second finance admin approves', async () => {
+      const requested = data<{
+        approvalId: string;
+        status: string;
+        summary: string;
+      }>(
+        await http()
+          .post(`/api/v1/admin/merchants/${merchantId}/wallet/adjustments`)
+          .set('Cookie', finance)
+          .send({
+            mode: 'live',
+            amountKobo: 2_500_000,
+            reason: 'Goodwill credit for a delayed parcel',
+            merchantNote: 'Goodwill credit',
+          })
+          .expect(201),
+      );
+      expect(requested).toMatchObject({
+        status: 'pending',
+        summary: 'Credit ₦25,000.00 to Wallet Stores (live wallet)',
+      });
+
+      const liveWallet = () =>
+        http()
+          .get(`/api/v1/admin/merchants/${merchantId}/wallet?mode=live`)
+          .set('Cookie', ops)
+          .expect(200);
+      expect(data<Wallet>(await liveWallet()).balanceKobo).toBe(0);
+
+      expect(
+        code(
+          await http()
+            .post(`/api/v1/admin/approvals/${requested.approvalId}/approve`)
+            .set('Cookie', finance)
+            .send({})
+            .expect(403),
+        ),
+      ).toBe('SELF_APPROVAL_NOT_ALLOWED');
+      expect(
+        code(
+          await http()
+            .post(`/api/v1/admin/approvals/${requested.approvalId}/approve`)
+            .set('Cookie', ops)
+            .send({})
+            .expect(403),
+        ),
+      ).toBe('FORBIDDEN');
+
+      const approved = data<{
+        status: string;
+        result: { balanceAfterKobo: number };
+      }>(
+        await http()
+          .post(`/api/v1/admin/approvals/${requested.approvalId}/approve`)
+          .set('Cookie', financeChecker)
+          .send({})
+          .expect(200),
+      );
+      expect(approved).toMatchObject({
+        status: 'executed',
+        result: { balanceAfterKobo: 2_500_000 },
+      });
+      expect(data<Wallet>(await liveWallet()).balanceKobo).toBe(2_500_000);
+
+      const liveEntries = data<Page<Entry>>(
+        await http()
+          .get('/api/v1/merchant/wallet/entries')
+          .set('Cookie', ownerCookies)
+          .set('Locoomo-Mode', 'live')
+          .expect(200),
+      );
+      expect(liveEntries.items).toEqual([
+        expect.objectContaining({
+          type: 'adjustment',
+          amountKobo: 2_500_000,
+          description: 'Goodwill credit',
+        }),
+      ]);
+      const [audit] = await dataSource.query<{ actorId: string }[]>(
+        `SELECT "actorId" FROM audit_events WHERE action = 'wallet.adjusted' AND "merchantId" = $1`,
+        [merchantId],
+      );
+      expect(audit).toBeDefined();
+      expect(audit.actorId).not.toBe(financeUserId);
+    });
+
+    it('only finance admins can raise one, and the amount must be sane', async () => {
+      await http()
+        .post(`/api/v1/admin/merchants/${merchantId}/wallet/adjustments`)
+        .set('Cookie', ops)
+        .send({ mode: 'live', amountKobo: 100, reason: 'Not allowed' })
+        .expect(403);
+      const zero = await http()
+        .post(`/api/v1/admin/merchants/${merchantId}/wallet/adjustments`)
+        .set('Cookie', finance)
+        .send({ mode: 'live', amountKobo: 0, reason: 'Nothing' })
+        .expect(400);
+      expect(code(zero)).toBe('VALIDATION_FAILED');
+      await http()
+        .post(`/api/v1/admin/merchants/${randomUUID()}/wallet/adjustments`)
+        .set('Cookie', finance)
+        .send({ mode: 'live', amountKobo: 100, reason: 'Unknown merchant' })
+        .expect(404);
+    });
+  });
+
+  describe('reconciliation', () => {
+    it('finds no drift after real activity, and reports a tampered wallet', async () => {
+      const reconciliation = app.get(WalletReconciliationService);
+      const ours = (drifts: { merchantId: string }[]) =>
+        drifts.filter((d) => d.merchantId === merchantId);
+      expect(ours(await reconciliation.run())).toEqual([]);
+
+      await dataSource.query(
+        `UPDATE merchant_wallets SET "balanceKobo" = "balanceKobo" + 1 WHERE "merchantId" = $1 AND mode = 'test'`,
+        [merchantId],
+      );
+      try {
+        expect(ours(await reconciliation.run())).toEqual([
+          expect.objectContaining({ mode: 'test' }),
+        ]);
+      } finally {
+        await dataSource.query(
+          `UPDATE merchant_wallets SET "balanceKobo" = "balanceKobo" - 1 WHERE "merchantId" = $1 AND mode = 'test'`,
+          [merchantId],
+        );
+      }
+    });
+  });
+});
