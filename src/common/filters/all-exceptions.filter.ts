@@ -58,7 +58,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
         httpStatus: exception.httpStatus,
         body: {
           success: false,
-          error: { code: exception.errorCode, message, correlationId },
+          error: {
+            code: exception.errorCode,
+            message,
+            correlationId,
+            ...(exception.details !== undefined &&
+            !(exception instanceof InfrastructureException)
+              ? { details: exception.details }
+              : {}),
+          },
         },
       };
     }

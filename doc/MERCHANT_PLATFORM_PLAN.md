@@ -727,7 +727,7 @@ machine), per-endpoint webhook secrets, and explicit response DTOs.
 
 ## 17. Progress
 
-### M0 Foundations: done (2026-11-12, uncommitted on `dev`)
+### M0 Foundations: done (2026-11-12)
 
 What shipped, where:
 
@@ -777,6 +777,45 @@ Applies to every user, not only merchants.
 1. Set `DATA_ENCRYPTION_KEY` in every environment **before** anyone enrols, and never change it afterwards.
 2. Existing admins have 14 days from deploy to turn on 2FA.
 3. Frontends must handle the `mfaRequired` login response and the `REAUTH_REQUIRED` retry flow (doc/API.md › Account security).
+
+### M1b Merchant accounts, onboarding & review: done (2026-11-14)
+
+M1 exit criterion met: a merchant self-onboards and gets approved end to end
+(`test/merchants/merchant-onboarding.e2e-spec.ts`).
+
+| Item | Where |
+|---|---|
+| `merchants` module: accounts, members (one merchant per user, one owner per merchant), invites, directors, documents, bank account, per-section review items. Migration 358 | `src/modules/merchants/` |
+| Status machine + editability rules (frozen under review; identity details locked after approval) | `merchants/domain/merchant-status.ts` |
+| Team roles → permissions (§3.3), `MerchantGuard` + `@MerchantAccess(permission)`, membership cached 30s and busted on change | `merchants/domain/merchant-permissions.ts`, `merchants/interface/merchant.guard.ts` |
+| Onboarding checklist per type; editing a section clears the reviewer's verdict on it | `merchants/domain/onboarding-checklist.ts` |
+| KYC files: signed uploads into `merchants/<id>/kyc`, ownership + existence checked; admins get 5-minute links; every view audited | `merchant-account.service.ts`, `admin-merchants.service.ts` |
+| ID numbers and bank account numbers sealed (`merchant-kyc`, `bank-account` boxes) | |
+| Bank account via Paystack resolve + name-match score (strong/partial/weak) | `merchants/domain/name-match.ts` |
+| Team invites by email (7 days, hashed single-use token, public preview, accept with the invited address only), role change and ownership transfer with step-up, leave | `merchant-team.service.ts` |
+| Admin queue and decisions (`kyc`), suspend/reinstate/settings (`ops`), list/detail also for `support` | `admin-merchants.controller.ts` |
+| Emails: submission (team + KYC admins), approved, changes requested (per-section reasons), rejected, suspended, reinstated, closed, bank change, invites, team changes | `merchant-notifier.service.ts` |
+| Kill switch `MERCHANT_PLATFORM_ENABLED` (503 on `/merchant/*`, admin routes unaffected) | `merchant.guard.ts` |
+| `error.details` on business errors (e.g. `ONBOARDING_INCOMPLETE` sections) | `common/exceptions/app.exception.ts` |
+
+Decisions made while building (within the plan's intent):
+
+- **Own invite table, not identity's.** Identity invites create `INVITED` users with an
+  admin-set role; merchant invitees are often existing users. The invitee signs in (or
+  signs up and verifies) with the invited address, then accepts.
+- **Approve accepts undecided sections**; it refuses while any section is rejected.
+  Request-changes needs at least one rejected section, so the merchant always learns what to fix.
+- **Closure** removes the team and revokes invites, and is open to the owner from `draft`,
+  `changes_requested`, `approved` and `rejected`. M4 must add the in-flight, balance and
+  refund checks (§2.1) before live shipments exist.
+- **Deferred:** phone OTP on the contact number (SMS optional, D10), hub assignments and
+  pricing on approve (M4/M5), the merchant 360 view (M6), the `Locoomo-Mode` header (M2).
+
+**Rollout:**
+1. Set `MERCHANT_DASHBOARD_URL` (e.g. `https://merchant.locoomo.com`) and add that origin to `CORS_ORIGIN`.
+2. Give the KYC reviewers the `kyc` permission (submissions email every active `kyc`/`super` admin).
+3. Legal: publish the merchant terms + DPA text for version `2026-11-14`
+   (`merchants/domain/merchant-terms.ts`). Bump the constant whenever the text changes.
 
 ### Documentation
 

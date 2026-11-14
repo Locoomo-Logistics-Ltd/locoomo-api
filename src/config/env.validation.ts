@@ -116,6 +116,20 @@ export const envSchema = z
     // `generic` is the default route; `dnd` delivers to DND-registered
     // numbers but must be activated on the Termii account first.
     TERMII_CHANNEL: z.enum(['generic', 'dnd']).default('generic'),
+    // Global kill switch for the merchant platform (plan §10). `false`
+    // answers every /merchant route with 503 MERCHANT_PLATFORM_DISABLED;
+    // admin merchant routes keep working so ops can still act.
+    MERCHANT_PLATFORM_ENABLED: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
+    // Merchant dashboard origin for links in merchant emails (invites,
+    // review outcomes), e.g. https://merchant.locoomo.com. Defaults to
+    // FRONTEND_URL when unset.
+    MERCHANT_DASHBOARD_URL: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.url().optional(),
+    ),
   })
   .refine(
     (config) =>

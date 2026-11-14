@@ -23,7 +23,7 @@ build and in what order.
 6. [Account security settings screen](#6-account-security-settings-screen)
 7. [Email verification banner](#7-email-verification-banner)
 8. [Admin app](#8-admin-app)
-9. [Merchant dashboard (next)](#9-merchant-dashboard-next)
+9. [Merchant dashboard](#9-merchant-dashboard)
 10. [Error codes](#10-error-codes)
 11. [Testing locally](#11-testing-locally)
 
@@ -293,10 +293,10 @@ Sensitive actions require the user to have proven who they are in the **last 10 
 A normal sign-in counts, so most users never see the prompt right after signing in.
 Otherwise the API answers `403 REAUTH_REQUIRED`.
 
-**Which actions need it?** Today: starting 2FA setup, regenerating recovery codes, and
-turning 2FA off. The merchant dashboard (🛠) will also use it for creating or rolling live
-API keys, changing webhook URLs or the bank account, changing team roles, transferring
-ownership and closing the account. Don't hard-code the list. React to the error code.
+**Which actions need it?** Today: starting 2FA setup, regenerating recovery codes,
+turning 2FA off, and in the merchant dashboard setting the bank account, changing team
+roles, transferring ownership and closing the account. Creating or rolling live API keys
+and changing webhook URLs will too (🛠). Don't hard-code the list. React to the error code.
 
 ### One interceptor for every app
 
@@ -500,77 +500,314 @@ Approvals                                          [Pending ▾]
 
 ---
 
-## 9. Merchant dashboard 🛠 (next)
+## 9. Merchant dashboard
 
 The merchant dashboard is a **new app** for businesses that ship through Locoomo: Temu,
-Konga and Jiji sellers. Integrators' servers and your dashboard call **the same
-`/api/v1/merchant/*` endpoints**. Their servers use API keys; the dashboard uses the
-normal cookie session. So [MERCHANT_API.md](MERCHANT_API.md) is your endpoint
-reference too.
+Konga and Jiji sellers. Accounts, onboarding, team and the admin review queue are
+**live (✅)**. Keys, shipments and wallet follow (🛠).
+
+Two kinds of endpoint:
+
+- **Account, onboarding and team** (`/merchant/account`, `/merchant/team`,
+  `/merchant/invites`, `/merchant/banks`): dashboard-only, cookie session. Full
+  per-endpoint reference with samples:
+  [API.md › Merchant accounts](API.md#merchant-accounts-dashboard).
+- **Shipping** (`/merchant/nodes`, `/shipments`, …, 🛠): the same endpoints integrators call
+  with API keys. Their contract is [MERCHANT_API.md](MERCHANT_API.md).
 
 ### 9.1 Hosting and auth
 
 - **Host it same-site with the API**, e.g. `merchant.locoomo.com`. Session cookies are
-  `SameSite=Strict`, so a different registrable domain won't work.
+  `SameSite=Strict`, so a different registrable domain won't work. Tell backend the origin
+  so it's added to `CORS_ORIGIN` and set as `MERCHANT_DASHBOARD_URL` (links in merchant
+  emails point there).
 - Sign-in, 2FA, step-up, sessions and verify-email are exactly the flows in §4–§7. Merchant
-  users are ordinary Locoomo accounts. Anyone can create a merchant, or join one by
-  invite.
-- **Every merchant request sends `Locoomo-Mode: test` or `Locoomo-Mode: live`**, driven by
-  a Test/Live toggle in the header. Default to `test` until the merchant is approved. A
-  missing header means `test`.
-- Merchant routes need a verified email (`403 EMAIL_NOT_VERIFIED` → §7).
+  users are ordinary Locoomo accounts: anyone can create a merchant, or join one by
+  invite. **One merchant per user.**
+- Every merchant route needs a **verified email** (`403 EMAIL_NOT_VERIFIED` → §7).
+- Locoomo admin accounts are refused (`403 ADMINS_CANNOT_JOIN_MERCHANTS`). Show "Use a
+  non-admin account for the merchant dashboard."
+- 🛠 From the API-keys release: every shipping request sends `Locoomo-Mode: test` or
+  `live` from a Test/Live toggle. Not read yet; adding it now is harmless.
+- `503 MERCHANT_PLATFORM_DISABLED` means Locoomo switched merchant services off. Show a
+  full-page "We'll be right back" and retry every minute.
 
 ### 9.2 Screens, in build order
 
 | # | Screen | Purpose | Ships |
 |---|---|---|---|
-| 1 | Sign up / sign in / verify email / 2FA | §4–§7 | ✅ now |
-| 2 | **Create business** | Business or individual seller, store name | next |
-| 3 | **Onboarding checklist** | Profile, CAC (business only), owner/director ID, bank account, terms, then Submit. Shows `changes_requested` reasons per item | next |
-| 4 | Home | Test/Live toggle, status banner (draft / in review / changes requested / approved / suspended), KPIs, go-live checklist | next |
-| 5 | Team | Invite by email with a role, change roles (step-up), remove, transfer ownership | next |
-| 6 | Developers › API keys | Create, roll and revoke test/live keys; the secret is shown **once**; live keys need step-up and 2FA | after |
-| 7 | Developers › Webhooks | Endpoints, events, signing secret (shown once), delivery log, replay, send test | after |
-| 8 | Developers › API logs | Recent requests by key: status, latency, correlation id | after |
-| 9 | Shipments | List and filter, detail and timeline, create form, CSV import with row errors, cancel, return to sender, label PDF | after |
-| 10 | Manifests | Group shipments for a hub drop, QR/PDF for the driver | after |
-| 11 | Returns to collect | Parcels back at the hub, collection code per batch | after |
-| 12 | Wallet | Balance, held funds, card top-up, bank-transfer account details, statement, invoices | after |
-| 13 | Claims | Lost or damaged claims and their status | after |
-| 14 | Test simulator | Move a test shipment through each status and watch webhooks fire | after |
-| 15 | Audit log | Who did what in the team | after |
+| 1 | Sign up / sign in / verify email / 2FA | §4–§7 | ✅ |
+| 2 | **Create business** | Business or individual seller, trading name | ✅ |
+| 3 | **Onboarding checklist** | Profile, CAC (business only), owner/director ID, bank account, terms, then Submit. Shows reviewer reasons per section | ✅ |
+| 4 | **Home** | Status banner (draft / in review / changes requested / approved / suspended), checklist progress | ✅ (KPIs, go-live checklist 🛠) |
+| 5 | **Team** + **Accept invite** page | Invite by email with a role, change roles, remove, leave, transfer ownership | ✅ |
+| 6 | **Settings › Close account** | Owner only | ✅ |
+| 7 | Developers › API keys | Create, roll and revoke test/live keys; the secret is shown **once** | 🛠 next |
+| 8 | Developers › Webhooks | Endpoints, events, signing secret (shown once), delivery log, replay, send test | 🛠 next |
+| 9 | Developers › API logs | Recent requests by key | 🛠 |
+| 10 | Shipments | List, detail and timeline, create form, CSV import, cancel, return, label PDF | 🛠 |
+| 11 | Manifests | Group shipments for a hub drop, QR/PDF for the driver | 🛠 |
+| 12 | Returns to collect | Parcels back at the hub, collection code per batch | 🛠 |
+| 13 | Wallet | Balance, held funds, top-up, bank-transfer account, statement, invoices | 🛠 |
+| 14 | Claims | Lost or damaged claims | 🛠 |
+| 15 | Test simulator | Move a test shipment through each status | 🛠 |
+| 16 | Audit log | Who did what in the team | 🛠 |
 
-Screens 2–5 ship next. Each screen's request and response samples land in
-[MERCHANT_API.md](MERCHANT_API.md) when its backend ships. Start with layouts and
-navigation now.
+### 9.3 First load: where does this user go?
 
-### 9.3 Team roles: hide what a member can't do
+```ts
+async function bootMerchantApp(): Promise<'create' | 'home'> {
+  try {
+    const account = await api.get<MerchantAccountOverview>('/merchant/account');
+    store.setAccount(account);
+    return 'home';
+  } catch (e) {
+    const err = e as AppError;
+    if (err.code === 'NOT_A_MERCHANT_MEMBER') return 'create';  // or a pending invite
+    if (err.code === 'EMAIL_NOT_VERIFIED') { showVerifyEmailBanner(); throw err; }
+    throw err;
+  }
+}
+```
 
-| Can… | owner | admin | developer | operations | finance | viewer |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| See shipments, returns, reports | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Create/cancel shipments, manifests, CSV, claims | ✓ | ✓ | ✓ | ✓ | | |
-| Return-batch collection codes | ✓ | ✓ | | ✓ | | |
-| API keys, webhooks, API logs | ✓ | ✓ | ✓ | | | |
-| Wallet top-up, statements, invoices | ✓ | ✓ | | | ✓ | |
-| Bank, KYC, profile, settings | ✓ | ✓ | | | | |
-| Team management | ✓ | ✓ | | | | |
-| Transfer ownership, close account | ✓ | | | | | |
+Keep the overview in one store and **replace it with the response** of every profile,
+terms and submit call: they all return the full overview, so the checklist, banner and
+`readyToSubmit` stay right without refetching.
 
-The server enforces this. The table is for hiding buttons.
+### 9.4 Types
 
-### 9.4 Admin app additions 🛠
+```ts
+type MerchantType = 'business' | 'individual';
+type MerchantStatus =
+  | 'draft' | 'submitted' | 'in_review' | 'changes_requested'
+  | 'approved' | 'rejected' | 'suspended' | 'closed';
+type MerchantRole = 'owner' | 'admin' | 'developer' | 'operations' | 'finance' | 'viewer';
+type MerchantPermission =
+  | 'shipments.read' | 'shipments.write' | 'returns.collect' | 'developers.manage'
+  | 'wallet.manage' | 'account.manage' | 'team.manage' | 'ownership';
+type SectionKey = 'profile' | 'business_registration' | 'directors' | 'bank_account' | 'terms';
+type MonthlyVolume = 'up_to_100' | 'up_to_1k' | 'up_to_10k' | 'up_to_100k' | 'over_100k';
+type IdType = 'nin' | 'passport' | 'drivers_licence' | 'voters_card';
+type DocumentKind = 'cac_certificate' | 'cac_status_report' | 'proof_of_address';
 
-- **Merchants queue**: submitted merchants oldest first, with SLA age (`kyc` permission).
-- **Merchant review**: profile, documents (open in a viewer; links expire in 5 minutes and
-  each view is logged), bank name match score, directors, and an accept/reject toggle per
-  item with a reason. Actions: Approve (tier, limits, hubs), Request changes, Reject.
-- **Merchant 360** (read-only support view): status, team, keys (metadata only, never
-  secrets), webhook health, wallet, shipments, audit log. There's no "log in as merchant";
-  this view replaces it.
-- **All orders**: a new cross-app order list (consumer and merchant) with filters.
-- **Reroutes**: parcels whose destination Node is full or closed. Pick one of the 3 nearest
-  suggested Nodes (`ops`).
+interface MerchantLimits {
+  liveShipmentsPerDay: number | null;      // null = unlimited
+  maxWalletBalanceKobo: number | null;
+  negativeBalanceFloorKobo: number | null;
+}
+
+interface Merchant {
+  id: string;
+  type: MerchantType;
+  status: MerchantStatus;
+  tradingName: string;
+  legalName: string | null;
+  category: string | null;
+  storeUrl: string | null;
+  expectedMonthlyVolume: MonthlyVolume | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  address: { line1: string | null; line2: string | null; city: string | null; state: string | null };
+  cacNumber: string | null;
+  tier: 'individual' | 'business' | 'enterprise' | null;
+  limits: MerchantLimits | null;           // set once approved
+  receiverCodeRelay: boolean;
+  creationPaused: boolean;
+  terms: { acceptedVersion: string | null; acceptedAt: string | null; currentVersion: string };
+  submittedAt: string | null;
+  decidedAt: string | null;
+  decisionNote: string | null;             // reviewer's note (changes requested / rejected)
+  approvedAt: string | null;
+  suspendedAt: string | null;
+  suspensionReason: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ChecklistItem {
+  key: SectionKey;
+  complete: boolean;
+  missing: string[];                       // e.g. ['legalName', 'address.city']
+  review: { decision: 'accepted' | 'rejected'; reason: string | null } | null;
+}
+
+interface MerchantAccountOverview {
+  merchant: Merchant;
+  me: { memberId: string; role: MerchantRole; permissions: MerchantPermission[] };
+  onboarding: { items: ChecklistItem[]; readyToSubmit: boolean; editable: boolean };
+  documents: { id: string; kind: DocumentKind; uploadedAt: string }[];
+  directors: { id: string; fullName: string; idType: IdType; idNumberLast4: string; createdAt: string }[];
+  bankAccount: {
+    bankCode: string; bankName: string; accountNumberLast4: string;
+    accountName: string; verifiedAt: string;
+  } | null;
+}
+
+interface TeamView {
+  members: { id: string; userId: string; firstName: string; lastName: string; email: string; role: MerchantRole; joinedAt: string }[];
+  invites: { id: string; email: string; role: Exclude<MerchantRole, 'owner'>; expiresAt: string; createdAt: string }[];
+}
+```
+
+### 9.5 Create business
+
+`POST /merchant/account` `{ type, tradingName }`. Two big choices, then a name:
+
+- **"A registered business"** (`business`): "You'll need your CAC certificate and RC/BN number."
+- **"An individual seller"** (`individual`): "Selling on your own? You'll need a government ID."
+
+Then go straight to the onboarding checklist.
+
+### 9.6 Onboarding checklist
+
+One card per entry in `onboarding.items`, in that order (individuals have no CAC card).
+Card state:
+
+| Condition | Badge | Card text |
+|---|---|---|
+| `review?.decision === 'rejected'` | 🔴 Needs changes | Show `review.reason` prominently |
+| `!complete` | ⚪ To do | "Still needed: …" from `missing` (map field names to labels) |
+| `review?.decision === 'accepted'` | 🟢 Approved | — |
+| otherwise | ✅ Done | — |
+
+When `onboarding.editable` is false, render the cards read-only.
+
+**Status banner** (top of every screen):
+
+| `merchant.status` | Banner |
+|---|---|
+| `draft` | "Finish setting up to go live. You can use test mode meanwhile." |
+| `submitted`, `in_review` | "We're reviewing your details, usually within one working day. Your details can't be changed until we're done." |
+| `changes_requested` | "We need a few changes before we can approve you." + `merchant.decisionNote` |
+| `approved` | (none, or a one-time "You're approved 🎉") |
+| `rejected` | "We couldn't approve this account." + `decisionNote` + "Close account" |
+| `suspended` | "Your account is suspended: " + `suspensionReason` + "Contact your account manager." |
+
+**Profile**: `PATCH /merchant/account/profile` with only the fields in the form section.
+After approval, legal name, trading name and CAC number are read-only
+(`409 MERCHANT_DETAILS_LOCKED`): show "Contact your account manager to change this."
+
+**Files** (CAC certificate, ID images): two steps, the file never passes through our API.
+
+```ts
+async function uploadKycFile(file: File): Promise<string> {
+  const sig = await api.post<{
+    signature: string; timestamp: number; apiKey: string; cloudName: string; folder: string;
+  }>('/merchant/account/uploads');
+
+  const form = new FormData();
+  form.append('file', file);
+  form.append('api_key', sig.apiKey);
+  form.append('timestamp', String(sig.timestamp));
+  form.append('signature', sig.signature);
+  form.append('folder', sig.folder);
+  form.append('type', 'authenticated');          // private: never a public URL
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${sig.cloudName}/image/upload`, {
+    method: 'POST', body: form,                  // no credentials: this is Cloudinary
+  });
+  if (!res.ok) throw new Error('Upload failed');
+  return (await res.json()).public_id as string;
+}
+
+// CAC certificate
+await api.put('/merchant/account/documents/cac_certificate', { publicId: await uploadKycFile(file) });
+// Owner / director
+await api.post('/merchant/account/directors', {
+  fullName, idType, idNumber, idDocumentPublicId: await uploadKycFile(idImage),
+});
+```
+
+One signature per file (it's tied to a timestamp). Accept JPG, PNG and PDF up to 10 MB. On
+`422 UPLOAD_NOT_FOUND`, upload again.
+
+**Directors card**: business, 1–10 directors; individual, exactly one (the seller).
+Show `idType` and `•••• {idNumberLast4}`, never ask for the number again. Copy for the
+individual card: "Your ID: must match the name you sell under."
+
+**Bank account**: bank picker from `GET /merchant/banks`, then 10-digit account number.
+`PUT /merchant/account/bank-account` needs step-up: your §5 interceptor handles it. The
+response's `accountName` comes **from the bank**; show "Paid to: {accountName}" so the
+user can spot a wrong account. On `400 BANK_ACCOUNT_VERIFICATION_FAILED`: "We couldn't
+find that account. Check the number and bank."
+
+**Terms**: link to the merchant terms + Data Processing Agreement for
+`merchant.terms.currentVersion`, a checkbox, then
+`POST /merchant/account/terms { version: currentVersion }`. On `409 TERMS_VERSION_OUTDATED`,
+reload: the text changed.
+
+**Submit**: enabled when `onboarding.readyToSubmit`. On `422 ONBOARDING_INCOMPLETE`,
+highlight `error.details.sections[].key`.
+
+### 9.7 Team
+
+- `GET /merchant/team`: members and open invites. Hide invite/role/remove controls
+  without `team.manage`, and transfer/close without `ownership`.
+- **Invite**: email + role (admin, developer, operations, finance, viewer). Inviting the
+  same email again re-sends with the new role.
+- **Change role** (step-up) and **Remove**: not offered on the owner row.
+- **Leave team**: everyone except the owner, `DELETE /merchant/team/members/me`.
+- **Transfer ownership** (owner, step-up): pick a member; you become an admin. Confirm with
+  "You'll no longer be able to close the account or transfer ownership."
+
+**Accept-invite page** (`/accept-invite?token=…`, the link in the invite email):
+
+1. `POST /merchant/invites/preview { token }` (no session needed) →
+   "{merchantName} invited **{email}** to join as {role}".
+   On `404 INVALID_MERCHANT_INVITE`: "This invitation has expired or was already used.
+   Ask for a new one."
+2. Not signed in → sign in, or sign up **with that email**, then verify it, then come back
+   to this URL (keep the token through the redirect).
+3. `POST /merchant/invites/accept { token }` → go to the dashboard home.
+
+   | Error | Copy |
+   |---|---|
+   | `INVITE_EMAIL_MISMATCH` | "This invitation is for {email}. Sign out and sign in with that address." |
+   | `ALREADY_A_MERCHANT_MEMBER` | "You're already on another business's team. Leave it first to join this one." |
+
+### 9.8 Team roles: hide what a member can't do
+
+Use `me.permissions` (from `GET /merchant/account`), not the role name, to show or hide
+controls:
+
+| Can… | permission | owner | admin | developer | operations | finance | viewer |
+|---|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| See shipments, returns, reports | `shipments.read` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Create/cancel shipments, manifests, CSV, claims | `shipments.write` | ✓ | ✓ | ✓ | ✓ | | |
+| Return-batch collection codes | `returns.collect` | ✓ | ✓ | | ✓ | | |
+| API keys, webhooks, API logs | `developers.manage` | ✓ | ✓ | ✓ | | | |
+| Wallet top-up, statements, invoices | `wallet.manage` | ✓ | ✓ | | | ✓ | |
+| Bank, KYC, profile, terms, submit | `account.manage` | ✓ | ✓ | | | | |
+| Team management | `team.manage` | ✓ | ✓ | | | | |
+| Transfer ownership, close account | `ownership` | ✓ | | | | | |
+
+The server enforces this (`403 MERCHANT_PERMISSION_DENIED`). Role changes apply to the
+member's next request: refetch `/merchant/account` when a `403` like this surprises you.
+
+### 9.9 Admin app: merchants
+
+Reference: [API.md › Admin: merchants](API.md#admin-merchants).
+
+- ✅ **Merchants queue** (`kyc`, `ops` or `support`): `GET /admin/merchants?status=submitted`
+  (oldest first). Show `waitingHours` and turn it amber past 8 hours, red past 24.
+  Tabs per status, plus a search box (`q`).
+- ✅ **Merchant review** (`kyc`): `GET /admin/merchants/:id`. One panel per
+  `checklist.items` with an Accept / Reject toggle and a reason field, saved with
+  `POST …/review`.
+  - **Documents and IDs**: a "View" button calls `POST …/documents/:id/link` or
+    `POST …/directors/:id/identity` and opens the 5-minute link in a viewer. Each click
+    is logged with the admin's name, so never prefetch. Clear the full ID number from
+    memory when the dialog closes.
+  - **Bank**: show `bankAccount.accountName` next to the legal name with the `nameMatch`
+    level (`strong` green, `partial` amber, `weak` red).
+  - Buttons: **Approve** (tier + optional limits), **Request changes** (needs at least
+    one rejected section), **Reject** (reason required, final).
+- ✅ **Account controls** (`ops`): Suspend (reason) / Reinstate, and settings:
+  receiver code relay, pause new shipments, tier and limits.
+- 🛠 **Merchant 360** (read-only support view): keys metadata, webhook health, wallet,
+  shipments, audit log. There's no "log in as merchant"; this view replaces it.
+- 🛠 **All orders**, **Reroutes**: arrive with the logistics and shipments phases.
 
 ---
 
@@ -597,6 +834,19 @@ New in this release (✅). The full list is in [API.md › Error codes](API.md#e
 | 400 | `INVALID_IDEMPOTENCY_KEY` | idempotent POSTs | Bug: send a UUID |
 | 409 | `IDEMPOTENCY_IN_PROGRESS` | idempotent POSTs | Retry after ~1 s with the same key |
 | 422 | `IDEMPOTENCY_KEY_REUSED` | idempotent POSTs | Bug: new key per action |
+| 503 | `MERCHANT_PLATFORM_DISABLED` | merchant routes | Full-page "We'll be right back"; retry every minute |
+| 403 | `NOT_A_MERCHANT_MEMBER` | merchant routes | Route to Create business (§9.3) |
+| 403 | `MERCHANT_PERMISSION_DENIED` | merchant routes | Hide the control; refetch `/merchant/account` (role may have changed) |
+| 403 | `ADMINS_CANNOT_JOIN_MERCHANTS` | merchant routes | "Use a non-admin account for the merchant dashboard" |
+| 409 | `ALREADY_A_MERCHANT_MEMBER` | create, accept invite | See §9.7 |
+| 409 | `MERCHANT_NOT_EDITABLE` / `MERCHANT_DETAILS_LOCKED` | onboarding | Render read-only; "Contact your account manager" |
+| 422 | `ONBOARDING_INCOMPLETE` | submit, admin approve | Highlight `details.sections[].key` |
+| 422 | `UPLOAD_NOT_FOUND` | documents, directors | "Upload the file again" |
+| 409 | `TERMS_VERSION_OUTDATED` | terms | Reload the terms text |
+| 404 / 403 | `INVALID_MERCHANT_INVITE` / `INVITE_EMAIL_MISMATCH` | accept invite | See §9.7 |
+| 409 | `OWNER_ROLE_PROTECTED` | team | Not reachable if the owner row has no controls |
+| 409 / 422 | `REVIEW_HAS_REJECTED_ITEMS` / `NO_REJECTED_ITEMS` | admin review | Explain on the button |
+| 409 | `INVALID_MERCHANT_TRANSITION` | admin review, submit, close | Someone else acted first: refresh |
 
 ---
 

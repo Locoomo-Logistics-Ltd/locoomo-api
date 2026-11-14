@@ -9,7 +9,7 @@ public tracking, courier admin)? Start with [LOGISTICS_API.md](LOGISTICS_API.md)
 flow-by-flow guide with full request and response samples and TypeScript types.
 
 Sign-in with 2FA, "confirm it's you", sessions, the admin permissions/approvals screens,
-or the upcoming merchant dashboard? Start with
+or the merchant dashboard (accounts, onboarding, team, admin review)? Start with
 [FRONTEND_PLATFORM_GUIDE.md](FRONTEND_PLATFORM_GUIDE.md) — what every app must change,
 with code. The merchant dashboard calls the same `/merchant/*` endpoints external
 integrators use; their contract is [MERCHANT_API.md](MERCHANT_API.md).
@@ -115,7 +115,9 @@ Error:
 }
 ```
 
-`details` is only present on validation errors (400). `field` is the full path to the
+`details` is present on validation errors (400, the per-field array above) and on a few
+business errors that say what to fix (e.g. `ONBOARDING_INCOMPLETE` →
+`{ sections: [...] }`); the error-code table names them. For validation, `field` is the full path to the
 value, so nested objects and arrays point at the exact input: `"receiver.phone"`,
 `"items[3].receiver.phone"`. Branch UI logic on `error.code`,
 not `error.message` — the message is human-readable copy and can be reworded without
@@ -148,6 +150,25 @@ backend greps logs for.
 | 409 | `IDEMPOTENCY_IN_PROGRESS` | The first request with this `Idempotency-Key` is still running — retry in a moment |
 | 422 | `IDEMPOTENCY_KEY_REUSED` | This `Idempotency-Key` was already used for a different request — generate a new key per distinct request |
 | 409 | `LAST_SUPER_ADMIN` | `PATCH /admin/admins/:id/permissions` would leave no active admin with `super` |
+| 503 | `MERCHANT_PLATFORM_DISABLED` | Merchant services are switched off by Locoomo. Show a maintenance message |
+| 403 | `NOT_A_MERCHANT_MEMBER` | Signed-in user has no merchant. Send them to "Create business" (or the invite they were sent) |
+| 403 | `MERCHANT_PERMISSION_DENIED` | The member's team role lacks `details.permission` |
+| 403 | `ADMINS_CANNOT_JOIN_MERCHANTS` | A Locoomo admin account called a merchant route |
+| 409 | `ALREADY_A_MERCHANT_MEMBER` | Create/accept while already on a merchant (one per user) |
+| 409 | `MERCHANT_NOT_EDITABLE` | The account's status (`details.status`) doesn't allow this change |
+| 409 | `MERCHANT_DETAILS_LOCKED` | Identity details (`details.fields`) can't change after approval |
+| 409 | `INVALID_MERCHANT_TRANSITION` | Status change not allowed from the current status (`details.from`, `details.to`) — refresh |
+| 422 | `ONBOARDING_INCOMPLETE` | Submit/approve with sections missing: `details.sections[{ key, missing }]` |
+| 422 | `UPLOAD_NOT_FOUND` | KYC file not uploaded, or not in this merchant's folder. Upload again |
+| 422 | `NOT_APPLICABLE_TO_INDIVIDUALS` | CAC fields/documents sent for an individual seller |
+| 409 | `DIRECTOR_LIMIT_REACHED` | Individual: one owner ID; business: 10 directors |
+| 409 | `TERMS_VERSION_OUTDATED` | Terms changed; reload and show `details.currentVersion` |
+| 404 | `INVALID_MERCHANT_INVITE` | Invite unknown, expired, revoked or already used |
+| 403 | `INVITE_EMAIL_MISMATCH` | Signed in with a different email than the invite's |
+| 409 | `ALREADY_A_TEAM_MEMBER` | Invited someone already on the team |
+| 409 | `OWNER_ROLE_PROTECTED` | Changing/removing the owner, or an invalid transfer. Transfer ownership first |
+| 409 | `REVIEW_HAS_REJECTED_ITEMS` | Admin approve with rejected sections (`details.keys`) |
+| 422 | `NO_REJECTED_ITEMS` | Admin request-changes without any rejected section |
 | 403 | `SELF_APPROVAL_NOT_ALLOWED` | An admin tried to approve a request they raised themselves — a different admin must approve |
 | 409 | `APPROVAL_NOT_PENDING` | The approval request was already executed, rejected, cancelled, or has expired (7 days) |
 | 400 | `INVALID_VERIFICATION_DOCUMENT` | `POST /riders/onboarding` referenced a `cloudinaryPublicId` that doesn't correspond to an actual completed upload — re-request an upload signature and try again |
@@ -3005,6 +3026,457 @@ now `rejected`. Errors: `403 FORBIDDEN`, `404 NOT_FOUND`, `409 APPROVAL_NOT_PEND
 Only the admin who raised the request. No body. Response `200`: the request, now
 `cancelled`. Errors: `403 FORBIDDEN` (not yours), `404 NOT_FOUND`,
 `409 APPROVAL_NOT_PENDING`.
+
+## Merchant accounts (dashboard)
+
+The merchant dashboard's account, onboarding and team endpoints. **Cookie sessions only**:
+API keys never reach these, and they're not in the integrator OpenAPI document. Screen
+flows, UI copy and TypeScript types are in
+[FRONTEND_PLATFORM_GUIDE.md › Merchant dashboard](FRONTEND_PLATFORM_GUIDE.md#9-merchant-dashboard).
+
+Rules for every route below:
+
+- **Verified email required** (`403 EMAIL_NOT_VERIFIED`).
+- **Locoomo admins are refused** (`403 ADMINS_CANNOT_JOIN_MERCHANTS`). Staff use the admin
+  app; they never sit on a merchant team.
+- A user belongs to **at most one merchant**. Routes that need a membership answer
+  `403 NOT_A_MERCHANT_MEMBER` without one, and `403 MERCHANT_PERMISSION_DENIED`
+  (`details.permission`) when the member's role lacks the permission named per route.
+- While the platform kill switch is off, every route answers `503 MERCHANT_PLATFORM_DISABLED`.
+
+**Statuses.** `draft → submitted → in_review → approved | changes_requested | rejected`,
+plus `suspended` (reversible, set by Locoomo) and `closed`.
+
+| Status | Onboarding details | Contact details + bank account | Notes |
+|---|---|---|---|
+| `draft`, `changes_requested` | editable | editable | Submit when `onboarding.readyToSubmit` |
+| `submitted`, `in_review` | frozen | frozen | `409 MERCHANT_NOT_EDITABLE` |
+| `approved` | locked (`409 MERCHANT_DETAILS_LOCKED`) | editable | Trading name, legal name, CAC, directors and documents need the account manager |
+| `rejected`, `suspended`, `closed` | — | — | `409 MERCHANT_NOT_EDITABLE` |
+
+**Team permissions** (`me.permissions` in `GET /merchant/account`):
+
+| Permission | owner | admin | developer | operations | finance | viewer |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| `shipments.read` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `shipments.write` | ✓ | ✓ | ✓ | ✓ | | |
+| `returns.collect` | ✓ | ✓ | | ✓ | | |
+| `developers.manage` | ✓ | ✓ | ✓ | | | |
+| `wallet.manage` | ✓ | ✓ | | | ✓ | |
+| `account.manage` | ✓ | ✓ | | | | |
+| `team.manage` | ✓ | ✓ | | | | |
+| `ownership` | ✓ | | | | | |
+
+### `POST /api/v1/merchant/account`
+
+Creates a merchant with the caller as **owner**, status `draft`. No membership needed.
+
+```json
+{ "type": "business", "tradingName": "Ada Stores" }
+```
+
+| Field | Rules |
+|---|---|
+| `type` | `business` (CAC-registered) or `individual` (sole seller, no CAC) |
+| `tradingName` | 2–120 chars, trimmed. The name buyers see |
+
+Response `201`: the account overview (below). Errors: `409 ALREADY_A_MERCHANT_MEMBER`.
+
+### `GET /api/v1/merchant/account`
+
+Any member. Everything the home and onboarding screens need in one call.
+
+Response `200`, `data`:
+
+```json
+{
+  "merchant": {
+    "id": "uuid",
+    "type": "business",
+    "status": "changes_requested",
+    "tradingName": "Ada Stores",
+    "legalName": "Ada Stores Limited",
+    "category": "fashion",
+    "storeUrl": "https://adastores.ng",
+    "expectedMonthlyVolume": "up_to_10k",
+    "contactEmail": "ops@adastores.ng",
+    "contactPhone": "+2348031234567",
+    "address": { "line1": "1 Allen Avenue", "line2": null, "city": "Ikeja", "state": "Lagos" },
+    "cacNumber": "RC1234567",
+    "tier": null,
+    "limits": null,
+    "receiverCodeRelay": false,
+    "creationPaused": false,
+    "terms": { "acceptedVersion": "2026-11-14", "acceptedAt": "2026-11-14T09:12:00.000Z", "currentVersion": "2026-11-14" },
+    "submittedAt": "2026-11-14T09:15:00.000Z",
+    "decidedAt": "2026-11-14T11:02:00.000Z",
+    "decisionNote": "Almost there",
+    "approvedAt": null,
+    "suspendedAt": null,
+    "suspensionReason": null,
+    "closedAt": null,
+    "createdAt": "2026-11-14T09:00:00.000Z",
+    "updatedAt": "2026-11-14T11:02:00.000Z"
+  },
+  "me": {
+    "memberId": "uuid",
+    "role": "owner",
+    "permissions": ["shipments.read", "shipments.write", "returns.collect", "developers.manage", "wallet.manage", "account.manage", "team.manage", "ownership"]
+  },
+  "onboarding": {
+    "editable": true,
+    "readyToSubmit": false,
+    "items": [
+      { "key": "profile", "complete": true, "missing": [], "review": { "decision": "accepted", "reason": null } },
+      { "key": "business_registration", "complete": true, "missing": [], "review": null },
+      { "key": "directors", "complete": true, "missing": [], "review": null },
+      { "key": "bank_account", "complete": true, "missing": [], "review": { "decision": "rejected", "reason": "Use an account in the business name" } },
+      { "key": "terms", "complete": true, "missing": [], "review": null }
+    ]
+  },
+  "documents": [{ "id": "uuid", "kind": "cac_certificate", "uploadedAt": "2026-11-14T09:05:00.000Z" }],
+  "directors": [{ "id": "uuid", "fullName": "Ada Okafor", "idType": "nin", "idNumberLast4": "8901", "createdAt": "2026-11-14T09:06:00.000Z" }],
+  "bankAccount": { "bankCode": "058", "bankName": "GTBank", "accountNumberLast4": "6789", "accountName": "ADA STORES LIMITED", "verifiedAt": "2026-11-14T09:08:00.000Z" }
+}
+```
+
+- `onboarding.items` lists only the sections this merchant type needs (`business_registration`
+  is business-only). `missing` names what's left (`legalName`, `address.city`,
+  `documents.cac_certificate`, `directors`, `bankAccount`, `terms`, …).
+- `review` is the reviewer's latest verdict on the section. **Editing a section clears it**
+  (`null` = "changed, waiting for review"). `readyToSubmit` is false while any section is
+  incomplete or still rejected.
+- `limits` (once approved) is `{ liveShipmentsPerDay, maxWalletBalanceKobo, negativeBalanceFloorKobo }`;
+  `null` values mean unlimited.
+
+### `PATCH /api/v1/merchant/account/profile`
+
+`account.manage`. Every field optional; send what the form section changed.
+
+```json
+{
+  "legalName": "Ada Stores Limited",
+  "category": "fashion",
+  "storeUrl": "https://adastores.ng",
+  "expectedMonthlyVolume": "up_to_10k",
+  "contactEmail": "ops@adastores.ng",
+  "contactPhone": "+2348031234567",
+  "address": { "line1": "1 Allen Avenue", "line2": "Suite 4", "city": "Ikeja", "state": "Lagos" },
+  "cacNumber": "RC1234567"
+}
+```
+
+| Field | Rules |
+|---|---|
+| `tradingName` | 2–120 chars. Locked once approved |
+| `legalName` | 2–200 chars: CAC name for businesses, the seller's full name for individuals. Locked once approved |
+| `category` | 2–60 chars, free text (e.g. `fashion`, `electronics`) |
+| `storeUrl` | `http(s)://` URL |
+| `expectedMonthlyVolume` | `up_to_100`, `up_to_1k`, `up_to_10k`, `up_to_100k`, `over_100k` |
+| `contactEmail` | Email (lowercased) |
+| `contactPhone` | `+2348031234567` or `08031234567` (spaces/dashes stripped) |
+| `address` | Whole object: `line1` (required), `line2`, `city`, `state` |
+| `cacNumber` | Businesses only. `RC…`, `BN…` or `IT…` + digits; spaces removed, uppercased. Locked once approved |
+
+Response `200`: the overview. Errors: `409 MERCHANT_NOT_EDITABLE`,
+`409 MERCHANT_DETAILS_LOCKED` (`details.fields`), `422 NOT_APPLICABLE_TO_INDIVIDUALS`.
+
+### KYC files: `POST /api/v1/merchant/account/uploads`
+
+`account.manage`, onboarding-editable statuses only. Returns a Cloudinary signature for
+**one** private upload (document or ID image):
+
+```json
+{ "signature": "…", "timestamp": 1731575000, "apiKey": "…", "cloudName": "locoomo", "folder": "merchants/<merchantId>/kyc" }
+```
+
+Upload straight to `https://api.cloudinary.com/v1_1/{cloudName}/image/upload` as
+multipart with `file`, `api_key`, `timestamp`, `signature`, `folder` and
+`type=authenticated` (all exactly as returned). PDFs and images both work. Then send the
+`public_id` Cloudinary returns to one of the two endpoints below. A `public_id` from
+outside the merchant's folder, or one that was never uploaded, is refused with
+`422 UPLOAD_NOT_FOUND`.
+
+### `PUT /api/v1/merchant/account/documents/:kind`
+
+`account.manage`. Attaches (or replaces) a document. `kind`: `cac_certificate` (business,
+required), `cac_status_report` (business, optional), `proof_of_address` (optional).
+
+```json
+{ "publicId": "merchants/<merchantId>/kyc/abc123" }
+```
+
+Response `200`: `{ "id", "kind", "uploadedAt" }`. Errors: `409 MERCHANT_NOT_EDITABLE`,
+`409 MERCHANT_DETAILS_LOCKED`, `422 UPLOAD_NOT_FOUND`, `422 NOT_APPLICABLE_TO_INDIVIDUALS`.
+
+### `POST /api/v1/merchant/account/directors` · `DELETE …/directors/:id`
+
+`account.manage`. Owner (individual: exactly one) or directors (business: 1–10).
+
+```json
+{ "fullName": "Ada Okafor", "idType": "nin", "idNumber": "12345678901", "idDocumentPublicId": "merchants/<merchantId>/kyc/nin" }
+```
+
+| Field | Rules |
+|---|---|
+| `fullName` | 3–150 chars, as on the ID |
+| `idType` | `nin`, `passport`, `drivers_licence`, `voters_card` |
+| `idNumber` | 5–20 letters/digits (spaces removed). Stored encrypted; only the last 4 are ever returned |
+| `idDocumentPublicId` | Uploaded image of the ID (see above) |
+
+Response `201`: `{ "id", "fullName", "idType", "idNumberLast4", "createdAt" }`.
+`DELETE` → `204`. Errors: `409 DIRECTOR_LIMIT_REACHED`, `409 MERCHANT_NOT_EDITABLE`,
+`409 MERCHANT_DETAILS_LOCKED`, `422 UPLOAD_NOT_FOUND`.
+
+### `GET /api/v1/merchant/banks`
+
+Any member. `[{ "code": "058", "name": "GTBank" }, …]` for the bank picker.
+
+### `PUT /api/v1/merchant/account/bank-account`
+
+`account.manage` + **step-up** (`403 REAUTH_REQUIRED` → "Confirm it's you", then retry).
+Allowed while onboarding and once approved.
+
+```json
+{ "bankCode": "058", "bankName": "GTBank", "accountNumber": "0123456789" }
+```
+
+The account is resolved with the bank, and the **holder name comes from the bank**, never
+from the form. Show it back for confirmation. Response `200`:
+`{ "bankCode", "bankName", "accountNumberLast4", "accountName", "verifiedAt" }`.
+Changing it after approval emails the owner and admins.
+
+Errors: `400 BANK_ACCOUNT_VERIFICATION_FAILED` (the bank couldn't find that account),
+`409 MERCHANT_NOT_EDITABLE`, `502 PAYMENT_PROVIDER_ERROR` when Paystack is down (retry later).
+
+### `POST /api/v1/merchant/account/terms`
+
+`account.manage`. Accepts the merchant terms + Data Processing Agreement.
+
+```json
+{ "version": "2026-11-14" }
+```
+
+Send `merchant.terms.currentVersion`. Response `200`: the overview. Errors:
+`409 TERMS_VERSION_OUTDATED` (`details.currentVersion`): the terms changed while the
+page was open, so reload and show the new text.
+
+### `POST /api/v1/merchant/account/submit`
+
+`account.manage`. `draft`/`changes_requested` → `submitted`. The team and Locoomo's KYC
+reviewers are emailed. Response `200`: the overview.
+
+Errors: `422 ONBOARDING_INCOMPLETE` with
+`details.sections: [{ key, missing: [...] }]` (a rejected-but-unchanged section shows
+`missing: ["changes requested by reviewer"]`), `409 INVALID_MERCHANT_TRANSITION`.
+
+### `POST /api/v1/merchant/account/close`
+
+`ownership` + **step-up**. Closes the account, removes the whole team and revokes open
+invites; everyone keeps their personal Locoomo sign-in and can start or join another
+merchant. Allowed from `draft`, `changes_requested`, `approved` and `rejected`
+(not while under review or suspended → `409 INVALID_MERCHANT_TRANSITION`).
+Response `204`. From M4 it will also require no parcels in flight and a non-negative wallet.
+
+### Team: `GET /api/v1/merchant/team`
+
+Any member.
+
+```json
+{
+  "members": [
+    { "id": "memberId", "userId": "uuid", "firstName": "Ada", "lastName": "Okafor", "email": "ada@adastores.ng", "role": "owner", "joinedAt": "…" }
+  ],
+  "invites": [
+    { "id": "uuid", "email": "dev@adastores.ng", "role": "developer", "expiresAt": "…", "createdAt": "…" }
+  ]
+}
+```
+
+`invites` lists only open (unaccepted, unrevoked, unexpired) invitations.
+
+### `POST /api/v1/merchant/team/invites` · `DELETE …/invites/:id`
+
+`team.manage`. 20/min.
+
+```json
+{ "email": "dev@adastores.ng", "role": "developer" }
+```
+
+`role`: `admin`, `developer`, `operations`, `finance` or `viewer` (never `owner`).
+Inviting the same address again replaces the open invite. The email links to
+`{MERCHANT_DASHBOARD_URL}/accept-invite?token=…` and expires after **7 days**.
+Response `201`: the invite. Errors: `409 ALREADY_A_TEAM_MEMBER`. `DELETE` → `204`.
+
+### `POST /api/v1/merchant/invites/preview` (public)
+
+No session needed (10/min). For the accept-invite page before sign-in.
+
+```json
+{ "token": "…" }
+```
+
+Response `200`: `{ "merchantName", "role", "email", "expiresAt" }`.
+Errors: `404 INVALID_MERCHANT_INVITE` (unknown, expired, revoked or used).
+
+### `POST /api/v1/merchant/invites/accept`
+
+Signed in, verified email, **the invited address**, not already on a merchant. 10/min.
+Same body. Response `200`: `{ "merchantId", "role" }`.
+Errors: `403 INVITE_EMAIL_MISMATCH`, `404 INVALID_MERCHANT_INVITE`,
+`409 ALREADY_A_MERCHANT_MEMBER`.
+
+### `PATCH /api/v1/merchant/team/members/:id` · `DELETE …/members/:id` · `DELETE …/members/me`
+
+- `PATCH` (`team.manage` + **step-up**): `{ "role": "operations" }` → `200` member.
+- `DELETE …/:id` (`team.manage`): remove someone → `204`.
+- `DELETE …/me` (any member except the owner): leave the team → `204`.
+- Changes apply to the member's very next request. The owner can't be changed or
+  removed (`409 OWNER_ROLE_PROTECTED`): transfer ownership first.
+
+### `POST /api/v1/merchant/team/transfer-ownership`
+
+`ownership` + **step-up**. `{ "memberId": "uuid" }` (an existing member). The new owner
+gets `owner`; the old owner becomes `admin`. Response `204`. Owner and admins are emailed.
+
+## Admin: merchants
+
+The admin app's merchant review queue and account controls. Not affected by the merchant
+kill switch. Every action is in the audit log.
+
+| Endpoint | Permission (any of) |
+|---|---|
+| `GET /admin/merchants`, `GET /admin/merchants/:id` | `kyc`, `ops`, `support` |
+| KYC file links, review, approve, request changes, reject | `kyc` |
+| Suspend, reinstate, settings | `ops` |
+
+(`super` always qualifies.)
+
+### `GET /api/v1/admin/merchants?status=submitted&q=ada&page=1&limit=20`
+
+`status` filters; `q` matches trading/legal name, contact email or CAC number. With
+`status=submitted` or `in_review` the list is **oldest submission first** (the review
+queue); otherwise newest first.
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "tradingName": "Ada Stores",
+      "legalName": "Ada Stores Limited",
+      "type": "business",
+      "status": "submitted",
+      "tier": null,
+      "contactEmail": "ops@adastores.ng",
+      "submittedAt": "2026-11-14T09:15:00.000Z",
+      "waitingHours": 3,
+      "createdAt": "2026-11-14T09:00:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 1
+}
+```
+
+`waitingHours` is set while waiting for a decision. Target: a decision within one working day.
+
+### `GET /api/v1/admin/merchants/:id`
+
+```json
+{
+  "merchant": { "…": "same shape as GET /merchant/account → merchant" },
+  "checklist": { "items": [ "…same as onboarding.items…" ], "readyToSubmit": true },
+  "reviews": [
+    { "key": "bank_account", "decision": "rejected", "reason": "Use an account in the business name", "decidedByUserId": "uuid", "decidedAt": "…" }
+  ],
+  "team": { "members": [ "…" ], "invites": [ "…" ] },
+  "directors": [{ "id": "uuid", "fullName": "Ada Okafor", "idType": "nin", "idNumberLast4": "8901", "createdAt": "…" }],
+  "documents": [{ "id": "uuid", "kind": "cac_certificate", "uploadedAt": "…" }],
+  "bankAccount": {
+    "bankCode": "058", "bankName": "GTBank", "accountNumberLast4": "6789",
+    "accountName": "ADA STORES LIMITED", "verifiedAt": "…",
+    "nameMatch": { "score": 1, "level": "strong" }
+  }
+}
+```
+
+`nameMatch` compares the bank's holder name with the legal name, trading name and
+directors: `strong` (≥ 0.8), `partial` (≥ 0.5) or `weak`. It's a hint: show `weak` in
+amber and let the reviewer decide.
+
+### `POST /api/v1/admin/merchants/:id/documents/:documentId/link` · `POST …/directors/:directorId/identity`
+
+`kyc`. Each call is a logged disclosure, so it's a `POST`. Call it when the reviewer clicks
+"View", never on page load.
+
+- Document → `{ "url", "expiresAt" }`. The link works for **5 minutes**.
+- Director → `{ "fullName", "idType", "idNumber", "idDocument": { "url", "expiresAt" } }`
+  with the **full ID number**. Don't keep it in state after the dialog closes.
+
+### `POST /api/v1/admin/merchants/:id/review`
+
+`kyc`. Records per-section decisions; moves `submitted → in_review`.
+
+```json
+{
+  "items": [
+    { "key": "profile", "decision": "accepted" },
+    { "key": "bank_account", "decision": "rejected", "reason": "Use an account in the business name" }
+  ]
+}
+```
+
+`key`: `profile`, `business_registration` (business only), `directors`, `bank_account`,
+`terms`. `reason` (3–500 chars) is **required when rejecting** and shown to the merchant.
+Response `200`: the detail.
+
+### `POST /api/v1/admin/merchants/:id/approve`
+
+`kyc`. From `submitted`/`in_review`. Sections without a decision are accepted.
+
+```json
+{ "tier": "business", "limits": { "liveShipmentsPerDay": 150000 } }
+```
+
+| Field | Rules |
+|---|---|
+| `tier` | Optional: `individual`, `business`, `enterprise`. Defaults to the merchant's type |
+| `limits` | Optional overrides of the tier defaults: `liveShipmentsPerDay`, `maxWalletBalanceKobo` (≥ 0), `negativeBalanceFloorKobo` (≤ 0). `null` = unlimited |
+
+Tier defaults: individual 2,000/day, ₦50m wallet, −₦50k floor; business 100,000/day, ₦2bn,
+−₦1m; enterprise unlimited. Hubs and pricing are set in later phases.
+Errors: `409 REVIEW_HAS_REJECTED_ITEMS` (`details.keys`), `422 ONBOARDING_INCOMPLETE`,
+`409 INVALID_MERCHANT_TRANSITION`.
+
+### `POST /api/v1/admin/merchants/:id/request-changes` · `POST …/reject`
+
+`kyc`, from `submitted`/`in_review`.
+
+- **Request changes**: `{ "items"?: [...same as review...], "note"?: "…" }`. Needs at
+  least one rejected section (`422 NO_REJECTED_ITEMS`). The merchant is emailed the
+  rejected sections with their reasons.
+- **Reject** (final): `{ "reason": "…" }` (3–1000 chars). The merchant can only close the
+  account afterwards.
+
+### `POST /api/v1/admin/merchants/:id/suspend` · `POST …/reinstate`
+
+`ops`. Suspend `{ "reason": "…" }` from any status except `closed`; reinstate returns to
+the status before suspension. While suspended the team can sign in and read but not edit;
+from M2 it also blocks new live shipments, live keys and webhook changes (parcels in
+flight continue). Both email the team.
+
+### `PATCH /api/v1/admin/merchants/:id/settings`
+
+`ops`. Any subset:
+
+```json
+{ "receiverCodeRelay": true, "creationPaused": false, "tier": "enterprise", "limits": {} }
+```
+
+`limits` **replaces** all overrides (`{}` = back to tier defaults). `creationPaused` stops
+new live shipments for this merchant only. Response `200`: the detail.
 
 ## Idempotency-Key (safe retries)
 

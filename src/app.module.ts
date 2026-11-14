@@ -17,6 +17,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { RidersModule } from './modules/riders/riders.module';
 import { LogisticsModule } from './modules/logistics/logistics.module';
+import { MerchantsModule } from './modules/merchants/merchants.module';
 import { TrackingModule } from './modules/tracking/tracking.module';
 
 @Module({
@@ -39,6 +40,7 @@ import { TrackingModule } from './modules/tracking/tracking.module';
     AdminModule,
     TrackingModule,
     LogisticsModule,
+    MerchantsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

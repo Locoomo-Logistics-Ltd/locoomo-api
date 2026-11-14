@@ -68,8 +68,8 @@ a prepaid wallet.
 ## 2. Quick start (sandbox, 10 minutes)
 
 1. **Create an account** at the merchant dashboard (`merchant.locoomo.com`), verify your
-   email and create your business. Test keys are available immediately. You don't need
-   approval to build.
+   email and create your business. Test keys are available immediately (from the API-keys
+   release, see the [changelog](#18-changelog)). You don't need approval to build.
 2. **Copy your test secret key** from *Developers › API keys*: `sk_test_…`.
 3. **Find a Node** (your checkout would show this list to the buyer):
 
@@ -885,7 +885,7 @@ status.
 The dashboard's *Home* shows these as a checklist (`GET /go-live-checklist`):
 
 - [ ] Account **approved** (business details, CAC for businesses, owner/director ID, bank
-      account, terms accepted)
+      account, terms accepted; see below)
 - [ ] **Two-factor authentication** on for the owner and admins
 - [ ] **Live secret key** created and stored in your secrets manager, not in code
 - [ ] **Live webhook endpoint** added, signature verification on, test event answered 2xx
@@ -897,6 +897,19 @@ The dashboard's *Home* shows these as a checklist (`GET /go-live-checklist`):
 - [ ] Hub assigned (bulk shippers) and labels printing correctly
 - [ ] `trackingUrl` included in your order emails
 
+**What approval needs** (submitted from the dashboard's onboarding checklist; reviews
+usually take one working day):
+
+| | Registered business | Individual seller |
+|---|---|---|
+| Business profile | Legal and trading name, category, contact email and phone, address, expected monthly volume | Your full name, the rest as for a business |
+| CAC | RC or BN number + certificate | — |
+| Identity | A director's government ID (NIN, international passport, driver's licence or voter's card) with a photo of it; up to 10 directors | Your own government ID |
+| Settlement bank account | A Nigerian account, ideally in the business's name. We confirm the holder name with the bank | An account in your name |
+| Terms | Merchant terms and Data Processing Agreement | Same |
+
+If something needs fixing, we tell you which section and why; fix it and submit again.
+
 Support: contact your Locoomo account manager. Include the `correlationId` from the
 error or response.
 
@@ -906,4 +919,5 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-14 | **Accounts and onboarding are live** in the merchant dashboard: create a business, invite your team with roles, complete KYC and submit for review. API keys, the sandbox, Nodes/quotes, test shipments and webhooks are next |
 | 2026-11-12 | v1 contract published (Preview). Rollout order: accounts and onboarding → API keys, sandbox, Nodes/quotes, test shipments and webhooks → live shipments and wallet → hubs, manifests and bulk → reporting and claims |

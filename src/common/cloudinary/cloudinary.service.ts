@@ -78,6 +78,23 @@ export class CloudinaryService {
     });
   }
 
+  // Time-limited download link for an `authenticated` asset (merchant KYC
+  // documents: admins get 5-minute links, plan §4.1). Unlike
+  // getSignedViewUrl, the link stops working at `expiresAt`, so one pasted
+  // into a chat or left in browser history goes dead.
+  getExpiringDownloadUrl(
+    publicId: string,
+    ttlSeconds: number,
+  ): { url: string; expiresAt: Date } {
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+    const url = cloudinary.utils.private_download_url(publicId, '', {
+      type: 'authenticated',
+      resource_type: 'image',
+      expires_at: Math.floor(expiresAt.getTime() / 1000),
+    });
+    return { url, expiresAt };
+  }
+
   // The SDK wraps the actual API error one level deeper than you'd expect —
   // `error.error.http_code`, not `error.http_code` — confirmed against a
   // real 404 response, not just the SDK's TypeScript types.
