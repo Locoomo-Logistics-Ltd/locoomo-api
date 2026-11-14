@@ -1,3 +1,12 @@
+import { CollectionCompletionService } from './application/collection-completion.service';
+import { CollectWithIdService } from './application/collect-with-id.service';
+import { CounterUploadsService } from './application/counter-uploads.service';
+import { OrderExceptionService } from './application/order-exception.service';
+import { RefuseDropOffService } from './application/refuse-drop-off.service';
+import { SenderContactService } from './application/sender-contact.service';
+import { SenderNotificationService } from './application/sender-notification.service';
+import { AdminOrdersController } from './interface/admin-orders.controller';
+import { CloudinaryModule } from '../../common/cloudinary/cloudinary.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { LogisticsModule } from '../logistics/logistics.module';
@@ -57,8 +66,10 @@ import { HandoffsController } from './interface/handoffs.controller';
     EarningsModule,
     TrackingModule,
     LogisticsModule,
+    // Counter photos (refusals, ID-check collections).
+    CloudinaryModule,
   ],
-  controllers: [HandoffsController],
+  controllers: [HandoffsController, AdminOrdersController],
   providers: [
     BrowseAvailableOrdersService,
     AcceptOrderService,
@@ -81,6 +92,15 @@ import { HandoffsController } from './interface/handoffs.controller';
     CourierHandoverQueryService,
     CollectionWindowService,
     DestinationCapacitySubscriber,
+    CollectionCompletionService,
+    CollectWithIdService,
+    CounterUploadsService,
+    OrderExceptionService,
+    RefuseDropOffService,
+    SenderContactService,
+    SenderNotificationService,
   ],
+  // Merchants (M4) register their sender-contact resolver here.
+  exports: [SenderContactService],
 })
 export class HandoffsModule {}

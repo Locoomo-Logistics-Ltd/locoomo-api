@@ -27,6 +27,8 @@ const REMINDER_AFTER_WORKING_DAYS = [4, 5] as const;
 
 interface ShelvedOrder {
   id: string;
+  source: string;
+  merchantId: string | null;
   trackingCode: string;
   consumerId: string | null;
   receiverEmail: string | null;
@@ -232,7 +234,7 @@ export class CollectionWindowService
     orderId: string,
   ): Promise<ShelvedOrder | null> {
     const [order] = await manager.query<ShelvedOrder[]>(
-      `SELECT o.id, o."trackingCode", o."consumerId", o."receiverEmail",
+      `SELECT o.id, o.source, o."merchantId", o."trackingCode", o."consumerId", o."receiverEmail",
               o."receiverPhone", o."parcelDescription", o."originNodeId",
               o."destinationNodeId", o."collectionDeadlineAt",
               o."collectionRemindersSent",

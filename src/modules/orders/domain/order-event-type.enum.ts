@@ -19,4 +19,9 @@ export enum OrderEventType {
   RETURNED_TO_ORIGIN = 'returned_to_origin',
   READY_FOR_SENDER_COLLECTION = 'ready_for_sender_collection',
   COLLECTED_BY_SENDER = 'collected_by_sender',
+  REFUSED_AT_DROP_OFF = 'refused_at_drop_off',
+  CANCELLED = 'cancelled',
+  EXCEPTION_RAISED = 'exception_raised',
+  // A wrong ID-check attempt at the counter (audit trail).
+  ID_CHECK_FAILED = 'id_check_failed',
 }

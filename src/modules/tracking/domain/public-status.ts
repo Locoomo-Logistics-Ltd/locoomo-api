@@ -12,7 +12,11 @@ export type PublicStatus =
   | 'collected'
   | 'returning_to_sender'
   | 'returned_to_sender'
-  | 'return_completed';
+  | 'return_completed'
+  // Turned away at drop-off (prohibited, damaged or unsafe).
+  | 'refused'
+  // Lost or damaged in our custody; the sender is contacted directly.
+  | 'problem';
 
 export const PUBLIC_STATUS_LABELS: Record<PublicStatus, string> = {
   awaiting_drop_off: 'Awaiting drop-off',
@@ -24,6 +28,8 @@ export const PUBLIC_STATUS_LABELS: Record<PublicStatus, string> = {
   returning_to_sender: 'Returning to sender',
   returned_to_sender: 'Returned — ready for sender collection',
   return_completed: 'Returned to sender',
+  refused: 'Not accepted at drop-off',
+  problem: "We're looking into a problem with this parcel",
 };
 
 const ORDER_STATUS_TO_PUBLIC: Record<string, PublicStatus> = {
@@ -41,6 +47,8 @@ const ORDER_STATUS_TO_PUBLIC: Record<string, PublicStatus> = {
   returned_to_origin: 'returned_to_sender',
   ready_for_sender_collection: 'returned_to_sender',
   return_completed: 'return_completed',
+  refused: 'refused',
+  exception: 'problem',
 };
 
 // While a parcel is coming back (or waiting there), the origin station is
@@ -60,6 +68,8 @@ export function toPublicStatus(orderStatus: string): PublicStatus | null {
 export const FINAL_PUBLIC_STATUSES: ReadonlySet<PublicStatus> = new Set([
   'collected',
   'return_completed',
+  'refused',
+  'problem',
 ]);
 
 export interface StationNames {
@@ -105,8 +115,12 @@ export function timelineEntryFor(
     case 'return_initiated':
       return {
         status: 'returning_to_sender',
-        label: "Delivery couldn't be completed",
+        label: 'Going back to the sender',
       };
+    case 'refused_at_drop_off':
+      return { status: 'refused', label: 'Not accepted at drop-off' };
+    case 'exception_raised':
+      return { status: 'problem', label: 'Problem reported' };
     case 'return_in_transit':
       return {
         status: 'returning_to_sender',
@@ -144,10 +158,14 @@ export function nextStepFor(status: PublicStatus, names: StationNames): string {
     case 'collected':
       return 'The parcel has been collected.';
     case 'returning_to_sender':
-      return `The delivery couldn't be completed, so the parcel is going back to ${names.origin}. We'll email the sender when it's ready to collect.`;
+      return `The parcel is going back to ${names.origin}. We'll email the sender when it's ready to collect.`;
     case 'returned_to_sender':
       return `The parcel is back at ${names.origin}. The sender has been emailed a collection code.`;
     case 'return_completed':
       return 'The sender has collected the parcel.';
+    case 'refused':
+      return `${names.origin} couldn't accept this parcel. The sender has been told why.`;
+    case 'problem':
+      return "Something went wrong with this parcel in our care. We've contacted the sender.";
   }
 }

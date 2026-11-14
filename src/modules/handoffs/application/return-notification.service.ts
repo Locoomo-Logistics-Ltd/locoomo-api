@@ -2,9 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { escapeHtml } from '../../../common/html/escape-html';
 import { OutboxService } from '../../notifications/application/outbox.service';
+import { SenderContactService } from './sender-contact.service';
 import { TrackingEmailService } from '../../tracking/application/tracking-email.service';
 
 interface OrderForReturnEmail {
+  id: string;
+  source?: string | null;
+  merchantId?: string | null;
   trackingCode: string;
   // Null for merchant parcels (sender contact comes with M4).
   consumerId: string | null;
@@ -28,6 +32,7 @@ export class ReturnNotificationService {
   constructor(
     private readonly outboxService: OutboxService,
     private readonly trackingEmailService: TrackingEmailService,
+    private readonly senders: SenderContactService,
   ) {}
 
   // `not_collected`: the receiver didn't come within the collection window.
@@ -127,14 +132,7 @@ export class ReturnNotificationService {
     order: OrderForReturnEmail,
     manager: EntityManager,
   ): Promise<{ email: string } | undefined> {
-    if (!order.consumerId) {
-      return undefined;
-    }
-    const [sender] = await manager.query<{ email: string }[]>(
-      `SELECT email FROM users WHERE id = $1`,
-      [order.consumerId],
-    );
-    return sender;
+    return (await this.senders.resolve(order, manager)) ?? undefined;
   }
 
   private async originOf(

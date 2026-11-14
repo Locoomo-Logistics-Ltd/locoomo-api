@@ -17,6 +17,13 @@ import { PublicHolidayService } from './public-holiday.service';
 // cap just stops a pathological run of bad luck from looping forever.
 const MAX_TRACKING_CODE_ATTEMPTS = 5;
 
+export interface ProofOfDelivery {
+  method: 'code' | 'id_check';
+  // Defaults to the receiver's name (code collection).
+  collectorName: string | null;
+  photoPublicId: string | null;
+}
+
 export interface CreateOrderFromPaidIntentFields {
   paymentIntentId: string;
   consumerId: string;
@@ -302,6 +309,11 @@ export class OrdersService {
     orderId: string,
     manager: EntityManager,
     eventPayload: Record<string, unknown> = {},
+    proof: ProofOfDelivery = {
+      method: 'code',
+      collectorName: null,
+      photoPublicId: null,
+    },
   ): Promise<OrderEntity> {
     const order = await this.transition(
       orderId,
@@ -309,9 +321,153 @@ export class OrdersService {
       OrderStatus.COMPLETED,
       manager,
       OrderEventType.COLLECTED_BY_RECEIVER,
+      { ...eventPayload, method: proof.method },
+    );
+    // Proof of delivery (plan §5.4): what merchants get in
+    // shipment.collected and what support looks at in a dispute.
+    const collectedAt = new Date();
+    const collectorName = proof.collectorName ?? order.receiverFullName;
+    await manager.query(
+      `UPDATE orders SET "collectedAt" = $2, "collectionMethod" = $3,
+              "collectorName" = $4, "collectionPhotoPublicId" = $5
+        WHERE id = $1`,
+      [orderId, collectedAt, proof.method, collectorName, proof.photoPublicId],
+    );
+    return this.clearShelf(
+      {
+        ...order,
+        collectedAt,
+        collectionMethod: proof.method,
+        collectorName,
+        collectionPhotoPublicId: proof.photoPublicId,
+      },
+      manager,
+    );
+  }
+
+  // A wrong attempt at ID-check collection (plan §5.4): counted (5 allowed)
+  // and kept in the audit trail.
+  async recordIdCheckFailure(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown>,
+  ): Promise<number> {
+    const [rows] = await manager.query<
+      [{ idCheckFailedAttempts: number }[], number]
+    >(
+      `UPDATE orders SET "idCheckFailedAttempts" = "idCheckFailedAttempts" + 1
+        WHERE id = $1 RETURNING "idCheckFailedAttempts"`,
+      [orderId],
+    );
+    await this.appendEvent(
+      manager,
+      orderId,
+      OrderEventType.ID_CHECK_FAILED,
       eventPayload,
     );
-    return this.clearShelf(order, manager);
+    return rows[0]?.idCheckFailedAttempts ?? 0;
+  }
+
+  // Turned away at the origin counter (plan §5.3): prohibited, damaged or
+  // unsafe. The parcel goes back with whoever brought it.
+  async markRefused(
+    orderId: string,
+    refusal: {
+      reason: string;
+      note: string | null;
+      photoPublicId: string | null;
+    },
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    const record = { ...refusal, at: new Date().toISOString() };
+    const order = await this.transition(
+      orderId,
+      OrderStatus.AWAITING_DROP_OFF,
+      OrderStatus.REFUSED,
+      manager,
+      OrderEventType.REFUSED_AT_DROP_OFF,
+      record,
+    );
+    await manager.query(`UPDATE orders SET refusal = $2 WHERE id = $1`, [
+      orderId,
+      JSON.stringify(record),
+    ]);
+    return { ...order, refusal: record };
+  }
+
+  // Ended before anyone dropped it off (merchant cancel, drop-off expiry).
+  async markCancelled(
+    orderId: string,
+    manager: EntityManager,
+    eventPayload: Record<string, unknown> = {},
+  ): Promise<OrderEntity> {
+    return this.transition(
+      orderId,
+      OrderStatus.AWAITING_DROP_OFF,
+      OrderStatus.CANCELLED,
+      manager,
+      OrderEventType.CANCELLED,
+      eventPayload,
+    );
+  }
+
+  // Lost or damaged in our custody (admin-set, plan §5.3), from whatever
+  // status it was in. Returns the previous status so the caller can
+  // release what that status was holding (capacity, rider slot).
+  async markException(
+    orderId: string,
+    details: { type: 'lost' | 'damaged'; note: string; byUserId: string },
+    manager: EntityManager,
+  ): Promise<{ order: OrderEntity; previousStatus: OrderStatus }> {
+    const [current] = await manager.query<{ status: OrderStatus }[]>(
+      `SELECT status FROM orders WHERE id = $1 FOR UPDATE`,
+      [orderId],
+    );
+    if (!current) {
+      throw new IllegalOrderTransitionException(
+        orderId,
+        OrderStatus.AWAITING_DROP_OFF,
+        OrderStatus.EXCEPTION,
+      );
+    }
+    const record = {
+      ...details,
+      at: new Date().toISOString(),
+      previousStatus: current.status,
+    };
+    let order: OrderEntity;
+    try {
+      order = await this.transition(
+        orderId,
+        current.status,
+        OrderStatus.EXCEPTION,
+        manager,
+        OrderEventType.EXCEPTION_RAISED,
+        record,
+      );
+    } catch (error) {
+      // Not in our custody (not dropped off yet, or already finished).
+      if (
+        error instanceof Error &&
+        !(error instanceof IllegalOrderTransitionException)
+      ) {
+        throw new IllegalOrderTransitionException(
+          orderId,
+          current.status,
+          OrderStatus.EXCEPTION,
+        );
+      }
+      throw error;
+    }
+    await manager.query(`UPDATE orders SET exception = $2 WHERE id = $1`, [
+      orderId,
+      JSON.stringify(record),
+    ]);
+    const cleared = await this.clearShelf(order, manager);
+    return {
+      order: { ...cleared, exception: record },
+      previousStatus: current.status,
+    };
   }
 
   // The courier couldn't complete the delivery and is bringing the parcel

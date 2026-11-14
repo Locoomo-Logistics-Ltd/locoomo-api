@@ -105,14 +105,18 @@ export class ResendCollectionCodeService {
     );
     const [order] = await this.dataSource.query<
       {
+        id: string;
+        source: string;
+        merchantId: string | null;
         trackingCode: string;
-        consumerId: string;
-        receiverEmail: string;
+        consumerId: string | null;
+        receiverEmail: string | null;
         parcelDescription: string;
         originNodeId: string;
       }[]
     >(
-      `SELECT "trackingCode", "consumerId", "receiverEmail", "parcelDescription", "originNodeId"
+      `SELECT id, source, "merchantId", "trackingCode", "consumerId", "receiverEmail",
+              "parcelDescription", "originNodeId"
          FROM orders WHERE id = $1`,
       [orderId],
     );

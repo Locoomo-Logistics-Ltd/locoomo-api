@@ -14,5 +14,9 @@ export enum OrderStatus {
   READY_FOR_SENDER_COLLECTION = 'ready_for_sender_collection',
   RETURN_COMPLETED = 'return_completed',
   CANCELLED = 'cancelled',
+  // Turned away at drop-off: prohibited, damaged or unsafe (plan §5.3).
+  REFUSED = 'refused',
+  // Lost or damaged in our custody (admin-set).
+  EXCEPTION = 'exception',
   DISPUTED = 'disputed',
 }

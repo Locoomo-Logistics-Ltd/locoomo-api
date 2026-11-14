@@ -14,7 +14,7 @@ import { OrderStatus } from '../../domain/order-status.enum';
 export class OrderResponseDto {
   id!: string;
   trackingCode!: string;
-  paymentIntentId!: string;
+  paymentIntentId!: string | null;
   originNodeId!: string;
   originNodeName!: string;
   originNodeAddress!: string;
@@ -22,7 +22,7 @@ export class OrderResponseDto {
   destinationNodeName!: string;
   destinationNodeAddress!: string;
   receiverFullName!: string;
-  receiverEmail!: string;
+  receiverEmail!: string | null;
   receiverPhone!: string;
   parcelDescription!: string;
   parcelSize!: ParcelSize;
@@ -34,6 +34,16 @@ export class OrderResponseDto {
   collectionDeadlineAt!: Date | null;
   // Set while/after it's returning: not_collected | delivery_failed.
   returnReason!: string | null;
+  // Proof of delivery, once collected.
+  collection!: {
+    collectedAt: Date;
+    method: 'code' | 'id_check' | null;
+    collectorName: string | null;
+  } | null;
+  // Turned away at drop-off: why.
+  refusal!: { reason: string; note: string | null } | null;
+  // Lost or damaged in our care.
+  exception!: { type: 'lost' | 'damaged'; at: string } | null;
   createdAt!: Date;
   // Public tracking page link for the sender to share with the receiver
   // (WhatsApp/SMS) — carries the signed token, so treat it like the order
@@ -70,6 +80,19 @@ export class OrderResponseDto {
     dto.status = order.status;
     dto.collectionDeadlineAt = order.collectionDeadlineAt;
     dto.returnReason = order.returnReason;
+    dto.collection = order.collectedAt
+      ? {
+          collectedAt: order.collectedAt,
+          method: order.collectionMethod,
+          collectorName: order.collectorName,
+        }
+      : null;
+    dto.refusal = order.refusal
+      ? { reason: order.refusal.reason, note: order.refusal.note }
+      : null;
+    dto.exception = order.exception
+      ? { type: order.exception.type, at: order.exception.at }
+      : null;
     dto.createdAt = order.createdAt;
     dto.trackingUrl = trackingUrl;
     dto.delivery = delivery;
