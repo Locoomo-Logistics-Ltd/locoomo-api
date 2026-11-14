@@ -694,7 +694,7 @@ None of these block the build. They're config values or terms text.
 | F5 | Liability cap ₦50,000; 30-day claim window; prohibited-items list | legal/ops |
 | F6 | Wallet as non-withdrawable prepaid service credit (refund only on closure). **Needs legal sign-off re CBN** | legal |
 | F7 | Data retention periods in §11.6; NDPC registration check; DPA text | legal/DPO |
-| F8 | Whether Paystack DVA needs the owner's BVN for these merchants | finance (Paystack account manager) |
+| F8 | ~~Whether Paystack DVA needs the owner's BVN for these merchants~~ **Resolved 2026-11-14: no BVN needed.** DVAs are created at approval from the KYC already collected | finance (Paystack account manager) |
 | F9 | SMS sender ID "Locoomo" with the merchant name in the message body; SMS cost absorbed | commercial |
 | F10 | Refunds when a consumer parcel is refused at drop-off or lost/damaged in our care (amount, who approves, Paystack refund vs credit) | finance/ops |
 
