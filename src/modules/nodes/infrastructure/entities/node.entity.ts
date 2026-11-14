@@ -59,6 +59,14 @@ export class NodeEntity {
   @Column({ type: 'int', default: 0 })
   currentCount!: number;
 
+  // Destination side (plan §5.2, E3): parcels dispatched towards this Node
+  // or sitting on its shelf for a receiver. Held from drop-off at the
+  // origin, released when the parcel is collected or leaves on a return
+  // (handoffs' DestinationCapacitySubscriber). Occupancy for "is this Node
+  // full" is currentCount + destinationHeldCount.
+  @Column({ type: 'int', default: 0 })
+  destinationHeldCount!: number;
+
   @Index()
   @Column({ type: 'enum', enum: NodeStatus, default: NodeStatus.PENDING })
   status!: NodeStatus;

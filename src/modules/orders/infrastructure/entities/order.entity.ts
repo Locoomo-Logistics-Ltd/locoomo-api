@@ -122,6 +122,12 @@ export class OrderEntity {
   @Column({ type: 'varchar', length: 40, nullable: true })
   returnReason!: string | null;
 
+  // Whether this parcel currently counts against its destination Node's
+  // capacity (nodes.destinationHeldCount). Managed only by handoffs'
+  // DestinationCapacitySubscriber.
+  @Column({ type: 'boolean', default: false })
+  destinationSlotHeld!: boolean;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 
