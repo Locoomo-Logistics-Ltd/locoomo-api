@@ -436,3 +436,56 @@ export class ReplayWindowExceededException extends BusinessException {
     this.details = { days };
   }
 }
+
+export class TopUpsUnavailableException extends BusinessException {
+  readonly errorCode = 'TOP_UPS_UNAVAILABLE';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super(
+      'Card top-ups are not available in test mode here. Reset your test wallet instead.',
+    );
+  }
+}
+
+export class WalletBalanceLimitException extends BusinessException {
+  readonly errorCode = 'WALLET_BALANCE_LIMIT_EXCEEDED';
+  readonly httpStatus = 422;
+
+  constructor(maxWalletBalanceKobo: number, balanceKobo: number) {
+    super('This top-up would take your wallet over its balance limit');
+    this.details = { maxWalletBalanceKobo, balanceKobo };
+  }
+}
+
+export class LiveModeOnlyException extends BusinessException {
+  readonly errorCode = 'LIVE_MODE_ONLY';
+  readonly httpStatus = 403;
+
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+export class ContactDetailsRequiredException extends BusinessException {
+  readonly errorCode = 'CONTACT_DETAILS_REQUIRED';
+  readonly httpStatus = 422;
+
+  constructor(missing: string[]) {
+    super(
+      'Add a contact email and phone to your business profile to get an account number',
+    );
+    this.details = { missing };
+  }
+}
+
+export class FundingAccountConflictException extends BusinessException {
+  readonly errorCode = 'FUNDING_ACCOUNT_CONFLICT';
+  readonly httpStatus = 409;
+
+  constructor() {
+    super(
+      'Your contact email is already linked to another business’s account number. Use a different contact email.',
+    );
+  }
+}

@@ -206,7 +206,11 @@ export class PaystackPaymentProvider implements PaymentProvider {
   parseWebhookEvent(rawBody: Buffer): PaymentWebhookEvent {
     const payload = JSON.parse(rawBody.toString('utf8')) as {
       event?: string;
-      data?: { reference?: string };
+      data?: {
+        reference?: string;
+        channel?: string;
+        customer?: { customer_code?: string };
+      };
     };
 
     const type =
@@ -216,6 +220,11 @@ export class PaystackPaymentProvider implements PaymentProvider {
           ? ('charge.failed' as const)
           : ('unknown' as const);
 
-    return { type, providerReference: payload.data?.reference ?? '' };
+    return {
+      type,
+      providerReference: payload.data?.reference ?? '',
+      channel: payload.data?.channel ?? null,
+      customerCode: payload.data?.customer?.customer_code ?? null,
+    };
   }
 }

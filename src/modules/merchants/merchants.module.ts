@@ -26,6 +26,9 @@ import { MerchantTeamService } from './application/merchant-team.service';
 import { AdminWalletService } from './application/admin-wallet.service';
 import { WalletReconciliationService } from './application/wallet-reconciliation.service';
 import { WalletService } from './application/wallet.service';
+import { WalletTopUpService } from './application/wallet-top-up.service';
+import { MerchantFundingAccountEntity } from './infrastructure/entities/merchant-funding-account.entity';
+import { WalletTopUpEntity } from './infrastructure/entities/wallet-top-up.entity';
 import { MerchantWalletEntity } from './infrastructure/entities/merchant-wallet.entity';
 import { WalletEntryEntity } from './infrastructure/entities/wallet-entry.entity';
 import { WalletHoldEntity } from './infrastructure/entities/wallet-hold.entity';
@@ -98,6 +101,8 @@ import { WebhooksController } from './interface/webhooks.controller';
       MerchantWalletEntity,
       WalletEntryEntity,
       WalletHoldEntity,
+      WalletTopUpEntity,
+      MerchantFundingAccountEntity,
     ]),
     // ApprovalService + registry: wallet adjustments need a second admin.
     AdminModule,
@@ -152,6 +157,7 @@ import { WebhooksController } from './interface/webhooks.controller';
     WalletService,
     AdminWalletService,
     WalletReconciliationService,
+    WalletTopUpService,
   ],
 })
 export class MerchantsModule {}

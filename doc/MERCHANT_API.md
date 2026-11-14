@@ -854,13 +854,14 @@ failure), so register the final URL.
 | `shipment.exception` | Lost or damaged |
 | `manifest.received` | Hub finished checking a manifest in |
 | `claim.decided` | Claim approved or rejected |
-| `wallet.funded` · `wallet.low_balance` | Wallet changes |
+| `wallet.funded` | A top-up was credited: `data.topUp` (§14.1) and `data.wallet` (the wallet after it) |
+| `wallet.low_balance` | Available balance fell below your threshold |
 | `merchant.status_changed` | Your account was submitted, approved, suspended, etc. Sent to test and live endpoints |
 | `webhook.test` | Only from *Send test event*, only to that endpoint |
 
 Sent today: every `shipment.*` event above except `collection_reminder` (live operations),
-plus `merchant.status_changed` and `webhook.test`. `manifest.received`, `claim.decided` and
-`wallet.*` arrive with their features. Expect new event types over time
+plus `wallet.funded`, `merchant.status_changed` and `webhook.test`. `manifest.received`,
+`claim.decided` and `wallet.low_balance` arrive with their features. Expect new event types over time
 ([§3](#3-versioning-and-stability)). Ignore the ones you
 don't handle and still respond 2xx.
 
@@ -899,11 +900,11 @@ don't handle and still respond 2xx.
 
 ## 14. Billing: wallet, pricing, invoices
 
-- **Prepaid wallet**, one per mode. Top up by card (dashboard) or by **bank transfer to
-  your dedicated account number** (shown in *Wallet*; transfers credit automatically within
-  minutes). Card top-ups are credited minus the card processor's fee; bank transfers are
-  credited in full. *(Top-ups are coming next; until then live wallets are funded by your
-  account manager.)*
+- **Prepaid wallet**, one per mode. Top up by card in the dashboard (*Wallet › Top up*),
+  or by **bank transfer to your dedicated account number** (live wallet; shown in
+  *Wallet* once approved, credited automatically, usually within minutes). Card top-ups
+  are credited minus the card processor's fee; bank transfers are credited in full. You
+  get a `wallet.funded` webhook and an emailed receipt for each.
 - **Hold, then charge.** Creating a shipment **holds** the quoted fee. When we receive the
   parcel, we **charge** the final fee: re-priced from where it was actually dropped and
   what we measured (`shipment.fee_adjusted` if different). Cancelled, expired or refused
@@ -965,7 +966,7 @@ be negative after a re-measure (see above).
 
 | `type` | Meaning | Sign |
 |---|---|---|
-| `top_up` | Card or bank-transfer top-up *(coming next)* | + |
+| `top_up` | Card or bank-transfer top-up | + |
 | `shipment_charge` | A shipment's fee, charged when we received it | − |
 | `shipment_adjustment` | Re-priced after we measured it | − (or + if it came out cheaper) |
 | `adjustment` | A correction by Locoomo (approved by two Locoomo staff) | ± |
@@ -978,6 +979,32 @@ New types may be added (§3).
 **`GET /wallet/holds?status=active|captured|released&limit=&cursor=`**: fees set aside
 for shipments, newest first: `{ id, shipmentId, status, amountKobo, capturedKobo,
 createdAt, resolvedAt }`. `capturedKobo` is what was finally charged.
+
+**`GET /wallet/top-ups?limit=&cursor=`** and **`GET /wallet/top-ups/{id}`**: card
+payments and bank transfers, newest first:
+
+```json
+{
+  "id": "…",
+  "mode": "live",
+  "method": "bank_transfer",
+  "status": "succeeded",
+  "amountKobo": 1000000,
+  "feeKobo": 0,
+  "creditedKobo": 1000000,
+  "reference": "T1234567890abcd",
+  "paidAt": "2026-11-15T09:30:00.000Z",
+  "createdAt": "2026-11-15T09:30:04.000Z"
+}
+```
+
+`method`: `card` or `bank_transfer`. `status`: `pending`, `succeeded`, `failed` or
+`abandoned` (a card payment not completed within a day). `creditedKobo` is what reached
+the wallet (`amountKobo − feeKobo`). Card top-ups themselves are started in the dashboard.
+
+**`GET /wallet/funding-account`**: your live wallet's bank-transfer details, or `null`
+before one is opened (and always in test mode):
+`{ "bankName", "accountNumber", "accountName", "createdAt" }`.
 
 **`POST /test/wallet/reset`** (test mode only, scope `shipments:write`): sets the test
 balance back to ₦1,000,000 and returns the wallet. Holds for shipments not yet dropped off
@@ -1081,6 +1108,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-14 | **Top-ups are live** (§14): card payments from the dashboard (test and live), and a dedicated bank-transfer account for the live wallet once approved. New: `GET /wallet/top-ups`, `/wallet/top-ups/{id}`, `/wallet/funding-account`, and the `wallet.funded` webhook. Card fees are deducted from what's credited; transfers are credited in full |
 | 2026-11-14 | **Wallets are live** (§14.1): `GET /wallet`, `/wallet/entries` (your statement) and `/wallet/holds`, per mode. **The test wallet is now a real ledger**: a simulated drop-off charges it, re-measures adjust it, and `POST /test/wallet/reset` tops it back up to ₦1,000,000. **Fixed:** cursor pagination could skip rows (newest-first lists) or repeat them (`updatedSince` sync) when several rows shared a timestamp; cursors issued before the fix still work. Next: top-ups, then live shipments |
 | 2026-11-14 | **Webhooks are live; the sandbox is complete.** Endpoints (API and dashboard), Standard Webhooks signing with 24-hour secret rolls, retries, auto-disable, replay, *Send test event* and the delivery log. Next: live shipments and the wallet |
 | 2026-11-14 | **Test shipments and the simulator are live**: create (single and bulk), read, list and sync, timeline, edit, cancel, return to sender, and `POST /test/shipments/{id}/simulate`. `origin` is required until hubs open. Webhooks are next; imports and labels come with live shipments |

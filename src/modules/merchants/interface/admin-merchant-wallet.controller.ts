@@ -29,6 +29,8 @@ import {
   AdminWalletModeQueryDto,
   RequestWalletAdjustmentDto,
 } from './dto/wallet.dto';
+import { AdminListTopUpsQueryDto } from './dto/wallet-top-up.dto';
+import type { TopUpView } from '../application/wallet-top-up.service';
 
 // Admin app: a merchant's wallet (plan §8.6). Reading is for finance, ops
 // and support; adjustments are raised by `finance` and run only after a
@@ -80,6 +82,19 @@ export class AdminMerchantWalletController {
       query.limit,
       query.cursor,
     );
+  }
+
+  @Get('top-ups')
+  @RequireAdminPermission(
+    AdminPermission.FINANCE,
+    AdminPermission.OPS,
+    AdminPermission.SUPPORT,
+  )
+  topUps(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: AdminListTopUpsQueryDto,
+  ): Promise<CursorPage<TopUpView>> {
+    return this.wallets.topUps(id, query.mode, query.limit, query.cursor);
   }
 
   // Raises an approval request; nothing moves until a second admin approves.

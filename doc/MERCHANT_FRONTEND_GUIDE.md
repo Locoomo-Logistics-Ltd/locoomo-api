@@ -61,9 +61,29 @@ something UI-related; tell backend.)
 
 ## 1. What you're building
 
-**Who are merchants?** Businesses and individual sellers (Temu, Konga and Jiji sellers, small
-online shops) who ship parcels through Locoomo. Each parcel goes to a **Node**, a pickup shop
-the buyer chose at checkout. The buyer collects it there with a one-time code.
+**Who are merchants?** Any business or person that sends parcels to their buyers through
+Locoomo. There are two broad kinds, and the dashboard serves both:
+
+- **Large platforms and retailers** (for example Temu or Konga) that integrate Locoomo into
+  their own checkout and systems through our API. They send parcels in bulk.
+- **Registered businesses and individual sellers** (a small online shop, a Jiji seller, an
+  Instagram vendor) who mostly create shipments by hand in the dashboard. Individuals can
+  join without a CAC registration.
+
+**How a merchant parcel moves:**
+
+1. **The buyer picks a Node at checkout.** A Node is a Locoomo pickup point (a partner
+   shop). The merchant's checkout shows Locoomo's Nodes and prices through our API.
+2. **The merchant creates a shipment.** Its fee is held from the merchant's **prepaid
+   wallet**. There is no cash on delivery: the buyer has already paid the merchant.
+3. **The merchant drops the parcel off.** Small sellers drop it at any Node. Large merchants
+   bulk-drop at an assigned **hub** (coming later). The fee is charged at drop-off, after the
+   parcel is measured.
+4. **Locoomo moves it to the buyer's Node** and tells the buyer it's ready.
+5. **The buyer collects it** with a one-time code, or with photo ID if they've lost the code.
+   They have 7 working days.
+6. **If the buyer doesn't collect it**, the parcel goes back to where the merchant dropped
+   it, and the merchant collects it from there.
 
 **How merchants use Locoomo.** Two ways, and they share the same backend:
 
@@ -103,7 +123,7 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 9 | Shipments: list, create, detail with timeline, edit, cancel, return | §12 | ✅ (CSV import and labels 🛠) |
 | 10 | Test simulator on the shipment detail page | §13 | ✅ |
 | 11 | Settings › Close account | §14 | ✅ |
-| 12 | Wallet: balance, statement, holds, test reset | §15 | ✅ (top-ups 🛠) |
+| 12 | Wallet: balance, statement, holds, card top-up, bank-transfer account, test reset | §15 | ✅ |
 | 13 | Manifests, returns, claims, audit log, go-live checklist | §16 | 🛠 |
 
 **Admin app screens**
@@ -1636,8 +1656,8 @@ Owner only (`ownership`). A "Danger zone" card at the bottom of Settings.
 
 ## 15. Wallet
 
-✅ Reading the wallet and the test reset are ready. Top-ups (card and bank transfer) are 🛠
-and arrive next: build the screen now and leave a disabled "Top up" button.
+✅ All of it is ready: balance, statement, holds, card top-ups, the bank-transfer account and
+the test reset.
 
 **How the money works**, for help text:
 
@@ -1732,6 +1752,77 @@ drop-off (`status: active`), with the amount and a link to the shipment. `captur
 balance back to ₦1,000,000; open holds stay. Show the button only in Test mode. Confirm:
 "Reset your test balance to ₦1,000,000?" Live mode answers `403 TEST_MODE_ONLY`.
 
+### 15.5 Top up by card
+
+Needs `wallet.manage`. Works in Test (Paystack test cards) and Live (approved merchants).
+
+1. **"Top up" dialog**: an amount in naira (₦1,000 to ₦10,000,000). Under it: "Card fees are
+   deducted from the amount added to your wallet."
+2. **`POST /merchant/wallet/top-ups`** `{ amountKobo }` (send an `Idempotency-Key`) →
+
+   ```json
+   {
+     "topUp": { "id": "uuid", "status": "pending", "amountKobo": 500000, "...": "…" },
+     "authorizationUrl": "https://checkout.paystack.com/…"
+   }
+   ```
+
+   Redirect the browser to `authorizationUrl` (Paystack's payment page; a full redirect,
+   not an iframe).
+3. Paystack sends the user back to **`/wallet?topUp={id}`** on the dashboard. That page polls
+   **`GET /merchant/wallet/top-ups/{id}`** every 2 seconds for up to a minute. Each call also
+   checks with Paystack, so it settles even if our webhook is slow.
+
+   | `status` | Show |
+   |---|---|
+   | `pending` | Spinner: "Confirming your payment…" After a minute: "Still confirming. We'll email you when it lands." |
+   | `succeeded` | "₦{creditedKobo} added to your wallet" (and the fee if `feeKobo > 0`). Refetch the wallet |
+   | `failed` | "The payment didn't go through. You haven't been charged." + "Try again" |
+   | `abandoned` | Same as failed |
+
+| Error | Show |
+|---|---|
+| `403 MERCHANT_NOT_APPROVED` | Live: "Top-ups unlock when your account is approved." |
+| `422 WALLET_BALANCE_LIMIT_EXCEEDED` | "That would take your wallet over its ₦{details.maxWalletBalanceKobo} limit. Contact your account manager to raise it." |
+| `422 TOP_UPS_UNAVAILABLE` | Test mode on some environments: "Test top-ups aren't available here. Use Reset test wallet." |
+| `502 PAYMENT_PROVIDER_ERROR` | "We couldn't reach our payment provider. Try again in a few minutes." |
+
+### 15.6 Top up by bank transfer (live wallet)
+
+Every approved merchant can have a **dedicated account number**; money sent to it lands in
+the live wallet automatically, usually within minutes, with no fee deducted.
+
+- **`GET /merchant/wallet/funding-account`** (any member, `Locoomo-Mode: live`) →
+  `{ bankName, accountNumber, accountName, createdAt }` or `null`.
+- When it's `null`, show a **"Get my account number"** button (`wallet.manage`) that calls
+  **`POST /merchant/wallet/funding-account`** → the same shape. Calling it twice returns the
+  same account.
+- When present, show it like a card with copy buttons:
+
+  ```
+  Fund your wallet by bank transfer
+  Bank            Wema Bank
+  Account number  9930000001   [Copy]
+  Account name    LOCOOMO/ADA STORES WALLET
+  Transfers usually arrive within minutes. No fees.
+  ```
+
+- In Test mode, hide this card (show "Bank transfers are for your live wallet").
+
+| Error | Show |
+|---|---|
+| `422 CONTACT_DETAILS_REQUIRED` | "Add a contact email and phone to your business profile first." + link to the profile card (`details.missing`) |
+| `409 FUNDING_ACCOUNT_CONFLICT` | "Your contact email is already used by another business on Locoomo. Change it in your profile and try again." |
+| `403 MERCHANT_NOT_APPROVED` | "Your account number is available once you're approved." |
+| `403 LIVE_MODE_ONLY` | Not reachable if you hide the card in Test mode |
+
+### 15.7 Top-up history
+
+**`GET /merchant/wallet/top-ups?limit=&cursor=`** (`wallet.manage`) →
+`CursorPage<TopUp>`. A "Top-ups" tab: date, method (`card` "Card", `bank_transfer` "Bank
+transfer"), amount paid, fee, credited, status badge, reference (copy button). Every
+successful top-up also emails a receipt to the owner, admins and finance members.
+
 ---
 
 ## 16. Coming next 🛠
@@ -1742,7 +1833,7 @@ phase; we'll update this section.
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
 | **Live shipments** | Same as §12 with `Locoomo-Mode: live` | Opens with the wallet. Enable the Live toggle then. Live shipments get a public `trackingUrl` |
-| **Wallet top-ups** | Card top-up, dedicated bank-transfer account number, receipts | `wallet.manage`. Enables the "Top up" button on §15. Low-balance threshold setting |
+| **Low-balance alert** | Threshold setting on the Wallet page | `wallet.manage`. Emails and `wallet.low_balance` when available balance drops below it |
 | **Invoices** | `GET /merchant/invoices/{yyyy-mm}` (PDF/CSV) | Monthly statement and tax invoice |
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
 | **Returns to collect** | `GET /merchant/returns?state=ready`, `POST /merchant/return-batches { nodeId, shipmentIds }` → collection code | `returns.collect`. Show the batch code big, like a boarding pass. 10 working days free storage |
@@ -1989,6 +2080,7 @@ A "Wallet" tab on the merchant page, with a Test / Live switch (`?mode=`, defaul
 | `GET /admin/merchants/:id/wallet?mode=live` | `Wallet` (same shape as the dashboard's, §15.1) |
 | `GET /admin/merchants/:id/wallet/entries?mode=&type=&from=&to=&limit=&cursor=` | `CursorPage<WalletEntry>` (§15.2) |
 | `GET /admin/merchants/:id/wallet/holds?mode=&status=&limit=&cursor=` | `CursorPage<WalletHold>` (§15.3) |
+| `GET /admin/merchants/:id/wallet/top-ups?mode=&limit=&cursor=` | `CursorPage<TopUp>` (§15.7) |
 
 **Adjust balance** (`finance` only; hide the button otherwise). A dialog:
 
@@ -2418,6 +2510,25 @@ export interface WalletHold {
   createdAt: string;
   resolvedAt: string | null;
 }
+export interface TopUp {
+  id: string;
+  mode: Mode;
+  method: 'card' | 'bank_transfer';
+  status: 'pending' | 'succeeded' | 'failed' | 'abandoned';
+  amountKobo: number;                      // what the payer paid
+  feeKobo: number;                         // card fee (0 for transfers)
+  creditedKobo: number | null;             // what reached the wallet
+  reference: string;
+  paidAt: string | null;
+  createdAt: string;
+}
+export interface StartedTopUp { topUp: TopUp; authorizationUrl: string }
+export interface FundingAccount {
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+  createdAt: string;
+}
 export interface WalletAdjustmentRequested {
   approvalId: string;
   status: 'pending';
@@ -2561,6 +2672,10 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | HTTP | Code | What the UI does |
 |---|---|---|
 | 402 | `INSUFFICIENT_WALLET_BALANCE` | §12.4 |
+| 422 | `WALLET_BALANCE_LIMIT_EXCEEDED` | Top-up: §15.5 |
+| 422 | `TOP_UPS_UNAVAILABLE` | Test top-up where unsupported: point to Reset (§15.4) |
+| 422 / 409 | `CONTACT_DETAILS_REQUIRED` / `FUNDING_ACCOUNT_CONFLICT` | Bank-transfer account: §15.6 |
+| 403 | `LIVE_MODE_ONLY` | Hide live-only controls in Test mode |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | "Live shipments aren't available yet. Switch to Test." |
 | 403 | `TEST_MODE_ONLY` | Hide the simulator on live shipments |
 | 409 | `DUPLICATE_REFERENCE` | Link to `details.existingShipmentId` |
@@ -2650,6 +2765,10 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | GET | `/merchant/wallet` | any member | Mode |
 | GET | `/merchant/wallet/entries`, `/merchant/wallet/holds` | `wallet.manage` | Mode |
 | POST | `/merchant/test/wallet/reset` | `shipments.write` | Test mode only |
+| POST | `/merchant/wallet/top-ups` | `wallet.manage` | Mode; dashboard only; `Idempotency-Key` |
+| GET | `/merchant/wallet/top-ups`, `/merchant/wallet/top-ups/:id` | `wallet.manage` | Mode |
+| GET | `/merchant/wallet/funding-account` | any member | Live (null in test) |
+| POST | `/merchant/wallet/funding-account` | `wallet.manage` | Live only; dashboard only |
 
 **Admin app**
 
@@ -2667,7 +2786,7 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | GET / POST | `/admin/public-holidays` | `ops` |
 | DELETE | `/admin/public-holidays/:date` | `ops` |
 | POST | `/admin/orders/:id/exception` | `ops` |
-| GET | `/admin/merchants/:id/wallet`, `…/wallet/entries`, `…/wallet/holds` | `finance`, `ops`, `support` |
+| GET | `/admin/merchants/:id/wallet`, `…/wallet/entries`, `…/wallet/holds`, `…/wallet/top-ups` | `finance`, `ops`, `support` |
 | POST | `/admin/merchants/:id/wallet/adjustments` | `finance` (runs after a second `finance` admin approves) |
 
 ---

@@ -3498,8 +3498,33 @@ Show `correlationId` with a copy button: support needs it.
 
 Same endpoints integrators call with `wallet:read` keys; contract and samples in
 [MERCHANT_API.md §14.1](MERCHANT_API.md#141-reading-your-wallet). Dashboard sessions pick
-the wallet with `Locoomo-Mode`. Any member can read the summary (`GET /wallet`);
-entries and holds need `wallet.manage`; the test reset needs `shipments.write`.
+the wallet with `Locoomo-Mode`. Any member can read the summary (`GET /wallet`) and the
+funding account; entries, holds and top-ups need `wallet.manage`; the test reset needs
+`shipments.write`.
+
+**Top-ups (dashboard only: API keys are refused).**
+
+- `POST /api/v1/merchant/wallet/top-ups` `{ "amountKobo": 500000 }` (₦1,000–₦10m,
+  `wallet.manage`, `Idempotency-Key` accepted) → `201 { topUp, authorizationUrl }`. Send
+  the user to `authorizationUrl` (Paystack). Paystack returns them to
+  `{MERCHANT_DASHBOARD_URL}/wallet?topUp={id}`; that page polls
+  `GET /api/v1/merchant/wallet/top-ups/{id}`, which checks a pending payment with Paystack.
+  Live mode needs an approved (or suspended) merchant. Errors: `403 MERCHANT_NOT_APPROVED`,
+  `422 WALLET_BALANCE_LIMIT_EXCEEDED` (`details.maxWalletBalanceKobo`, `details.balanceKobo`),
+  `422 TOP_UPS_UNAVAILABLE` (test mode where no Paystack test key is configured; use the
+  reset), `502 PAYMENT_PROVIDER_ERROR`.
+- `POST /api/v1/merchant/wallet/funding-account` (live, approved, `wallet.manage`) → `200`
+  `{ bankName, accountNumber, accountName, createdAt }`. Opens the merchant's Paystack
+  Dedicated Virtual Account; calling it again returns the same account. Errors:
+  `403 LIVE_MODE_ONLY`, `403 MERCHANT_NOT_APPROVED`, `422 CONTACT_DETAILS_REQUIRED`
+  (`details.missing`: `contactEmail`, `contactPhone` from the profile),
+  `409 FUNDING_ACCOUNT_CONFLICT` (that contact email already has an account under another
+  merchant), `502 PAYMENT_PROVIDER_ERROR`.
+
+Credits happen only after the charge is re-verified with Paystack, once per Paystack
+reference, from the webhook, the status check or the worker's 15-minute sweep (which also
+fails declined cards and marks card payments abandoned after a day; a late success still
+credits).
 
 ## Admin: orders
 
@@ -3662,6 +3687,7 @@ in [Approvals](#approvals-two-admin-rule).
 | `GET /api/v1/admin/merchants/:id/wallet?mode=live` | `{ mode, currency, balanceKobo, heldKobo, availableKobo, updatedAt }`. `mode` defaults to `live` |
 | `GET …/wallet/entries?mode=&type=&from=&to=&limit=&cursor=` | The merchant's statement, newest first (shape: [MERCHANT_API.md §14.1](MERCHANT_API.md#141-reading-your-wallet)) |
 | `GET …/wallet/holds?mode=&status=&limit=&cursor=` | Fees held for shipments |
+| `GET …/wallet/top-ups?mode=&limit=&cursor=` | Card payments and bank transfers (shape: [MERCHANT_API.md §14.1](MERCHANT_API.md#141-reading-your-wallet)) |
 | `POST …/wallet/adjustments` | Raise a credit or debit for approval (below) |
 
 ### `POST /api/v1/admin/merchants/:id/wallet/adjustments` (`finance`)

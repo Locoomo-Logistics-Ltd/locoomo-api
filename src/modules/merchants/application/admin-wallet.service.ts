@@ -23,6 +23,7 @@ import type {
   RequestWalletAdjustmentDto,
 } from '../interface/dto/wallet.dto';
 import type { AdminActor } from './admin-merchants.service';
+import { TopUpView, WalletTopUpService } from './wallet-top-up.service';
 import {
   WalletEntryView,
   WalletHoldView,
@@ -50,6 +51,7 @@ export class AdminWalletService implements OnModuleInit {
     private readonly approvals: ApprovalService,
     private readonly registry: ApprovalActionRegistry,
     private readonly audit: AuditService,
+    private readonly topUpService: WalletTopUpService,
   ) {}
 
   onModuleInit(): void {
@@ -84,6 +86,16 @@ export class AdminWalletService implements OnModuleInit {
   ): Promise<CursorPage<WalletHoldView>> {
     await this.merchantOf(this.dataSource.manager, merchantId);
     return this.wallet.holds(merchantId, mode, status, limit, cursor);
+  }
+
+  async topUps(
+    merchantId: string,
+    mode: ApiKeyMode,
+    limit: number,
+    cursor?: string,
+  ): Promise<CursorPage<TopUpView>> {
+    await this.merchantOf(this.dataSource.manager, merchantId);
+    return this.topUpService.list(merchantId, mode, limit, cursor);
   }
 
   async requestAdjustment(

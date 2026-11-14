@@ -49,6 +49,10 @@ export type PaymentWebhookEventType =
 export interface PaymentWebhookEvent {
   type: PaymentWebhookEventType;
   providerReference: string;
+  // Routing hints for non-checkout charges (merchant wallet top-ups). Never
+  // trusted for money: handlers re-verify with the provider.
+  channel?: string | null;
+  customerCode?: string | null;
 }
 
 export type PaymentRefundStatus = 'pending' | 'processed' | 'failed';

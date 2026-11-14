@@ -1,9 +1,26 @@
 import {
   availableKobo,
+  creditedAmount,
+  exceedsWalletCeiling,
   formatNaira,
   MAX_ADJUSTMENT_KOBO,
   parseAdjustmentPayload,
 } from './wallet';
+
+describe('top-ups', () => {
+  it('passes card fees on and absorbs transfer fees', () => {
+    expect(creditedAmount('card', 500_000, 7_500)).toBe(492_500);
+    expect(creditedAmount('bank_transfer', 500_000, 5_000)).toBe(500_000);
+    expect(creditedAmount('card', 100, 500)).toBe(0);
+  });
+
+  it('enforces the wallet ceiling only when there is one', () => {
+    expect(exceedsWalletCeiling(900, 100, 1_000)).toBe(false);
+    expect(exceedsWalletCeiling(901, 100, 1_000)).toBe(true);
+    expect(exceedsWalletCeiling(10 ** 12, 1, null)).toBe(false);
+    expect(exceedsWalletCeiling(10 ** 12, 1, undefined)).toBe(false);
+  });
+});
 
 describe('wallet domain', () => {
   it('available is balance minus held, and can go negative', () => {

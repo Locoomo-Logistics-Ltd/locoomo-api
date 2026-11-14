@@ -49,6 +49,14 @@ export const envSchema = z
     // key only; we use hosted-redirect checkout, so no client-side public key
     // is ever needed server-side.
     PAYSTACK_SECRET_KEY: z.string().min(1),
+    // Merchant *test-mode* wallet top-ups (payments/application/
+    // paystack-wallet.gateway.ts). Optional: when unset, test top-ups use
+    // PAYSTACK_SECRET_KEY if that is itself a test key (staging), and are
+    // unavailable otherwise (production; the test wallet has a reset).
+    PAYSTACK_TEST_SECRET_KEY: optionalString(),
+    // Bank for merchant Dedicated Virtual Accounts. Default: `test-bank`
+    // with a test key, `wema-bank` with a live key.
+    PAYSTACK_DVA_PREFERRED_BANK: optionalString(),
     // Google Sign-In (identity/application/google-auth.service.ts) — the
     // OAuth client ID registered for this app, used as the `audience` when
     // verifying a Google ID token. Public value, not a secret; no client

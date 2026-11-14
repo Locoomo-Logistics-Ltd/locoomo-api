@@ -1,18 +1,41 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { RequireVerifiedEmail } from '../../../common/auth/decorators/account-requirements.decorator';
+import { IdempotencyInterceptor } from '../../../common/idempotency/idempotency.interceptor';
 import type { CursorPage } from '../../../common/pagination/cursor';
+import { CursorQueryDto } from '../../../common/pagination/cursor-query.dto';
 import type { MerchantCaller } from '../application/merchant-state';
+import {
+  FundingAccountView as FundingAccount,
+  TopUpView as TopUp,
+  WalletTopUpService,
+} from '../application/wallet-top-up.service';
+import {
+  FundingAccountView,
+  StartCardTopUpDto,
+  StartedTopUpView,
+  TopUpListView,
+  TopUpView,
+} from './dto/wallet-top-up.dto';
 import {
   WalletEntryView as WalletEntry,
   WalletHoldView as WalletHold,
@@ -34,6 +57,7 @@ import {
   CurrentMerchantCaller,
   MerchantApi,
   MerchantGuard,
+  MerchantSessionApi,
 } from './merchant.guard';
 
 // MERCHANT_API.md §14. A key with `wallet:read`, or a dashboard session
@@ -45,7 +69,10 @@ import {
 @UseGuards(MerchantGuard)
 @RequireVerifiedEmail()
 export class WalletController {
-  constructor(private readonly wallet: WalletService) {}
+  constructor(
+    private readonly wallet: WalletService,
+    private readonly topUps: WalletTopUpService,
+  ) {}
 
   /** Balance, held and available. */
   @Get()
@@ -81,6 +108,66 @@ export class WalletController {
       query.limit,
       query.cursor,
     );
+  }
+
+  /** Card top-up: returns Paystack's payment page. Dashboard only. */
+  @Post('top-ups')
+  @MerchantSessionApi(MerchantPermission.WALLET_MANAGE)
+  @UseInterceptors(IdempotencyInterceptor)
+  @ApiCreatedResponse({ type: StartedTopUpView })
+  startTopUp(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+    @Body() dto: StartCardTopUpDto,
+  ): Promise<{ topUp: TopUp; authorizationUrl: string }> {
+    return this.topUps.startCardTopUp(caller, dto.amountKobo);
+  }
+
+  /** Card payments and bank transfers, newest first. */
+  @Get('top-ups')
+  @MerchantApi(ApiKeyScope.WALLET_READ, MerchantPermission.WALLET_MANAGE)
+  @ApiOkResponse({ type: TopUpListView })
+  listTopUps(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+    @Query() query: CursorQueryDto,
+  ): Promise<CursorPage<TopUp>> {
+    return this.topUps.list(
+      caller.merchantId,
+      caller.mode,
+      query.limit,
+      query.cursor,
+    );
+  }
+
+  /** One top-up. A pending card payment is checked with Paystack first. */
+  @Get('top-ups/:id')
+  @MerchantApi(ApiKeyScope.WALLET_READ, MerchantPermission.WALLET_MANAGE)
+  @ApiOkResponse({ type: TopUpView })
+  getTopUp(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<TopUp> {
+    return this.topUps.get(caller, id);
+  }
+
+  /** The live wallet's bank-transfer account number, or null. */
+  @Get('funding-account')
+  @MerchantApi(ApiKeyScope.WALLET_READ, MerchantPermission.SHIPMENTS_READ)
+  @ApiOkResponse({ type: FundingAccountView })
+  fundingAccount(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+  ): Promise<FundingAccount | null> {
+    return this.topUps.fundingAccount(caller);
+  }
+
+  /** Opens the live wallet's bank-transfer account (idempotent). */
+  @Post('funding-account')
+  @HttpCode(HttpStatus.OK)
+  @MerchantSessionApi(MerchantPermission.WALLET_MANAGE)
+  @ApiOkResponse({ type: FundingAccountView })
+  createFundingAccount(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+  ): Promise<FundingAccount> {
+    return this.topUps.createFundingAccount(caller);
   }
 }
 
