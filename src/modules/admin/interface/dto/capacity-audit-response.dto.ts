@@ -23,6 +23,8 @@ export class RiderCapacityMismatchDto {
 export class NodeCapacityMismatchDto {
   nodeId!: string;
   nodeName!: string;
+  // origin (currentCount) or destination (destinationHeldCount).
+  counter!: 'origin' | 'destination';
   storedCount!: number;
   expectedCount!: number;
 
@@ -30,6 +32,7 @@ export class NodeCapacityMismatchDto {
     const dto = new NodeCapacityMismatchDto();
     dto.nodeId = row.nodeId;
     dto.nodeName = row.nodeName;
+    dto.counter = row.counter;
     dto.storedCount = row.storedCount;
     dto.expectedCount = row.expectedCount;
     return dto;

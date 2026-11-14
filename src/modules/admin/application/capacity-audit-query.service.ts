@@ -12,6 +12,9 @@ export interface RiderCapacityMismatchRow {
 export interface NodeCapacityMismatchRow {
   nodeId: string;
   nodeName: string;
+  // Which of the two counters (plan §5.2): origin = currentCount,
+  // destination = destinationHeldCount.
+  counter: 'origin' | 'destination';
   storedCount: number;
   expectedCount: number;
 }
@@ -55,35 +58,47 @@ export class CapacityAuditQueryService {
   }
 
   private async auditNodes(): Promise<NodeCapacityMismatchRow[]> {
-    // Expected: PaymentIntents currently holding an origin-capacity slot —
-    // still PENDING (not yet paid, not yet expired), or PAID with an Order
-    // that hasn't reached IN_TRANSIT yet (courier pickup is what releases the
-    // slot — see DeliveryProgressListener). A returned parcel takes a slot
-    // back when it reaches the origin again, until the sender collects it.
-    // EXPIRED/FAILED intents and other orders never hold a slot.
+    // Expected values are recomputed from order (and unpaid checkout)
+    // statuses, independently of the counters and of the per-order
+    // destinationSlotHeld flag, so drift in either shows up here.
+    //
+    // Origin: unpaid checkouts still holding their reservation, parcels
+    // waiting at the origin for a courier, and returns back on its shelf.
+    // Destination: from drop-off (courier dispatched towards it) until the
+    // parcel is collected or leaves on a return; an uncollected parcel
+    // still on the destination shelf (return_initiated) keeps its slot.
     return this.dataSource.query<NodeCapacityMismatchRow[]>(
-      `WITH held AS (
-         SELECT "originNodeId" AS "nodeId", COUNT(*) AS held
-           FROM payment_intents
-          WHERE status = 'pending'
-          GROUP BY "originNodeId"
-         UNION ALL
-         SELECT pi."originNodeId" AS "nodeId", COUNT(*) AS held
-           FROM payment_intents pi
-           JOIN orders o ON o."paymentIntentId" = pi.id
-          WHERE pi.status = 'paid'
-            AND o.status IN ('awaiting_drop_off', 'parcel_received_at_origin', 'rider_assigned',
+      `WITH origin AS (
+         SELECT "nodeId", SUM(held)::int AS expected FROM (
+           SELECT "originNodeId" AS "nodeId", COUNT(*) AS held
+             FROM payment_intents WHERE status = 'pending'
+            GROUP BY "originNodeId"
+           UNION ALL
+           SELECT "originNodeId" AS "nodeId", COUNT(*) AS held
+             FROM orders
+            WHERE status IN ('awaiting_drop_off', 'parcel_received_at_origin', 'rider_assigned',
                              'returned_to_origin', 'ready_for_sender_collection')
-          GROUP BY pi."originNodeId"
-       ), expected AS (
-         SELECT "nodeId", SUM(held)::int AS "expectedCount" FROM held GROUP BY "nodeId"
+            GROUP BY "originNodeId"
+         ) parts GROUP BY "nodeId"
+       ), destination AS (
+         SELECT "destinationNodeId" AS "nodeId", COUNT(*)::int AS expected
+           FROM orders
+          WHERE status IN ('parcel_received_at_origin', 'rider_assigned', 'in_transit',
+                           'arrived_at_destination', 'ready_for_collection')
+             OR (status = 'return_initiated' AND "shelfNodeId" = "destinationNodeId")
+          GROUP BY "destinationNodeId"
        )
-       SELECT n.id AS "nodeId", n.name AS "nodeName",
+       SELECT n.id AS "nodeId", n.name AS "nodeName", 'origin' AS counter,
               n."currentCount" AS "storedCount",
-              COALESCE(e."expectedCount", 0)::int AS "expectedCount"
-         FROM nodes n
-         LEFT JOIN expected e ON e."nodeId" = n.id
-        WHERE n."currentCount" != COALESCE(e."expectedCount", 0)`,
+              COALESCE(o.expected, 0)::int AS "expectedCount"
+         FROM nodes n LEFT JOIN origin o ON o."nodeId" = n.id
+        WHERE n."currentCount" != COALESCE(o.expected, 0)
+       UNION ALL
+       SELECT n.id, n.name, 'destination',
+              n."destinationHeldCount",
+              COALESCE(d.expected, 0)::int
+         FROM nodes n LEFT JOIN destination d ON d."nodeId" = n.id
+        WHERE n."destinationHeldCount" != COALESCE(d.expected, 0)`,
     );
   }
 }

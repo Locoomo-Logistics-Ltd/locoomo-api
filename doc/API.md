@@ -2879,9 +2879,19 @@ rule — `allocationEstimated`), and `marginKobo` = allocation − cost. Filters
 
 ### `GET /api/v1/admin/capacity-audit`
 
-**Requires an authenticated Admin session.** Read-only reconciliation report — both
-`RiderProfile.currentActiveOrderCount` and `Node.currentCount` are mutable counters
-(incremented on reservation, decremented on release)
+**Requires an authenticated Admin session.** Read-only reconciliation report. Rider
+active-order counts and both Node counters are mutable (incremented on reservation,
+decremented on release); this recomputes what they should be from order statuses and lists
+only the ones that disagree.
+
+A Node has two counters, and it's **full when their sum reaches its capacity** (it then
+drops out of pickers and checkout refuses it as an origin):
+
+- `origin`: unpaid checkouts holding a reservation, parcels waiting at the origin for a
+  courier, and returns back on its shelf for the sender.
+- `destination`: parcels dispatched towards the Node (from drop-off) or on its shelf for the
+  receiver, including uncollected ones waiting for the return courier. Released when
+  collected or when the parcel leaves on a return.
 
 
 Response `200`, `data`:
@@ -2892,7 +2902,7 @@ Response `200`, `data`:
     { "riderId": "uuid", "riderEmail": "rider@example.com", "storedCount": 2, "expectedCount": 1 }
   ],
   "nodes": [
-    { "nodeId": "uuid", "nodeName": "Yaba Node", "storedCount": 7, "expectedCount": 3 }
+    { "nodeId": "uuid", "nodeName": "Yaba Node", "counter": "destination", "storedCount": 7, "expectedCount": 3 }
   ]
 }
 ```

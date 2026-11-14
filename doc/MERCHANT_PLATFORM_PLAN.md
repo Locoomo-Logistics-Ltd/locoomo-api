@@ -935,6 +935,23 @@ Decisions:
 - **The destination capacity slot** for a shelved parcel isn't counted yet; that is M3b.
 - A courier failing the *return* trip itself is logged for ops (rare; it needs a person).
 
+### M3b Two-counter Node capacity: done (2026-11-14)
+
+| Item | Where |
+|---|---|
+| `nodes.destinationHeldCount` and `orders.destinationSlotHeld`, backfilled for parcels in flight. Migration 363 | `nodes.service.ts` |
+| Destination slot held from drop-off, released at collection, return departure (`return_in_transit`) or cancellation, via an order-status subscriber in the change's transaction; the per-order flag makes it idempotent (a released and re-dispatched courier never double-counts) | `handoffs/application/destination-capacity.subscriber.ts` |
+| "Full" = origin + destination ≥ capacity: checkout origin reservation, consumer Node pickers, merchant `/nodes` and `acceptingParcels` | `nodes.service.ts` |
+| Capacity audit recomputes both counters from order statuses (no longer joins `payment_intents` for paid orders, so merchant orders will count too) and reports `counter` | `admin/application/capacity-audit-query.service.ts` |
+
+Decisions:
+- **`currentCount` keeps its name** (it is the origin counter) instead of the plan's rename to
+  `originHeldCount`. A rename needs expand/contract for a cosmetic gain.
+- **The destination is never refused** at drop-off. A full destination is a reroute for ops
+  (§6.5, M5); pickers already stop offering it.
+- The whole handoffs e2e suite now ends with **zero audit drift** on its shared Nodes. One
+  test helper wrote order status directly; it now uses the real drop-off endpoint.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

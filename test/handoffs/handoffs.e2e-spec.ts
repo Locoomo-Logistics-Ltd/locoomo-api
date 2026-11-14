@@ -445,7 +445,13 @@ describe('Handoffs (e2e)', () => {
   // own tests use createPaidOrder + the real drop-off endpoint instead.
   async function createAvailableOrder(consumerEmail: string): Promise<string> {
     const { id } = await createPaidOrder(consumerEmail);
-    await orders.update(id, { status: OrderStatus.PARCEL_RECEIVED_AT_ORIGIN });
+    // Through the real drop-off endpoint: it also books the courier leg and
+    // takes the destination capacity slot (a direct status write would
+    // leave the capacity counters out of step).
+    await request(app.getHttpServer())
+      .post(`/api/v1/handoffs/orders/${id}/drop-off`)
+      .set('Cookie', [originOperatorCookie])
+      .expect(200);
     return id;
   }
 
@@ -3884,5 +3890,170 @@ describe('Handoffs (e2e)', () => {
         .getOneOrFail();
       return /\b(\d{6})\b/.exec((event.payload as { text: string }).text)![1];
     }
+  });
+
+  describe('two-counter Node capacity (M3b)', () => {
+    const destinationHeld = async (nodeId: string): Promise<number> =>
+      (await nodes.findOneByOrFail({ id: nodeId })).destinationHeldCount;
+
+    it('holds a destination slot from drop-off until collection', async () => {
+      const rider = await createActiveRider(
+        'cap-collect-rider@handoffs.e2e.test',
+      );
+      const before = await destinationHeld(destinationNodeId);
+      const { id: orderId } = await createPaidOrder(
+        'cap-collect@handoffs.e2e.test',
+      );
+      expect(await destinationHeld(destinationNodeId)).toBe(before);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/drop-off`)
+        .set('Cookie', [originOperatorCookie])
+        .expect(200);
+      expect(await destinationHeld(destinationNodeId)).toBe(before + 1);
+      expect(
+        (await orders.findOneByOrFail({ id: orderId })).destinationSlotHeld,
+      ).toBe(true);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/accept`)
+        .set('Cookie', [rider.cookie])
+        .expect(200);
+      await pickUp(orderId, rider.cookie);
+      await arrive(orderId, rider.cookie);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/intake`)
+        .set('Cookie', [destinationOperatorCookie])
+        .expect(200);
+      expect(await destinationHeld(destinationNodeId)).toBe(before + 1);
+
+      const code = await extractLatestCollectionCode(receiverEmail);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/collect`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({ code, identityConfirmed: true })
+        .expect(200);
+      expect(await destinationHeld(destinationNodeId)).toBe(before);
+      expect(
+        (await orders.findOneByOrFail({ id: orderId })).destinationSlotHeld,
+      ).toBe(false);
+    });
+
+    it('keeps the slot while an uncollected parcel waits, and frees it at return pickup', async () => {
+      const rider = await createActiveRider(
+        'cap-return-rider@handoffs.e2e.test',
+      );
+      const orderId = await createReadyForCollectionOrder(
+        'cap-return@handoffs.e2e.test',
+        rider.cookie,
+      );
+      const held = await destinationHeld(destinationNodeId);
+      const { collectionDeadlineAt } = await orders.findOneByOrFail({
+        id: orderId,
+      });
+      await app
+        .get(CollectionWindowService)
+        .run(new Date(collectionDeadlineAt!.getTime() + 60_000));
+      expect(await destinationHeld(destinationNodeId)).toBe(held);
+
+      const returnRider = await createActiveRider(
+        'cap-return-rider2@handoffs.e2e.test',
+      );
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/accept`)
+        .set('Cookie', [returnRider.cookie])
+        .expect(200);
+      const pickup = await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/request-code`)
+        .set('Cookie', [returnRider.cookie])
+        .send({ type: 'rider_pickup' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/v1/handoffs/orders/${orderId}/confirm-handoff`)
+        .set('Cookie', [destinationOperatorCookie])
+        .send({
+          type: 'rider_pickup',
+          code: (pickup.body as SuccessBody).data.code as string,
+        })
+        .expect(200);
+      expect(await destinationHeld(destinationNodeId)).toBe(held - 1);
+    });
+
+    it('counts both sides when deciding a Node is full', async () => {
+      const nodeId = await createNode('cap-full');
+      await nodes.update(nodeId, {
+        capacity: 2,
+        currentCount: 1,
+        destinationHeldCount: 1,
+      });
+      const consumer = await registerAndLogin(
+        'cap-full-consumer@handoffs.e2e.test',
+        UserRole.CONSUMER,
+      );
+      const refused = await request(app.getHttpServer())
+        .post('/api/v1/payments/intents')
+        .set('Cookie', [consumer])
+        .send({
+          originNodeId: nodeId,
+          destinationNodeId,
+          receiverFullName: 'Receiver Tester',
+          receiverEmail,
+          receiverPhone: '+2348012345678',
+          parcelDescription: 'A small box of test fixtures',
+          parcelSize: 'small',
+        })
+        .expect(409);
+      expect((refused.body as { error: { code: string } }).error.code).toBe(
+        'NODE_CAPACITY_UNAVAILABLE',
+      );
+      const nearby = await request(app.getHttpServer())
+        .get(
+          `/api/v1/nodes/nearby?latitude=${riderLat}&longitude=${riderLng}&radiusKm=5&limit=100`,
+        )
+        .set('Cookie', [consumer])
+        .expect(200);
+      expect(
+        ((nearby.body as SuccessBody).data.items as { id: string }[]).map(
+          (n) => n.id,
+        ),
+      ).not.toContain(nodeId);
+      await nodes.update(nodeId, { destinationHeldCount: 0 });
+    });
+
+    it('audits both counters against order statuses', async () => {
+      const audit = async () =>
+        (
+          (
+            await asAdmin(
+              request(app.getHttpServer()).get('/api/v1/admin/capacity-audit'),
+            ).expect(200)
+          ).body as SuccessBody
+        ).data.nodes as {
+          nodeId: string;
+          counter: string;
+          storedCount: number;
+          expectedCount: number;
+        }[];
+      const clean = (await audit()).filter(
+        (row) =>
+          row.nodeId === destinationNodeId && row.counter === 'destination',
+      );
+      expect(clean).toEqual([]);
+
+      const stored = await destinationHeld(destinationNodeId);
+      await nodes.update(destinationNodeId, {
+        destinationHeldCount: stored + 5,
+      });
+      try {
+        expect(
+          (await audit()).find(
+            (row) =>
+              row.nodeId === destinationNodeId && row.counter === 'destination',
+          ),
+        ).toMatchObject({ storedCount: stored + 5, expectedCount: stored });
+      } finally {
+        await nodes.update(destinationNodeId, { destinationHeldCount: stored });
+      }
+    });
   });
 });

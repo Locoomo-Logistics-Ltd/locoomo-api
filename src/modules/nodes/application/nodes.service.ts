@@ -334,7 +334,7 @@ export class NodesService {
               ST_Distance(location, ${origin}) AS distance
          FROM nodes
         WHERE status = $3
-          AND "currentCount" < capacity
+          AND "currentCount" + "destinationHeldCount" < capacity
           AND "isPubliclyVisible" = true
           AND ST_DWithin(location, ${origin}, $4)
         ORDER BY distance ASC
@@ -353,7 +353,7 @@ export class NodesService {
       `SELECT COUNT(*)::int AS total
          FROM nodes
         WHERE status = $3
-          AND "currentCount" < capacity
+          AND "currentCount" + "destinationHeldCount" < capacity
           AND "isPubliclyVisible" = true
           AND ST_DWithin(location, ${origin}, $4)`,
       [query.longitude, query.latitude, NodeStatus.ACTIVE, radiusMeters],
@@ -372,7 +372,7 @@ export class NodesService {
     const where = [
       `status = $1`,
       `"isPubliclyVisible" = true`,
-      `"currentCount" < capacity`,
+      `"currentCount" + "destinationHeldCount" < capacity`,
     ];
     let distance = 'NULL::double precision';
     if (search.near) {
@@ -433,7 +433,8 @@ export class NodesService {
       openingHours: node.openingHours,
       contactPhone: node.contactPhone,
       distanceKm: null,
-      acceptingParcels: node.currentCount < node.capacity,
+      acceptingParcels:
+        node.currentCount + node.destinationHeldCount < node.capacity,
     };
   }
 
@@ -450,15 +451,17 @@ export class NodesService {
     manager: EntityManager,
   ): Promise<boolean> {
     const rows = await manager.query<
-      { capacity: number; currentCount: number }[]
-    >(`SELECT capacity, "currentCount" FROM nodes WHERE id = $1 FOR UPDATE`, [
-      nodeId,
-    ]);
+      { capacity: number; currentCount: number; destinationHeldCount: number }[]
+    >(
+      `SELECT capacity, "currentCount", "destinationHeldCount" FROM nodes WHERE id = $1 FOR UPDATE`,
+      [nodeId],
+    );
     const node = rows[0];
     if (!node) {
       throw new EntityNotFoundException('Node', nodeId);
     }
-    if (node.currentCount >= node.capacity) {
+    // Full counts both sides of the counter (E3).
+    if (node.currentCount + node.destinationHeldCount >= node.capacity) {
       return false;
     }
     await manager.query(
@@ -478,6 +481,30 @@ export class NodesService {
   ): Promise<void> {
     await manager.query(
       `UPDATE nodes SET "currentCount" = "currentCount" + 1 WHERE id = $1`,
+      [nodeId],
+    );
+  }
+
+  // Destination side (E3). Never refuses: the parcel is already dropped
+  // off and paid for — a destination that turns out full is a reroute for
+  // ops (plan §6.5), not a refusal at the counter. Callers keep this
+  // idempotent per order (orders.destinationSlotHeld).
+  async holdDestinationSlot(
+    nodeId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE nodes SET "destinationHeldCount" = "destinationHeldCount" + 1 WHERE id = $1`,
+      [nodeId],
+    );
+  }
+
+  async releaseDestinationSlot(
+    nodeId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE nodes SET "destinationHeldCount" = GREATEST("destinationHeldCount" - 1, 0) WHERE id = $1`,
       [nodeId],
     );
   }
