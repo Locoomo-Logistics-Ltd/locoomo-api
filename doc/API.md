@@ -8,6 +8,12 @@ Building a logistics screen (price preview, Node counter, handovers, rider app, 
 public tracking, courier admin)? Start with [LOGISTICS_API.md](LOGISTICS_API.md) — the
 flow-by-flow guide with full request and response samples and TypeScript types.
 
+Sign-in with 2FA, "confirm it's you", sessions, the admin permissions/approvals screens,
+or the merchant dashboard (accounts, onboarding, team, admin review)? Start with
+[FRONTEND_PLATFORM_GUIDE.md](FRONTEND_PLATFORM_GUIDE.md) — what every app must change,
+with code. The merchant dashboard calls the same `/merchant/*` endpoints external
+integrators use; their contract is [MERCHANT_API.md](MERCHANT_API.md).
+
 ## Base URL and versioning
 
 ```
@@ -36,6 +42,27 @@ to read or store. This has real implications for how you call the API:
 - You cannot read `access_token` or `refresh_token` from JavaScript (`document.cookie`)
   — they're httpOnly by design (XSS protection). Don't build UI that assumes you can
   inspect or manually attach them.
+
+- **Send `X-Locoomo-Client: web` on every request that isn't a `GET`** (POST, PATCH,
+  PUT, DELETE). It's the CSRF guard: a forged request from another site can't attach
+  a custom header, so a cookie-authenticated change without it is treated as forged.
+  Today the API only **logs** a missing header (`CSRF_MODE=report`); it will start
+  rejecting with `403 CSRF_HEADER_MISSING` once every frontend sends it — add it to
+  your HTTP client's defaults now, e.g.
+
+  ```ts
+  const api = axios.create({
+    baseURL: `${API_ORIGIN}/api/v1`,
+    withCredentials: true,
+    headers: { 'X-Locoomo-Client': 'web' },
+  });
+  ```
+
+  Any value works (it's the header's presence that matters); use `web`, or your app's
+  name. Sending it on GETs too is harmless.
+
+- **Request bodies are capped at 1 MB.** Over that → `413 PAYLOAD_TOO_LARGE`. Body
+  that isn't valid JSON → `400 MALFORMED_JSON`. Both use the normal error envelope.
 
 ## Authenticated requests
 
@@ -88,7 +115,11 @@ Error:
 }
 ```
 
-`details` is only present on validation errors (400). Branch UI logic on `error.code`,
+`details` is present on validation errors (400, the per-field array above) and on a few
+business errors that say what to fix (e.g. `ONBOARDING_INCOMPLETE` →
+`{ sections: [...] }`); the error-code table names them. For validation, `field` is the full path to the
+value, so nested objects and arrays point at the exact input: `"receiver.phone"`,
+`"items[3].receiver.phone"`. Branch UI logic on `error.code`,
 not `error.message` — the message is human-readable copy and can be reworded without
 warning; the code is the stable contract.
 
@@ -101,6 +132,60 @@ backend greps logs for.
 | HTTP | code | Meaning |
 |---|---|---|
 | 400 | `VALIDATION_FAILED` | Request body failed DTO validation — see `error.details` for per-field reasons |
+| 401 | `INVALID_MFA_CODE` | Wrong, malformed or already-used 2FA / recovery code. Let the user retry |
+| 401 | `INVALID_MFA_CHALLENGE` | The 2FA sign-in step expired (5 min), was already completed, or had 5 wrong codes. Back to the password screen |
+| 403 | `REAUTH_REQUIRED` | Sensitive action: confirm identity via `POST /auth/reauth`, then retry the same request |
+| 403 | `MFA_ENROLLMENT_REQUIRED` | Admin past the 14-day 2FA deadline. Send them to 2FA setup |
+| 403 | `MFA_REQUIRED_FOR_ROLE` | Tried to turn off 2FA on an account that must have it (admins) |
+| 403 | `EMAIL_NOT_VERIFIED` | The route needs a verified email. Offer `POST /auth/verify-email/resend` |
+| 409 | `MFA_ALREADY_ENABLED` | 2FA setup started on an account that already has 2FA on |
+| 409 | `MFA_NOT_ENABLED` | Recovery codes / disable on an account without 2FA |
+| 409 | `MFA_SETUP_NOT_STARTED` | Confirm called before setup |
+| 409 | `EMAIL_ALREADY_VERIFIED` | Resend called for an already-verified email |
+| 400 | `MALFORMED_JSON` | Request body isn't valid JSON (a frontend bug — the body was hand-built or truncated) |
+| 413 | `PAYLOAD_TOO_LARGE` | Request body is over 1 MB |
+| 415 | `UNSUPPORTED_REQUEST_BODY` | Body uses an encoding/charset the API doesn't accept — send UTF-8 JSON |
+| 403 | `CSRF_HEADER_MISSING` | A cookie-authenticated non-GET request without `X-Locoomo-Client` (only once CSRF enforcement is switched on — see "CORS and cookies") |
+| 400 | `INVALID_IDEMPOTENCY_KEY` | `Idempotency-Key` header isn't 1–255 printable characters |
+| 409 | `IDEMPOTENCY_IN_PROGRESS` | The first request with this `Idempotency-Key` is still running — retry in a moment |
+| 422 | `IDEMPOTENCY_KEY_REUSED` | This `Idempotency-Key` was already used for a different request — generate a new key per distinct request |
+| 409 | `LAST_SUPER_ADMIN` | `PATCH /admin/admins/:id/permissions` would leave no active admin with `super` |
+| 503 | `MERCHANT_PLATFORM_DISABLED` | Merchant services are switched off by Locoomo. Show a maintenance message |
+| 403 | `NOT_A_MERCHANT_MEMBER` | Signed-in user has no merchant. Send them to "Create business" (or the invite they were sent) |
+| 403 | `MERCHANT_PERMISSION_DENIED` | The member's team role lacks `details.permission` |
+| 403 | `ADMINS_CANNOT_JOIN_MERCHANTS` | A Locoomo admin account called a merchant route |
+| 409 | `ALREADY_A_MERCHANT_MEMBER` | Create/accept while already on a merchant (one per user) |
+| 409 | `MERCHANT_NOT_EDITABLE` | The account's status (`details.status`) doesn't allow this change |
+| 409 | `MERCHANT_DETAILS_LOCKED` | Identity details (`details.fields`) can't change after approval |
+| 409 | `INVALID_MERCHANT_TRANSITION` | Status change not allowed from the current status (`details.from`, `details.to`) — refresh |
+| 422 | `ONBOARDING_INCOMPLETE` | Submit/approve with sections missing: `details.sections[{ key, missing }]` |
+| 422 | `UPLOAD_NOT_FOUND` | KYC file not uploaded, or not in this merchant's folder. Upload again |
+| 422 | `NOT_APPLICABLE_TO_INDIVIDUALS` | CAC fields/documents sent for an individual seller |
+| 409 | `DIRECTOR_LIMIT_REACHED` | Individual: one owner ID; business: 10 directors |
+| 409 | `TERMS_VERSION_OUTDATED` | Terms changed; reload and show `details.currentVersion` |
+| 404 | `INVALID_MERCHANT_INVITE` | Invite unknown, expired, revoked or already used |
+| 403 | `INVITE_EMAIL_MISMATCH` | Signed in with a different email than the invite's |
+| 409 | `ALREADY_A_TEAM_MEMBER` | Invited someone already on the team |
+| 409 | `OWNER_ROLE_PROTECTED` | Changing/removing the owner, or an invalid transfer. Transfer ownership first |
+| 409 | `REVIEW_HAS_REJECTED_ITEMS` | Admin approve with rejected sections (`details.keys`) |
+| 422 | `NO_REJECTED_ITEMS` | Admin request-changes without any rejected section |
+| 403 | `MERCHANT_NOT_APPROVED` | Live mode/keys before the merchant is approved |
+| 403 | `MERCHANT_SUSPENDED` | Live writes (and live key changes) while suspended; reads still work |
+| 403 | `MFA_REQUIRED_FOR_LIVE_KEYS` | Live key actions need 2FA on `details.who`: `you` or `owner` |
+| 409 | `API_KEY_LIMIT_REACHED` | 20 active keys per mode; revoke one |
+| 409 | `API_KEY_REVOKED` | Roll/edit of a revoked or expired key |
+| 422 | `ORIGIN_REQUIRED` | Quote or shipment without an origin Node while the merchant has no hub |
+| 400 | `INVALID_MODE` | `Locoomo-Mode` header isn't `test` or `live` |
+| 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | Live shipping isn't open yet (wallet release); use test mode |
+| 422 | `INVALID_WEBHOOK_URL` | Webhook URL isn't a public `https://` address |
+| 409 | `WEBHOOK_ENDPOINT_LIMIT_REACHED` | 5 webhook endpoints per mode |
+| 422 | `REPLAY_WINDOW_EXCEEDED` | Webhook replay further back than 30 days |
+| 400 | `INVALID_CURSOR` | A pagination cursor was altered or is from another list; restart without it |
+| 401 | `INVALID_API_KEY` | (API keys) unknown, revoked, expired, IP or origin not allowed |
+| 403 | `INSUFFICIENT_SCOPE` | (API keys) the key lacks the route's scope |
+| 429 | `RATE_LIMITED` | Too many requests; wait `Retry-After` seconds |
+| 403 | `SELF_APPROVAL_NOT_ALLOWED` | An admin tried to approve a request they raised themselves — a different admin must approve |
+| 409 | `APPROVAL_NOT_PENDING` | The approval request was already executed, rejected, cancelled, or has expired (7 days) |
 | 400 | `INVALID_VERIFICATION_DOCUMENT` | `POST /riders/onboarding` referenced a `cloudinaryPublicId` that doesn't correspond to an actual completed upload — re-request an upload signature and try again |
 | 401 | `INVALID_CREDENTIALS` | Login failed — wrong password, unknown email, or account not yet activated. Deliberately identical for all three so a login attempt can't be used to enumerate registered emails; don't try to distinguish these cases in the UI |
 | 401 | `INVALID_REFRESH_TOKEN` | Refresh failed — missing, unrecognized, expired, or already-used cookie. Treat as a hard sign-out, don't retry |
@@ -309,8 +394,26 @@ Request:
 { "email": "ada@example.com", "password": "Correct-Horse-Battery-1" }
 ```
 
-Response `200`, `data`: same `UserResponseDto` shape as register's response. The
-session is delivered via `Set-Cookie`, not the body — see the cookie table below.
+Response `200`, `data`: **one of two shapes** — branch on `mfaRequired`:
+
+- **Signed in** — same `UserResponseDto` shape as register's response. The session is
+  delivered via `Set-Cookie`, not the body — see the cookie table below.
+- **Two-factor code needed** (the account has 2FA on) — no cookies are set yet:
+
+  ```json
+  { "mfaRequired": true, "mfaToken": "q8Zk…" }
+  ```
+
+  Show the "Enter the 6-digit code from your authenticator app" screen (with a "Use a
+  recovery code instead" link) and send both to
+  [`POST /api/v1/auth/mfa/verify`](#post-apiv1authmfaverify). The token lasts 5 minutes
+  and allows 5 wrong codes; after that, send the user back to the password screen.
+
+```ts
+type LoginResponse = UserResponseDto | { mfaRequired: true; mfaToken: string };
+```
+
+`POST /api/v1/auth/google` returns the same union.
 
 Errors: `400 VALIDATION_FAILED`, `401 INVALID_CREDENTIALS`, `403 ACCOUNT_SUSPENDED`,
 `429 RATE_LIMITED`.
@@ -433,6 +536,183 @@ registration).
 
 Errors: `400 VALIDATION_FAILED`, `401 INVALID_VERIFICATION_TOKEN` (bad, expired, or
 already-used token), `429 RATE_LIMITED`.
+
+## Account security: 2FA, sessions, step-up
+
+Everything in this section is for any signed-in user (consumer, operator, rider, admin,
+merchant). All of it keeps working during a mandatory-2FA lockout (below), because these
+are the screens a locked-out user needs.
+
+### `POST /api/v1/auth/mfa/verify`
+
+**Public.** Second step of a 2FA sign-in. Send the `mfaToken` from login plus **either**
+a 6-digit `code` **or** a `recoveryCode`:
+
+```json
+{ "mfaToken": "q8Zk…", "code": "492039" }
+```
+
+```json
+{ "mfaToken": "q8Zk…", "recoveryCode": "abcde-fghij" }
+```
+
+Response `200`, `data`: `UserResponseDto`, with the session in `Set-Cookie` (exactly like
+a normal login).
+
+Errors: `401 INVALID_MFA_CODE` (wrong or already-used code; let them try again),
+`401 INVALID_MFA_CHALLENGE` (token expired, already used, or 5 wrong codes; go back to
+the password screen), `403 ACCOUNT_SUSPENDED`. 10/min per IP.
+
+UI notes: the code field should accept pasted codes with spaces. Recovery codes are
+case-insensitive, and the dash is optional.
+
+### `GET /api/v1/auth/mfa`
+
+Response `200`, `data`:
+
+```json
+{
+  "enabled": false,
+  "confirmedAt": null,
+  "recoveryCodesRemaining": 0,
+  "required": true,
+  "enrollmentDeadline": "2026-11-26T10:00:00.000Z"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `required` | This account must have 2FA (all admins). It can't be turned off |
+| `enrollmentDeadline` | Only when `required` and not yet enabled. After this, every admin route answers `403 MFA_ENROLLMENT_REQUIRED` until 2FA is set up. Show a banner counting down to it |
+| `recoveryCodesRemaining` | Warn when it's low (e.g. ≤ 2) and offer to regenerate |
+
+### `POST /api/v1/auth/mfa/totp/setup`
+
+**Needs a recent sign-in or step-up** (see [`/auth/reauth`](#post-apiv1authreauth)). A
+normal login counts for 10 minutes, so "turn on 2FA" right after signing in just works.
+No body.
+
+Response `200`, `data`:
+
+```json
+{
+  "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+  "otpauthUrl": "otpauth://totp/Locoomo%3Aada%40example.com?secret=…&issuer=Locoomo&algorithm=SHA1&digits=6&period=30",
+  "qrDataUrl": "data:image/png;base64,iVBORw0…"
+}
+```
+
+Show `qrDataUrl` as `<img src>`. Show `secret` under a "Can't scan? Enter this key"
+toggle. 2FA is **not on yet**: the user must enter a code from the app next. Calling
+setup again replaces the pending secret (new QR code).
+
+Errors: `403 REAUTH_REQUIRED`, `409 MFA_ALREADY_ENABLED`.
+
+### `POST /api/v1/auth/mfa/totp/confirm`
+
+```json
+{ "code": "492039" }
+```
+
+Turns 2FA on. Response `200`, `data`:
+
+```json
+{ "recoveryCodes": ["abcde-fghij", "klmno-pqrst", "…10 in total"] }
+```
+
+**These are shown once and never again.** Make the user download, copy or print them
+and tick "I've saved these" before leaving the screen. Each one works once if the phone
+is lost. A "2FA turned on" email is sent.
+
+Errors: `401 INVALID_MFA_CODE`, `409 MFA_SETUP_NOT_STARTED`, `409 MFA_ALREADY_ENABLED`.
+
+### `POST /api/v1/auth/mfa/recovery-codes`
+
+**Needs a recent step-up.** Replaces all recovery codes (old ones stop working).
+Response: `{ "recoveryCodes": [...] }`, same one-time display rules.
+
+Errors: `403 REAUTH_REQUIRED`, `409 MFA_NOT_ENABLED`.
+
+### `DELETE /api/v1/auth/mfa`
+
+**Needs a recent step-up.** Turns 2FA off (email sent). Response `200`, `data: null`.
+
+Errors: `403 REAUTH_REQUIRED`, `403 MFA_REQUIRED_FOR_ROLE` (admins can't; hide the
+button when `required` is true), `409 MFA_NOT_ENABLED`.
+
+### `POST /api/v1/auth/reauth`
+
+"Confirm it's you" before a sensitive action. Any route that needs it answers
+`403 REAUTH_REQUIRED`. On that error, open a confirm dialog, call this, then **retry the
+original request**. Send the factor the account uses:
+
+| Account | Send |
+|---|---|
+| 2FA on | `{ "code": "492039" }` or `{ "recoveryCode": "abcde-fghij" }`. A password alone is **not** accepted |
+| Password, no 2FA | `{ "password": "…" }` |
+| Google-only, no 2FA | `{ "googleIdToken": "…" }` (run Google sign-in again for the same account) |
+
+Use `GET /auth/mfa` (`enabled`) to pick which prompt to show.
+
+Response `200`, `data`: `{ "reauthenticatedUntil": "2026-11-12T10:10:00.000Z" }`, and a
+new `access_token` cookie. Sensitive actions are allowed until that time (10 minutes).
+
+Errors: `401 INVALID_CREDENTIALS` (wrong password or Google account),
+`401 INVALID_MFA_CODE`. 5/min.
+
+Routes that need a recent step-up so far: 2FA setup, recovery-code regeneration and
+turning 2FA off. Merchant live API keys, webhook URLs, bank accounts and team roles join
+this list as they ship.
+
+### `GET /api/v1/auth/sessions`
+
+Where the user is signed in. Response `200`, `data`:
+
+```json
+[
+  {
+    "id": "uuid",
+    "startedAt": "2026-11-01T08:00:00.000Z",
+    "lastActiveAt": "2026-11-12T09:58:00.000Z",
+    "ip": "102.89.4.10",
+    "userAgent": "Mozilla/5.0 (iPhone; …)",
+    "current": true
+  }
+]
+```
+
+Newest activity first. `lastActiveAt` is the last token refresh, so it's accurate to
+about 15 minutes. Parse `userAgent` for a friendly "Chrome on iPhone" label.
+
+### `DELETE /api/v1/auth/sessions/:id`
+
+Signs that device out **immediately** (its open tabs get `401` on their next request).
+Response `200`, `data: null`. `404 NOT_FOUND` if it's not one of the user's active
+sessions. Revoking your own `current` session works too; then treat it as a logout.
+
+### `POST /api/v1/auth/sessions/revoke-others`
+
+"Sign out of all other devices". Keeps the current one. Response `200`, `data`:
+`{ "revoked": 2 }`.
+
+Sessions also end on their own after a password reset (every session) and on logout
+(that device only).
+
+### `POST /api/v1/auth/verify-email/resend`
+
+Sends a fresh verification link to the signed-in user. Earlier links stop working.
+No body. Response `200`, `data: null`. Errors: `409 EMAIL_ALREADY_VERIFIED`. 3/min.
+
+Merchant screens require a verified email (`403 EMAIL_NOT_VERIFIED`). Show a "Check your
+inbox (resend)" banner on that error.
+
+### Mandatory 2FA for admins
+
+Every admin must turn on 2FA within **14 days** (from when they were invited, or from
+this release for existing admins). After the deadline, every admin route answers
+`403 MFA_ENROLLMENT_REQUIRED` until they do. Only these keep working:
+`GET/PATCH /users/me`, everything under `/auth/` above, and logout. On that error,
+route the admin straight to the 2FA setup screen.
 
 ### `POST /api/v1/users/invite`
 
@@ -2618,4 +2898,742 @@ Response `200`, `data`:
 ```
 
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (non-Admin).
+
+## Admin permissions
+
+Admins have one role (`admin`) plus a set of **permissions** that unlock sensitive screens.
+Existing admin screens keep working for every admin; newer ones (merchant review, money
+moves) also need a specific permission. A route that needs a permission you don't hold
+returns `403 FORBIDDEN`, exactly like a missing role.
+
+| Permission | Unlocks |
+|---|---|
+| `super` | Everything, including managing other admins' permissions. Implies all others |
+| `kyc` | Merchant KYC review (approve / reject / request changes, view documents) |
+| `finance` | Wallets, manual adjustments, claims payouts, refunds, pricing |
+| `ops` | Reroutes, suspensions, hubs, exceptions |
+| `support` | Read-mostly support tools, MFA resets |
+
+Every admin who existed before permissions shipped was given `super`, so nobody lost
+access; narrow people down from the screen below.
+
+### `GET /api/v1/admin/admins`
+
+**Requires `super`.** All admin accounts with their permissions.
+
+Response `200`, `data`:
+
+```json
+[
+  {
+    "id": "uuid",
+    "email": "ada@locoomo.com",
+    "firstName": "Ada",
+    "lastName": "Obi",
+    "status": "active",
+    "adminPermissions": ["finance", "ops"]
+  }
+]
+```
+
+### `PATCH /api/v1/admin/admins/:id/permissions`
+
+**Requires `super`.** Replaces (doesn't merge) the admin's permission set. Takes effect
+within seconds — no re-login needed. Recorded in the audit log.
+
+```json
+{ "permissions": ["finance", "ops"] }
+```
+
+| Field | Rules |
+|---|---|
+| `permissions` | Array (may be empty) of `super`, `kyc`, `finance`, `ops`, `support` |
+
+Response `200`: the updated admin (same shape as one item above).
+
+Errors: `400 VALIDATION_FAILED`, `403 FORBIDDEN`, `404 NOT_FOUND` (not an admin),
+`409 LAST_SUPER_ADMIN`.
+
+UI notes: show `super` as a separate, clearly-labelled toggle ("Full access — can manage
+other admins"). On `LAST_SUPER_ADMIN`, explain that someone else must be given full access
+first.
+
+## Approvals (two-admin rule)
+
+Some admin actions move money or are otherwise risky, so one admin **requests** them and a
+**different** admin **approves** them before they run (maker-checker). Requests are raised
+from the screen where the action lives (e.g. a wallet adjustment on a merchant's page —
+those screens arrive with the merchant platform); this queue is where the second admin
+decides.
+
+Rules the API enforces (show them in the UI rather than letting people hit the errors):
+
+- You can't approve your own request (`403 SELF_APPROVAL_NOT_ALLOWED`) — but you can
+  **cancel** it.
+- Approving or rejecting needs the permission the action requires (e.g. `finance` for
+  money). Without it → `403 FORBIDDEN`.
+- A request nobody decides within **7 days expires** and must be raised again.
+- Approval runs the action immediately; if the action itself fails, the request stays
+  `pending` and the error is returned.
+
+Status values: `pending`, `executed`, `rejected`, `cancelled`, `expired`.
+
+### `GET /api/v1/admin/approvals?status=pending&page=1&limit=20`
+
+**Requires an Admin session** (any admin can view the queue). `status` optional. Pending
+requests are oldest-first; everything else newest-first.
+
+Response `200`, `data` (paginated):
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "action": "wallet.manual_adjustment",
+      "status": "pending",
+      "summary": "Credit ₦25,000.00 to Ada Stores",
+      "reason": "Goodwill credit for delayed parcel LCM-4F2K-9XPT",
+      "payload": { "merchantId": "uuid", "amountKobo": 2500000 },
+      "merchantId": "uuid",
+      "requestedByUserId": "uuid",
+      "decidedByUserId": null,
+      "decisionNote": null,
+      "decidedAt": null,
+      "result": null,
+      "expiresAt": "2026-11-19T10:00:00.000Z",
+      "createdAt": "2026-11-12T10:00:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 1
+}
+```
+
+### `GET /api/v1/admin/approvals/:id`
+
+One request (same shape as an item above). `404 NOT_FOUND` if unknown.
+
+### `POST /api/v1/admin/approvals/:id/approve`
+
+```json
+{ "note": "Checked against the claim evidence" }
+```
+
+`note` optional (≤ 1000 chars). Response `200`: the request, now `executed`, with
+`result` holding what the action produced (e.g. the wallet entry id).
+
+Errors: `403 SELF_APPROVAL_NOT_ALLOWED`, `403 FORBIDDEN`, `404 NOT_FOUND`,
+`409 APPROVAL_NOT_PENDING`, plus any error from the action itself.
+
+### `POST /api/v1/admin/approvals/:id/reject`
+
+```json
+{ "note": "Evidence doesn't support the claim" }
+```
+
+`note` **required** (3–1000 chars) — the requester sees why. Response `200`: the request,
+now `rejected`. Errors: `403 FORBIDDEN`, `404 NOT_FOUND`, `409 APPROVAL_NOT_PENDING`.
+
+### `POST /api/v1/admin/approvals/:id/cancel`
+
+Only the admin who raised the request. No body. Response `200`: the request, now
+`cancelled`. Errors: `403 FORBIDDEN` (not yours), `404 NOT_FOUND`,
+`409 APPROVAL_NOT_PENDING`.
+
+## Merchant accounts (dashboard)
+
+The merchant dashboard's account, onboarding and team endpoints. **Cookie sessions only**:
+API keys never reach these, and they're not in the integrator OpenAPI document. Screen
+flows, UI copy and TypeScript types are in
+[FRONTEND_PLATFORM_GUIDE.md › Merchant dashboard](FRONTEND_PLATFORM_GUIDE.md#9-merchant-dashboard).
+
+Rules for every route below:
+
+- **Verified email required** (`403 EMAIL_NOT_VERIFIED`).
+- **Locoomo admins are refused** (`403 ADMINS_CANNOT_JOIN_MERCHANTS`). Staff use the admin
+  app; they never sit on a merchant team.
+- A user belongs to **at most one merchant**. Routes that need a membership answer
+  `403 NOT_A_MERCHANT_MEMBER` without one, and `403 MERCHANT_PERMISSION_DENIED`
+  (`details.permission`) when the member's role lacks the permission named per route.
+- While the platform kill switch is off, every route answers `503 MERCHANT_PLATFORM_DISABLED`.
+
+**Statuses.** `draft → submitted → in_review → approved | changes_requested | rejected`,
+plus `suspended` (reversible, set by Locoomo) and `closed`.
+
+| Status | Onboarding details | Contact details + bank account | Notes |
+|---|---|---|---|
+| `draft`, `changes_requested` | editable | editable | Submit when `onboarding.readyToSubmit` |
+| `submitted`, `in_review` | frozen | frozen | `409 MERCHANT_NOT_EDITABLE` |
+| `approved` | locked (`409 MERCHANT_DETAILS_LOCKED`) | editable | Trading name, legal name, CAC, directors and documents need the account manager |
+| `rejected`, `suspended`, `closed` | — | — | `409 MERCHANT_NOT_EDITABLE` |
+
+**Team permissions** (`me.permissions` in `GET /merchant/account`):
+
+| Permission | owner | admin | developer | operations | finance | viewer |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| `shipments.read` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `shipments.write` | ✓ | ✓ | ✓ | ✓ | | |
+| `returns.collect` | ✓ | ✓ | | ✓ | | |
+| `developers.manage` | ✓ | ✓ | ✓ | | | |
+| `wallet.manage` | ✓ | ✓ | | | ✓ | |
+| `account.manage` | ✓ | ✓ | | | | |
+| `team.manage` | ✓ | ✓ | | | | |
+| `ownership` | ✓ | | | | | |
+
+### `POST /api/v1/merchant/account`
+
+Creates a merchant with the caller as **owner**, status `draft`. No membership needed.
+
+```json
+{ "type": "business", "tradingName": "Ada Stores" }
+```
+
+| Field | Rules |
+|---|---|
+| `type` | `business` (CAC-registered) or `individual` (sole seller, no CAC) |
+| `tradingName` | 2–120 chars, trimmed. The name buyers see |
+
+Response `201`: the account overview (below). Errors: `409 ALREADY_A_MERCHANT_MEMBER`.
+
+### `GET /api/v1/merchant/account`
+
+Any member. Everything the home and onboarding screens need in one call.
+
+Response `200`, `data`:
+
+```json
+{
+  "merchant": {
+    "id": "uuid",
+    "type": "business",
+    "status": "changes_requested",
+    "tradingName": "Ada Stores",
+    "legalName": "Ada Stores Limited",
+    "category": "fashion",
+    "storeUrl": "https://adastores.ng",
+    "expectedMonthlyVolume": "up_to_10k",
+    "contactEmail": "ops@adastores.ng",
+    "contactPhone": "+2348031234567",
+    "address": { "line1": "1 Allen Avenue", "line2": null, "city": "Ikeja", "state": "Lagos" },
+    "cacNumber": "RC1234567",
+    "tier": null,
+    "limits": null,
+    "receiverCodeRelay": false,
+    "creationPaused": false,
+    "terms": { "acceptedVersion": "2026-11-14", "acceptedAt": "2026-11-14T09:12:00.000Z", "currentVersion": "2026-11-14" },
+    "submittedAt": "2026-11-14T09:15:00.000Z",
+    "decidedAt": "2026-11-14T11:02:00.000Z",
+    "decisionNote": "Almost there",
+    "approvedAt": null,
+    "suspendedAt": null,
+    "suspensionReason": null,
+    "closedAt": null,
+    "createdAt": "2026-11-14T09:00:00.000Z",
+    "updatedAt": "2026-11-14T11:02:00.000Z"
+  },
+  "me": {
+    "memberId": "uuid",
+    "role": "owner",
+    "permissions": ["shipments.read", "shipments.write", "returns.collect", "developers.manage", "wallet.manage", "account.manage", "team.manage", "ownership"]
+  },
+  "onboarding": {
+    "editable": true,
+    "readyToSubmit": false,
+    "items": [
+      { "key": "profile", "complete": true, "missing": [], "review": { "decision": "accepted", "reason": null } },
+      { "key": "business_registration", "complete": true, "missing": [], "review": null },
+      { "key": "directors", "complete": true, "missing": [], "review": null },
+      { "key": "bank_account", "complete": true, "missing": [], "review": { "decision": "rejected", "reason": "Use an account in the business name" } },
+      { "key": "terms", "complete": true, "missing": [], "review": null }
+    ]
+  },
+  "documents": [{ "id": "uuid", "kind": "cac_certificate", "uploadedAt": "2026-11-14T09:05:00.000Z" }],
+  "directors": [{ "id": "uuid", "fullName": "Ada Okafor", "idType": "nin", "idNumberLast4": "8901", "createdAt": "2026-11-14T09:06:00.000Z" }],
+  "bankAccount": { "bankCode": "058", "bankName": "GTBank", "accountNumberLast4": "6789", "accountName": "ADA STORES LIMITED", "verifiedAt": "2026-11-14T09:08:00.000Z" }
+}
+```
+
+- `onboarding.items` lists only the sections this merchant type needs (`business_registration`
+  is business-only). `missing` names what's left (`legalName`, `address.city`,
+  `documents.cac_certificate`, `directors`, `bankAccount`, `terms`, …).
+- `review` is the reviewer's latest verdict on the section. **Editing a section clears it**
+  (`null` = "changed, waiting for review"). `readyToSubmit` is false while any section is
+  incomplete or still rejected.
+- `limits` (once approved) is `{ liveShipmentsPerDay, maxWalletBalanceKobo, negativeBalanceFloorKobo }`;
+  `null` values mean unlimited.
+
+### `PATCH /api/v1/merchant/account/profile`
+
+`account.manage`. Every field optional; send what the form section changed.
+
+```json
+{
+  "legalName": "Ada Stores Limited",
+  "category": "fashion",
+  "storeUrl": "https://adastores.ng",
+  "expectedMonthlyVolume": "up_to_10k",
+  "contactEmail": "ops@adastores.ng",
+  "contactPhone": "+2348031234567",
+  "address": { "line1": "1 Allen Avenue", "line2": "Suite 4", "city": "Ikeja", "state": "Lagos" },
+  "cacNumber": "RC1234567"
+}
+```
+
+| Field | Rules |
+|---|---|
+| `tradingName` | 2–120 chars. Locked once approved |
+| `legalName` | 2–200 chars: CAC name for businesses, the seller's full name for individuals. Locked once approved |
+| `category` | 2–60 chars, free text (e.g. `fashion`, `electronics`) |
+| `storeUrl` | `http(s)://` URL |
+| `expectedMonthlyVolume` | `up_to_100`, `up_to_1k`, `up_to_10k`, `up_to_100k`, `over_100k` |
+| `contactEmail` | Email (lowercased) |
+| `contactPhone` | `+2348031234567` or `08031234567` (spaces/dashes stripped) |
+| `address` | Whole object: `line1` (required), `line2`, `city`, `state` |
+| `cacNumber` | Businesses only. `RC…`, `BN…` or `IT…` + digits; spaces removed, uppercased. Locked once approved |
+
+Response `200`: the overview. Errors: `409 MERCHANT_NOT_EDITABLE`,
+`409 MERCHANT_DETAILS_LOCKED` (`details.fields`), `422 NOT_APPLICABLE_TO_INDIVIDUALS`.
+
+### KYC files: `POST /api/v1/merchant/account/uploads`
+
+`account.manage`, onboarding-editable statuses only. Returns a Cloudinary signature for
+**one** private upload (document or ID image):
+
+```json
+{ "signature": "…", "timestamp": 1731575000, "apiKey": "…", "cloudName": "locoomo", "folder": "merchants/<merchantId>/kyc" }
+```
+
+Upload straight to `https://api.cloudinary.com/v1_1/{cloudName}/image/upload` as
+multipart with `file`, `api_key`, `timestamp`, `signature`, `folder` and
+`type=authenticated` (all exactly as returned). PDFs and images both work. Then send the
+`public_id` Cloudinary returns to one of the two endpoints below. A `public_id` from
+outside the merchant's folder, or one that was never uploaded, is refused with
+`422 UPLOAD_NOT_FOUND`.
+
+### `PUT /api/v1/merchant/account/documents/:kind`
+
+`account.manage`. Attaches (or replaces) a document. `kind`: `cac_certificate` (business,
+required), `cac_status_report` (business, optional), `proof_of_address` (optional).
+
+```json
+{ "publicId": "merchants/<merchantId>/kyc/abc123" }
+```
+
+Response `200`: `{ "id", "kind", "uploadedAt" }`. Errors: `409 MERCHANT_NOT_EDITABLE`,
+`409 MERCHANT_DETAILS_LOCKED`, `422 UPLOAD_NOT_FOUND`, `422 NOT_APPLICABLE_TO_INDIVIDUALS`.
+
+### `POST /api/v1/merchant/account/directors` · `DELETE …/directors/:id`
+
+`account.manage`. Owner (individual: exactly one) or directors (business: 1–10).
+
+```json
+{ "fullName": "Ada Okafor", "idType": "nin", "idNumber": "12345678901", "idDocumentPublicId": "merchants/<merchantId>/kyc/nin" }
+```
+
+| Field | Rules |
+|---|---|
+| `fullName` | 3–150 chars, as on the ID |
+| `idType` | `nin`, `passport`, `drivers_licence`, `voters_card` |
+| `idNumber` | 5–20 letters/digits (spaces removed). Stored encrypted; only the last 4 are ever returned |
+| `idDocumentPublicId` | Uploaded image of the ID (see above) |
+
+Response `201`: `{ "id", "fullName", "idType", "idNumberLast4", "createdAt" }`.
+`DELETE` → `204`. Errors: `409 DIRECTOR_LIMIT_REACHED`, `409 MERCHANT_NOT_EDITABLE`,
+`409 MERCHANT_DETAILS_LOCKED`, `422 UPLOAD_NOT_FOUND`.
+
+### `GET /api/v1/merchant/banks`
+
+Any member. `[{ "code": "058", "name": "GTBank" }, …]` for the bank picker.
+
+### `PUT /api/v1/merchant/account/bank-account`
+
+`account.manage` + **step-up** (`403 REAUTH_REQUIRED` → "Confirm it's you", then retry).
+Allowed while onboarding and once approved.
+
+```json
+{ "bankCode": "058", "bankName": "GTBank", "accountNumber": "0123456789" }
+```
+
+The account is resolved with the bank, and the **holder name comes from the bank**, never
+from the form. Show it back for confirmation. Response `200`:
+`{ "bankCode", "bankName", "accountNumberLast4", "accountName", "verifiedAt" }`.
+Changing it after approval emails the owner and admins.
+
+Errors: `400 BANK_ACCOUNT_VERIFICATION_FAILED` (the bank couldn't find that account),
+`409 MERCHANT_NOT_EDITABLE`, `502 PAYMENT_PROVIDER_ERROR` when Paystack is down (retry later).
+
+### `POST /api/v1/merchant/account/terms`
+
+`account.manage`. Accepts the merchant terms + Data Processing Agreement.
+
+```json
+{ "version": "2026-11-14" }
+```
+
+Send `merchant.terms.currentVersion`. Response `200`: the overview. Errors:
+`409 TERMS_VERSION_OUTDATED` (`details.currentVersion`): the terms changed while the
+page was open, so reload and show the new text.
+
+### `POST /api/v1/merchant/account/submit`
+
+`account.manage`. `draft`/`changes_requested` → `submitted`. The team and Locoomo's KYC
+reviewers are emailed. Response `200`: the overview.
+
+Errors: `422 ONBOARDING_INCOMPLETE` with
+`details.sections: [{ key, missing: [...] }]` (a rejected-but-unchanged section shows
+`missing: ["changes requested by reviewer"]`), `409 INVALID_MERCHANT_TRANSITION`.
+
+### `POST /api/v1/merchant/account/close`
+
+`ownership` + **step-up**. Closes the account, removes the whole team and revokes open
+invites; everyone keeps their personal Locoomo sign-in and can start or join another
+merchant. Allowed from `draft`, `changes_requested`, `approved` and `rejected`
+(not while under review or suspended → `409 INVALID_MERCHANT_TRANSITION`).
+Response `204`. From M4 it will also require no parcels in flight and a non-negative wallet.
+
+### Team: `GET /api/v1/merchant/team`
+
+Any member.
+
+```json
+{
+  "members": [
+    { "id": "memberId", "userId": "uuid", "firstName": "Ada", "lastName": "Okafor", "email": "ada@adastores.ng", "role": "owner", "joinedAt": "…" }
+  ],
+  "invites": [
+    { "id": "uuid", "email": "dev@adastores.ng", "role": "developer", "expiresAt": "…", "createdAt": "…" }
+  ]
+}
+```
+
+`invites` lists only open (unaccepted, unrevoked, unexpired) invitations.
+
+### `POST /api/v1/merchant/team/invites` · `DELETE …/invites/:id`
+
+`team.manage`. 20/min.
+
+```json
+{ "email": "dev@adastores.ng", "role": "developer" }
+```
+
+`role`: `admin`, `developer`, `operations`, `finance` or `viewer` (never `owner`).
+Inviting the same address again replaces the open invite. The email links to
+`{MERCHANT_DASHBOARD_URL}/accept-invite?token=…` and expires after **7 days**.
+Response `201`: the invite. Errors: `409 ALREADY_A_TEAM_MEMBER`. `DELETE` → `204`.
+
+### `POST /api/v1/merchant/invites/preview` (public)
+
+No session needed (10/min). For the accept-invite page before sign-in.
+
+```json
+{ "token": "…" }
+```
+
+Response `200`: `{ "merchantName", "role", "email", "expiresAt" }`.
+Errors: `404 INVALID_MERCHANT_INVITE` (unknown, expired, revoked or used).
+
+### `POST /api/v1/merchant/invites/accept`
+
+Signed in, verified email, **the invited address**, not already on a merchant. 10/min.
+Same body. Response `200`: `{ "merchantId", "role" }`.
+Errors: `403 INVITE_EMAIL_MISMATCH`, `404 INVALID_MERCHANT_INVITE`,
+`409 ALREADY_A_MERCHANT_MEMBER`.
+
+### `PATCH /api/v1/merchant/team/members/:id` · `DELETE …/members/:id` · `DELETE …/members/me`
+
+- `PATCH` (`team.manage` + **step-up**): `{ "role": "operations" }` → `200` member.
+- `DELETE …/:id` (`team.manage`): remove someone → `204`.
+- `DELETE …/me` (any member except the owner): leave the team → `204`.
+- Changes apply to the member's very next request. The owner can't be changed or
+  removed (`409 OWNER_ROLE_PROTECTED`): transfer ownership first.
+
+### `POST /api/v1/merchant/team/transfer-ownership`
+
+`ownership` + **step-up**. `{ "memberId": "uuid" }` (an existing member). The new owner
+gets `owner`; the old owner becomes `admin`. Response `204`. Owner and admins are emailed.
+
+### Developers: API keys
+
+Permission `developers.manage` (owner, admin, developer). Integrator-facing rules (prefixes,
+scopes, rate limits) are in [MERCHANT_API.md §4](MERCHANT_API.md#4-authentication-and-api-keys).
+
+**Live keys** (create, roll, edit) also need all of:
+
+- an **approved** account (`403 MERCHANT_NOT_APPROVED`; suspended → `403 MERCHANT_SUSPENDED`);
+- **2FA on the caller** and **on the owner** (`403 MFA_REQUIRED_FOR_LIVE_KEYS`,
+  `details.who`: `"you"` or `"owner"`);
+- **step-up** (`403 REAUTH_REQUIRED`; your "Confirm it's you" interceptor handles it).
+
+Test keys need none of these: merchants can build before approval. Revoking never needs
+step-up.
+
+#### `GET /api/v1/merchant/api-keys?mode=test`
+
+`mode`: `test` (default) or `live`. Active keys plus keys revoked/expired in the last 30 days,
+newest first.
+
+```json
+[
+  {
+    "id": "uuid",
+    "mode": "test",
+    "kind": "secret",
+    "name": "Production server",
+    "displayKey": "sk_test_…a1B2",
+    "scopes": ["shipments:read", "shipments:write", "manifests:write", "wallet:read", "claims:write"],
+    "allowedIps": [],
+    "allowedOrigins": [],
+    "hidePrices": false,
+    "state": "active",
+    "expiresAt": null,
+    "revokedAt": null,
+    "lastUsedAt": "2026-11-14T10:01:00.000Z",
+    "lastUsedIp": "203.0.113.7",
+    "createdAt": "2026-11-14T09:00:00.000Z"
+  }
+]
+```
+
+`state`: `active`, `expiring` (rolled; works until `expiresAt`), `expired`, `revoked`.
+`lastUsedAt` updates at most once a minute. Publishable keys always show `scopes: []`
+(they're fixed to Nodes and quotes).
+
+#### `POST /api/v1/merchant/api-keys`
+
+```json
+{
+  "mode": "test",
+  "kind": "secret",
+  "name": "Production server",
+  "scopes": ["shipments:read", "shipments:write"],
+  "allowedIps": ["203.0.113.0/24"]
+}
+```
+
+| Field | Rules |
+|---|---|
+| `mode` | `test` or `live` |
+| `kind` | `secret` (server) or `publishable` (browser checkout) |
+| `name` | 1–60 chars |
+| `scopes` | Secret only. Any of `shipments:read`, `shipments:write`, `manifests:write`, `webhooks:manage`, `wallet:read`, `claims:write`. Default: all except `webhooks:manage` |
+| `allowedIps` | Secret only, ≤ 50. IPs or CIDR ranges (v4/v6). Empty = any |
+| `allowedOrigins` | Publishable only, ≤ 50. Exact origins like `https://shop.example.com`. Empty = any |
+| `hidePrices` | Publishable only. Quotes come back without amounts |
+
+Response `201`:
+
+```json
+{ "key": { "…": "as in the list" }, "secret": "sk_test_4fQ9…" }
+```
+
+**`secret` is returned once and never again.** Show it in a dialog with a copy button and
+"I've stored it safely" before closing. Errors: `409 API_KEY_LIMIT_REACHED` (20 active keys
+per mode), `409 MERCHANT_NOT_EDITABLE` (closed/rejected), plus the live-key errors above.
+
+#### `PATCH /api/v1/merchant/api-keys/:id`
+
+Same optional fields minus `mode`/`kind` (`name`, `scopes`, `allowedIps`, `allowedOrigins`,
+`hidePrices`). Fields that don't apply to the key's kind are ignored. Live keys need step-up.
+Takes effect immediately. Response `200`: the key. `409 API_KEY_REVOKED` for an ended key.
+
+#### `POST /api/v1/merchant/api-keys/:id/roll`
+
+```json
+{ "expireOldIn": "24h" }
+```
+
+`expireOldIn`: `now`, `1h`, `24h` or `7d`. Creates a new key with the same name and settings;
+the old one keeps working until then (`now` revokes it at once). Response `201`: same shape as
+create, with the new `secret`. Live keys need 2FA + step-up.
+
+#### `POST /api/v1/merchant/api-keys/:id/revoke` · `POST …/api-keys/revoke-all`
+
+- Revoke one: `200` with the key (`state: "revoked"`). Works immediately on every server.
+- Revoke all: body `{ "mode": "live" }` → `200 { "revoked": 3 }`. The "leaked key"
+  emergency button: confirm with the number of keys first.
+
+#### `GET /api/v1/merchant/api-logs?mode=test&outcome=errors&apiKeyId=…&limit=50&cursor=…`
+
+Developers › API logs: every request made with the merchant's keys in the last **30 days**,
+newest first. Metadata only, never bodies.
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "apiKeyId": "uuid",
+      "apiKeyName": "Production server",
+      "method": "POST",
+      "path": "/api/v1/merchant/shipments",
+      "statusCode": 422,
+      "durationMs": 48,
+      "ip": "203.0.113.7",
+      "correlationId": "b1f2c3d4-…",
+      "createdAt": "2026-11-14T10:01:00.000Z"
+    }
+  ],
+  "nextCursor": "eyJ0Ijoi…",
+  "hasMore": true
+}
+```
+
+`outcome`: `all` (default) or `errors` (status ≥ 400). `limit` 1–200 (default 50); pass
+`nextCursor` back as `cursor` for the next page (`400 INVALID_CURSOR` if it's been altered).
+Show `correlationId` with a copy button: support needs it.
+
+## Admin: merchants
+
+The admin app's merchant review queue and account controls. Not affected by the merchant
+kill switch. Every action is in the audit log.
+
+| Endpoint | Permission (any of) |
+|---|---|
+| `GET /admin/merchants`, `GET /admin/merchants/:id` | `kyc`, `ops`, `support` |
+| KYC file links, review, approve, request changes, reject | `kyc` |
+| Suspend, reinstate, settings | `ops` |
+
+(`super` always qualifies.)
+
+### `GET /api/v1/admin/merchants?status=submitted&q=ada&page=1&limit=20`
+
+`status` filters; `q` matches trading/legal name, contact email or CAC number. With
+`status=submitted` or `in_review` the list is **oldest submission first** (the review
+queue); otherwise newest first.
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "tradingName": "Ada Stores",
+      "legalName": "Ada Stores Limited",
+      "type": "business",
+      "status": "submitted",
+      "tier": null,
+      "contactEmail": "ops@adastores.ng",
+      "submittedAt": "2026-11-14T09:15:00.000Z",
+      "waitingHours": 3,
+      "createdAt": "2026-11-14T09:00:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 1
+}
+```
+
+`waitingHours` is set while waiting for a decision. Target: a decision within one working day.
+
+### `GET /api/v1/admin/merchants/:id`
+
+```json
+{
+  "merchant": { "…": "same shape as GET /merchant/account → merchant" },
+  "checklist": { "items": [ "…same as onboarding.items…" ], "readyToSubmit": true },
+  "reviews": [
+    { "key": "bank_account", "decision": "rejected", "reason": "Use an account in the business name", "decidedByUserId": "uuid", "decidedAt": "…" }
+  ],
+  "team": { "members": [ "…" ], "invites": [ "…" ] },
+  "directors": [{ "id": "uuid", "fullName": "Ada Okafor", "idType": "nin", "idNumberLast4": "8901", "createdAt": "…" }],
+  "documents": [{ "id": "uuid", "kind": "cac_certificate", "uploadedAt": "…" }],
+  "bankAccount": {
+    "bankCode": "058", "bankName": "GTBank", "accountNumberLast4": "6789",
+    "accountName": "ADA STORES LIMITED", "verifiedAt": "…",
+    "nameMatch": { "score": 1, "level": "strong" }
+  }
+}
+```
+
+`nameMatch` compares the bank's holder name with the legal name, trading name and
+directors: `strong` (≥ 0.8), `partial` (≥ 0.5) or `weak`. It's a hint: show `weak` in
+amber and let the reviewer decide.
+
+### `POST /api/v1/admin/merchants/:id/documents/:documentId/link` · `POST …/directors/:directorId/identity`
+
+`kyc`. Each call is a logged disclosure, so it's a `POST`. Call it when the reviewer clicks
+"View", never on page load.
+
+- Document → `{ "url", "expiresAt" }`. The link works for **5 minutes**.
+- Director → `{ "fullName", "idType", "idNumber", "idDocument": { "url", "expiresAt" } }`
+  with the **full ID number**. Don't keep it in state after the dialog closes.
+
+### `POST /api/v1/admin/merchants/:id/review`
+
+`kyc`. Records per-section decisions; moves `submitted → in_review`.
+
+```json
+{
+  "items": [
+    { "key": "profile", "decision": "accepted" },
+    { "key": "bank_account", "decision": "rejected", "reason": "Use an account in the business name" }
+  ]
+}
+```
+
+`key`: `profile`, `business_registration` (business only), `directors`, `bank_account`,
+`terms`. `reason` (3–500 chars) is **required when rejecting** and shown to the merchant.
+Response `200`: the detail.
+
+### `POST /api/v1/admin/merchants/:id/approve`
+
+`kyc`. From `submitted`/`in_review`. Sections without a decision are accepted.
+
+```json
+{ "tier": "business", "limits": { "liveShipmentsPerDay": 150000 } }
+```
+
+| Field | Rules |
+|---|---|
+| `tier` | Optional: `individual`, `business`, `enterprise`. Defaults to the merchant's type |
+| `limits` | Optional overrides of the tier defaults: `liveShipmentsPerDay`, `maxWalletBalanceKobo` (≥ 0), `negativeBalanceFloorKobo` (≤ 0). `null` = unlimited |
+
+Tier defaults: individual 2,000/day, ₦50m wallet, −₦50k floor; business 100,000/day, ₦2bn,
+−₦1m; enterprise unlimited. Hubs and pricing are set in later phases.
+Errors: `409 REVIEW_HAS_REJECTED_ITEMS` (`details.keys`), `422 ONBOARDING_INCOMPLETE`,
+`409 INVALID_MERCHANT_TRANSITION`.
+
+### `POST /api/v1/admin/merchants/:id/request-changes` · `POST …/reject`
+
+`kyc`, from `submitted`/`in_review`.
+
+- **Request changes**: `{ "items"?: [...same as review...], "note"?: "…" }`. Needs at
+  least one rejected section (`422 NO_REJECTED_ITEMS`). The merchant is emailed the
+  rejected sections with their reasons.
+- **Reject** (final): `{ "reason": "…" }` (3–1000 chars). The merchant can only close the
+  account afterwards.
+
+### `POST /api/v1/admin/merchants/:id/suspend` · `POST …/reinstate`
+
+`ops`. Suspend `{ "reason": "…" }` from any status except `closed`; reinstate returns to
+the status before suspension. While suspended the team can sign in and read but not edit;
+from M2 it also blocks new live shipments, live keys and webhook changes (parcels in
+flight continue). Both email the team.
+
+### `PATCH /api/v1/admin/merchants/:id/settings`
+
+`ops`. Any subset:
+
+```json
+{ "receiverCodeRelay": true, "creationPaused": false, "tier": "enterprise", "limits": {} }
+```
+
+`limits` **replaces** all overrides (`{}` = back to tier defaults). `creationPaused` stops
+new live shipments for this merchant only. Response `200`: the detail.
+
+## Idempotency-Key (safe retries)
+
+Some `POST` endpoints accept an optional `Idempotency-Key` header (each endpoint's section
+says so — the merchant API uses it everywhere). Send a fresh random value (a UUID v4) per
+user action, and **reuse the same value when retrying that action** after a timeout or
+network error:
+
+- Same key + same request → you get the original response back (header
+  `Idempotent-Replayed: true`); the action is **not** performed twice.
+- Same key + different request → `422 IDEMPOTENCY_KEY_REUSED`.
+- First attempt still running → `409 IDEMPOTENCY_IN_PROGRESS`; wait a moment and retry.
+- If the first attempt failed (any error), retrying with the same key runs it again.
+- Keys are remembered for 24 hours.
 

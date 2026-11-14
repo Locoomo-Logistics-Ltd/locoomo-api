@@ -4,7 +4,7 @@ import { DataSource, In, Repository } from 'typeorm';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { EntityNotFoundException } from '../../../common/exceptions';
-import { CloudinaryService } from '../infrastructure/cloudinary.service';
+import { CloudinaryService } from '../../../common/cloudinary/cloudinary.service';
 import { RiderProfileEntity } from '../infrastructure/entities/rider-profile.entity';
 import { RiderVerificationDocumentEntity } from '../infrastructure/entities/rider-verification-document.entity';
 import { PendingRiderResponseDto } from '../interface/dto/pending-rider-response.dto';

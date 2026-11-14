@@ -4,7 +4,7 @@ import { DataSource, Repository } from 'typeorm';
 import { EntityNotFoundException } from '../../../common/exceptions';
 import { ActivateUserService } from '../../identity/application/activate-user.service';
 import { RiderStatus } from '../domain/rider-status.enum';
-import { CloudinaryService } from '../infrastructure/cloudinary.service';
+import { CloudinaryService } from '../../../common/cloudinary/cloudinary.service';
 import { RiderProfileEntity } from '../infrastructure/entities/rider-profile.entity';
 import { RiderVerificationDocumentEntity } from '../infrastructure/entities/rider-verification-document.entity';
 import { RiderResponseDto } from '../interface/dto/rider-response.dto';

@@ -70,6 +70,12 @@ import { PricingController } from './interface/pricing.controller';
   // restrictToPublicNodes: false) so an operator dispatching their own
   // parcels reuses the exact same checkout/capacity-reservation logic a
   // Consumer booking uses — never duplicated.
-  exports: [PaystackBankService, CreatePaymentIntentService],
+  // DeliveryQuoteService: merchants' GET /merchant/quotes prices through the
+  // same calculation checkout uses.
+  exports: [
+    PaystackBankService,
+    CreatePaymentIntentService,
+    DeliveryQuoteService,
+  ],
 })
 export class PaymentsModule {}

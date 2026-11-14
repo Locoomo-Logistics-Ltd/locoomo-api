@@ -117,6 +117,8 @@ export class InviteUserService {
       lastName: fields.lastName,
       phone: fields.phone,
       role: fields.role,
+      // Admins must enrol in 2FA (grace period starts at invite).
+      mfaRequiredSince: fields.role === UserRole.ADMIN ? new Date() : null,
       status: UserStatus.INVITED,
       consentAcceptedAt: null,
     });

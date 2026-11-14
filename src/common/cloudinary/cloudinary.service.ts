@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
-import { Env } from '../../../config/env.validation';
+import { Env } from '../../config/env.validation';
 
 export interface UploadSignature {
   signature: string;
@@ -11,6 +11,7 @@ export interface UploadSignature {
   folder: string;
 }
 
+// Shared (riders' verification evidence, merchants' KYC documents).
 // Signed direct-to-Cloudinary upload — the client uploads bytes straight to
 // Cloudinary using a signature we generate here, never proxied through this API
 @Injectable()
@@ -75,6 +76,23 @@ export class CloudinaryService {
       sign_url: true,
       secure: true,
     });
+  }
+
+  // Time-limited download link for an `authenticated` asset (merchant KYC
+  // documents: admins get 5-minute links, plan §4.1). Unlike
+  // getSignedViewUrl, the link stops working at `expiresAt`, so one pasted
+  // into a chat or left in browser history goes dead.
+  getExpiringDownloadUrl(
+    publicId: string,
+    ttlSeconds: number,
+  ): { url: string; expiresAt: Date } {
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+    const url = cloudinary.utils.private_download_url(publicId, '', {
+      type: 'authenticated',
+      resource_type: 'image',
+      expires_at: Math.floor(expiresAt.getTime() / 1000),
+    });
+    return { url, expiresAt };
   }
 
   // The SDK wraps the actual API error one level deeper than you'd expect —

@@ -6,3 +6,7 @@ export * from './infrastructure.exception';
 export * from './entity-not-found.exception';
 export * from './unauthenticated.exception';
 export * from './insufficient-role.exception';
+export * from './api-key.exceptions';
+export * from './csrf-header-missing.exception';
+export * from './request-body.exceptions';
+export * from './reauth-required.exception';

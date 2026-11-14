@@ -9,6 +9,7 @@ import { OrderStatus } from '../domain/order-status.enum';
 import { generateTrackingCode } from '../domain/tracking-code';
 import { OrderEventEntity } from '../infrastructure/entities/order-event.entity';
 import { OrderEntity } from '../infrastructure/entities/order.entity';
+import { OrderStatusEventBus } from './order-status-event-bus';
 
 // 32^8 possible codes — a same-transaction retry loop is the correctness
 // guarantee (the unique index is what actually prevents a collision), this
@@ -37,6 +38,8 @@ export interface CreateOrderFromPaidIntentFields {
 
 @Injectable()
 export class OrdersService {
+  constructor(private readonly statusEvents: OrderStatusEventBus) {}
+
   async createFromPaidIntent(
     fields: CreateOrderFromPaidIntentFields,
     manager: EntityManager,
@@ -48,6 +51,12 @@ export class OrdersService {
       paymentIntentId: fields.paymentIntentId,
       amountKobo: fields.amountKobo,
     });
+    await this.publishStatusChange(
+      manager,
+      order,
+      null,
+      OrderEventType.ORDER_PLACED,
+    );
 
     return order;
   }
@@ -83,6 +92,7 @@ export class OrdersService {
     }
 
     await this.appendEvent(manager, orderId, eventType, eventPayload);
+    await this.publishStatusChange(manager, order, fromStatus, eventType);
     return order;
   }
 
@@ -124,6 +134,12 @@ export class OrdersService {
     await this.appendEvent(manager, orderId, OrderEventType.RIDER_ASSIGNED, {
       riderId,
     });
+    await this.publishStatusChange(
+      manager,
+      order,
+      OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+      OrderEventType.RIDER_ASSIGNED,
+    );
     return order;
   }
 
@@ -185,6 +201,12 @@ export class OrdersService {
       orderId,
       OrderEventType.COURIER_RELEASED,
       eventPayload,
+    );
+    await this.publishStatusChange(
+      manager,
+      order,
+      OrderStatus.RIDER_ASSIGNED,
+      OrderEventType.COURIER_RELEASED,
     );
     return order;
   }
@@ -387,6 +409,28 @@ export class OrdersService {
       [order.id],
     );
     return { ...order, shelfNodeId: null, shelfNumber: null };
+  }
+
+  // Every status-changing path funnels through here (creation, transition(),
+  // assignRider(), markCourierReleased()) — a new status-changing method
+  // must call it too, or subscribers silently miss that change.
+  private async publishStatusChange(
+    manager: EntityManager,
+    order: OrderEntity,
+    fromStatus: OrderStatus | null,
+    eventType: OrderEventType,
+  ): Promise<void> {
+    await this.statusEvents.publish(
+      {
+        orderId: order.id,
+        trackingCode: order.trackingCode,
+        fromStatus,
+        toStatus: order.status,
+        eventType,
+        occurredAt: new Date(),
+      },
+      manager,
+    );
   }
 
   private async appendEvent(

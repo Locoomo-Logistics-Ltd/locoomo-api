@@ -14,8 +14,12 @@ import {
 } from '../infrastructure/google-id-token-verifier';
 import { UserEntity } from '../infrastructure/entities/user.entity';
 import { GoogleAuthDto } from '../interface/dto/google-auth.dto';
-import { LoginResult } from './login-user.service';
-import { TokenIssuanceService } from './token-issuance.service';
+import { LoginResult, SessionStarterService } from './session-starter.service';
+import {
+  SessionClient,
+  TokenIssuanceService,
+  UNKNOWN_CLIENT,
+} from './token-issuance.service';
 
 @Injectable()
 export class GoogleAuthService {
@@ -26,9 +30,13 @@ export class GoogleAuthService {
     private readonly dataSource: DataSource,
     private readonly googleIdTokenVerifier: GoogleIdTokenVerifier,
     private readonly tokenIssuanceService: TokenIssuanceService,
+    private readonly sessionStarter: SessionStarterService,
   ) {}
 
-  async authenticate(dto: GoogleAuthDto): Promise<LoginResult> {
+  async authenticate(
+    dto: GoogleAuthDto,
+    client: SessionClient = UNKNOWN_CLIENT,
+  ): Promise<LoginResult> {
     const identity = await this.googleIdTokenVerifier.verify(dto.idToken);
     if (!identity || !identity.emailVerified) {
       throw new InvalidGoogleTokenException();
@@ -36,7 +44,7 @@ export class GoogleAuthService {
 
     const existing = await this.users.findOneBy({ googleId: identity.sub });
     if (existing) {
-      return this.login(existing);
+      return this.login(existing, client);
     }
 
     const email = identity.email.toLowerCase();
@@ -48,21 +56,24 @@ export class GoogleAuthService {
       throw new EmailAlreadyRegisteredException(email);
     }
 
-    return this.signUp(dto, identity, email);
+    return this.signUp(dto, identity, email, client);
   }
 
-  private async login(user: UserEntity): Promise<LoginResult> {
+  private async login(
+    user: UserEntity,
+    client: SessionClient,
+  ): Promise<LoginResult> {
     if (user.status === UserStatus.SUSPENDED) {
       throw new AccountSuspendedException();
     }
-    const session = await this.tokenIssuanceService.issueSession(user);
-    return { user, session };
+    return this.sessionStarter.start(user, client);
   }
 
   private async signUp(
     dto: GoogleAuthDto,
     identity: GoogleIdentity,
     email: string,
+    client: SessionClient,
   ): Promise<LoginResult> {
     if (dto.consentAccepted !== true) {
       throw new ConsentRequiredException();
@@ -99,7 +110,11 @@ export class GoogleAuthService {
         return manager.save(user);
       });
 
-      const session = await this.tokenIssuanceService.issueSession(saved);
+      // A brand-new account can't have 2FA yet — straight to a session.
+      const session = await this.tokenIssuanceService.issueSession(
+        saved,
+        client,
+      );
       return { user: saved, session };
     } catch (error) {
       // Pre-check above handles the common case; this catches the race

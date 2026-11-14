@@ -13,7 +13,7 @@ import { hashPassword } from '../../src/modules/identity/domain/password-hasher'
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
 import { BankAccountVerificationFailedException } from '../../src/modules/payments/domain/exceptions/bank-account-verification-failed.exception';
 import { PaystackBankService } from '../../src/modules/payments/application/paystack-bank.service';
-import { CloudinaryService } from '../../src/modules/riders/infrastructure/cloudinary.service';
+import { CloudinaryService } from '../../src/common/cloudinary/cloudinary.service';
 import { RiderProfileEntity } from '../../src/modules/riders/infrastructure/entities/rider-profile.entity';
 
 interface ErrorBody {

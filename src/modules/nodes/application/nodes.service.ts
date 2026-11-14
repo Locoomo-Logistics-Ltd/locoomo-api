@@ -33,6 +33,38 @@ export interface CreateNodeOptions {
   locationCheck?: NodeLocationCheck;
 }
 
+// A Node as offered to merchants' checkouts (merchants module). Plain data
+// so other modules never depend on NodeEntity.
+export interface AvailableNode {
+  id: string;
+  name: string;
+  address: string;
+  city: string;
+  state: string;
+  latitude: number;
+  longitude: number;
+  openingHours: OpeningHours | null;
+  contactPhone: string | null;
+  // Set when the search was "near" a point.
+  distanceKm: number | null;
+  // False while the Node is full (it still exists; parcels already routed
+  // there continue).
+  acceptingParcels: boolean;
+}
+
+export interface AvailableNodeSearch {
+  near?: { latitude: number; longitude: number; radiusKm: number };
+  // Name, address or city contains this (case-insensitive).
+  q?: string;
+  state?: string;
+  city?: string;
+  offset: number;
+  limit: number;
+}
+
+const escapeLike = (value: string): string =>
+  value.replace(/[%_\\]/g, (match) => `\\${match}`);
+
 @Injectable()
 export class NodesService {
   constructor(
@@ -330,6 +362,79 @@ export class NodesService {
     const items = rows.map((row) => NearbyNodeResponseDto.fromRow(row));
 
     return new PaginatedResultDto(items, query.page, query.limit, total);
+  }
+
+  // Merchant checkout picker: active, publicly visible Nodes with shelf
+  // space, nearest first when searching near a point, else by name.
+  // Fetches limit + 1 so the caller can tell whether there's another page.
+  async searchAvailable(search: AvailableNodeSearch): Promise<AvailableNode[]> {
+    const params: unknown[] = [NodeStatus.ACTIVE];
+    const where = [
+      `status = $1`,
+      `"isPubliclyVisible" = true`,
+      `"currentCount" < capacity`,
+    ];
+    let distance = 'NULL::double precision';
+    if (search.near) {
+      params.push(search.near.longitude, search.near.latitude);
+      const point = `ST_SetSRID(ST_MakePoint($${params.length - 1}, $${params.length}), 4326)::geography`;
+      distance = `ST_Distance(location, ${point})`;
+      params.push(search.near.radiusKm * 1000);
+      where.push(`ST_DWithin(location, ${point}, $${params.length})`);
+    }
+    if (search.q) {
+      params.push(`%${escapeLike(search.q)}%`);
+      const p = `$${params.length}`;
+      where.push(`(name ILIKE ${p} OR address ILIKE ${p} OR city ILIKE ${p})`);
+    }
+    if (search.state) {
+      params.push(search.state);
+      where.push(`lower(state) = lower($${params.length})`);
+    }
+    if (search.city) {
+      params.push(search.city);
+      where.push(`lower(city) = lower($${params.length})`);
+    }
+    params.push(search.limit + 1, search.offset);
+    const rows = await this.dataSource.query<
+      (Omit<AvailableNode, 'distanceKm' | 'acceptingParcels'> & {
+        distance: number | null;
+      })[]
+    >(
+      `SELECT id, name, address, city, state, latitude, longitude,
+              "openingHours", "contactPhone", ${distance} AS distance
+         FROM nodes
+        WHERE ${where.join(' AND ')}
+        ORDER BY ${search.near ? 'distance ASC,' : ''} name ASC, id ASC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+    return rows.map(({ distance: meters, ...node }) => ({
+      ...node,
+      distanceKm: meters === null ? null : Math.round(meters / 10) / 100,
+      acceptingParcels: true,
+    }));
+  }
+
+  // One Node for a merchant: active and publicly visible, full or not.
+  async getAvailable(id: string): Promise<AvailableNode> {
+    const node = await this.nodes.findOneBy({ id });
+    if (!node || node.status !== NodeStatus.ACTIVE || !node.isPubliclyVisible) {
+      throw new EntityNotFoundException('Node', id);
+    }
+    return {
+      id: node.id,
+      name: node.name,
+      address: node.address,
+      city: node.city,
+      state: node.state,
+      latitude: node.latitude,
+      longitude: node.longitude,
+      openingHours: node.openingHours,
+      contactPhone: node.contactPhone,
+      distanceKm: null,
+      acceptingParcels: node.currentCount < node.capacity,
+    };
   }
 
   // Narrow cross-module write for payments' order-placement flow (decision

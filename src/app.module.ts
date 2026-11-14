@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuditModule } from './common/audit/audit.module';
 import { CommonModule } from './common/common.module';
 import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
@@ -16,6 +17,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { RidersModule } from './modules/riders/riders.module';
 import { LogisticsModule } from './modules/logistics/logistics.module';
+import { MerchantsModule } from './modules/merchants/merchants.module';
 import { TrackingModule } from './modules/tracking/tracking.module';
 
 @Module({
@@ -23,6 +25,8 @@ import { TrackingModule } from './modules/tracking/tracking.module';
     ConfigModule,
     CommonModule,
     DatabaseModule,
+    // Global; needs the database, so it's kept out of the DB-free CommonModule.
+    AuditModule,
     HealthModule,
     NotificationsModule,
     IdentityModule,
@@ -36,6 +40,7 @@ import { TrackingModule } from './modules/tracking/tracking.module';
     AdminModule,
     TrackingModule,
     LogisticsModule,
+    MerchantsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

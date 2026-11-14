@@ -5,6 +5,7 @@ import { hashToken } from '../../../common/crypto/hash-token.util';
 import { InvalidVerificationTokenException } from '../domain/exceptions/invalid-verification-token.exception';
 import { EmailVerificationTokenEntity } from '../infrastructure/entities/email-verification-token.entity';
 import { UserEntity } from '../infrastructure/entities/user.entity';
+import { AccountFlagsService } from './account-flags.service';
 import { ConfirmEmailVerificationDto } from '../interface/dto/confirm-email-verification.dto';
 
 @Injectable()
@@ -14,6 +15,7 @@ export class VerifyEmailService {
     private readonly verificationTokens: Repository<EmailVerificationTokenEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly accountFlags: AccountFlagsService,
   ) {}
 
   async verifyEmail(dto: ConfirmEmailVerificationDto): Promise<void> {
@@ -38,5 +40,7 @@ export class VerifyEmailService {
         emailVerifiedAt: new Date(),
       });
     });
+    // Guards cache "email verified" for ~30s — make it count immediately.
+    await this.accountFlags.bust(stored.userId);
   }
 }

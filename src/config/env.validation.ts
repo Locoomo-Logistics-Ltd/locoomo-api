@@ -41,7 +41,7 @@ export const envSchema = z
     // value as SMTP_PASSWORD when using Resend's SMTP relay, but kept as its
     // own var rather than reusing SMTP_PASSWORD under a different meaning.
     RESEND_API_KEY: z.string().min(1).optional(),
-    // Rider verification document uploads (riders/infrastructure/cloudinary.service.ts).
+    // Signed document uploads — rider verification, merchant KYC (common/cloudinary/cloudinary.service.ts).
     CLOUDINARY_CLOUD_NAME: z.string().min(1),
     CLOUDINARY_API_KEY: z.string().min(1),
     CLOUDINARY_API_SECRET: z.string().min(1),
@@ -73,6 +73,78 @@ export const envSchema = z
     // Optional: without it every check is recorded as "unverified" instead
     // of blocking Node creation. An empty value counts as unset.
     GOOGLE_MAPS_API_KEY: optionalString(),
+    // Encrypts sensitive fields at rest (common/crypto/secret-box): TOTP
+    // (2FA) seeds, merchant KYC ID numbers, bank account numbers — each with
+    // its own derived sub-key. Generate like JWT_ACCESS_SECRET and set it in
+    // every deployed environment.
+    // Optional only so existing deploys boot: when unset the key is derived
+    // from JWT_ACCESS_SECRET — which then can't be rotated without breaking
+    // every enrolled 2FA device. Never change it once users have enrolled.
+    DATA_ENCRYPTION_KEY: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().min(32).optional(),
+    ),
+    // Shared state across API replicas: rate-limit counters, auth caches
+    // (with cross-instance cache busting) and the session denylist. Optional
+    // — without it everything falls back to per-process memory, which is
+    // correct only while a single instance runs (local dev, CI, today's
+    // single Railway service). Required before scaling out to >1 replica.
+    REDIS_URL: optionalString(),
+    // Which background work this process runs. `all` (default) = HTTP +
+    // pollers/intervals in one process, as today. In production run one
+    // `api` service (HTTP only) and one or more `worker` services (pollers),
+    // so a slow outbox/webhook backlog never competes with request latency.
+    PROCESS_ROLE: z.enum(['api', 'worker', 'all']).default('all'),
+    // CSRF custom-header check for cookie-authenticated mutating requests
+    // (header `X-Locoomo-Client`). Rolled out off → report (log only) →
+    // enforce (403) so existing frontends don't break the day it ships.
+    CSRF_MODE: z.enum(['off', 'report', 'enforce']).default('report'),
+    // Outbox throughput knobs (notifications/application/outbox-poller).
+    OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(250).default(2_000),
+    OUTBOX_BATCH_SIZE: z.coerce.number().int().min(1).max(1_000).default(50),
+    OUTBOX_CONCURRENCY: z.coerce.number().int().min(1).max(100).default(10),
+    // SMS (notifications, D10). Optional by design: with no provider/key
+    // configured — or a key the provider rejects — SMS sends are skipped
+    // (logged) and every flow continues on its other channels. SMS is never
+    // a hard dependency.
+    SMS_PROVIDER: z.enum(['none', 'termii']).default('none'),
+    SMS_API_KEY: optionalString(),
+    // Registered sender ID (Termii requires one approved per account).
+    SMS_SENDER_ID: z.string().min(1).max(11).default('Locoomo'),
+    // Termii gives each account its own base URL in the dashboard.
+    TERMII_BASE_URL: z.url().default('https://v3.api.termii.com'),
+    // `generic` is the default route; `dnd` delivers to DND-registered
+    // numbers but must be activated on the Termii account first.
+    TERMII_CHANNEL: z.enum(['generic', 'dnd']).default('generic'),
+    // How many reverse proxies sit in front of the app (Express `trust
+    // proxy`), so request.ip is the real client: per-IP rate limits, audit
+    // IPs, API-key IP allow-lists. Railway's edge is one hop. Unset: 1 when
+    // running on Railway (RAILWAY_PROJECT_ID etc. are set), else 0.
+    TRUST_PROXY_HOPS: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.coerce.number().int().min(0).max(5).optional(),
+    ),
+    // Show the 7.5% VAT included in merchant prices as its own line
+    // (plan §8.3, F3). Prices are VAT-inclusive either way; off until
+    // finance confirms Locoomo charges VAT on these services.
+    VAT_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    // Global kill switch for the merchant platform (plan §10). `false`
+    // answers every /merchant route with 503 MERCHANT_PLATFORM_DISABLED;
+    // admin merchant routes keep working so ops can still act.
+    MERCHANT_PLATFORM_ENABLED: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
+    // Merchant dashboard origin for links in merchant emails (invites,
+    // review outcomes), e.g. https://merchant.locoomo.com. Defaults to
+    // FRONTEND_URL when unset.
+    MERCHANT_DASHBOARD_URL: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.url().optional(),
+    ),
   })
   .refine(
     (config) =>

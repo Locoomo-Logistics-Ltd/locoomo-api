@@ -11,22 +11,23 @@ import { verifyPassword } from '../domain/password-hasher';
 import { UserStatus } from '../domain/user-status.enum';
 import { UserEntity } from '../infrastructure/entities/user.entity';
 import { LoginDto } from '../interface/dto/login.dto';
-import { IssuedSession, TokenIssuanceService } from './token-issuance.service';
+import { LoginResult, SessionStarterService } from './session-starter.service';
+import { SessionClient, UNKNOWN_CLIENT } from './token-issuance.service';
 
-export interface LoginResult {
-  user: UserEntity;
-  session: IssuedSession;
-}
+export type { LoginResult } from './session-starter.service';
 
 @Injectable()
 export class LoginUserService {
   constructor(
     @InjectRepository(UserEntity)
     private readonly users: Repository<UserEntity>,
-    private readonly tokenIssuanceService: TokenIssuanceService,
+    private readonly sessionStarter: SessionStarterService,
   ) {}
 
-  async login(dto: LoginDto): Promise<LoginResult> {
+  async login(
+    dto: LoginDto,
+    client: SessionClient = UNKNOWN_CLIENT,
+  ): Promise<LoginResult> {
     const user = await this.users.findOneBy({
       email: dto.email.toLowerCase(),
     });
@@ -55,8 +56,7 @@ export class LoginUserService {
       throw new AccountSuspendedException();
     }
 
-    const session = await this.tokenIssuanceService.issueSession(user);
-    return { user, session };
+    return this.sessionStarter.start(user, client);
   }
 
   private async registerFailedAttempt(user: UserEntity): Promise<void> {

@@ -22,6 +22,14 @@ import { RefreshSessionService } from '../application/refresh-session.service';
 import { RegisterUserService } from '../application/register-user.service';
 import { RequestPasswordResetService } from '../application/request-password-reset.service';
 import { VerifyEmailService } from '../application/verify-email.service';
+import { MfaService } from '../application/mfa.service';
+import {
+  LoginResult,
+  SessionStarterService,
+} from '../application/session-starter.service';
+import { UserLookupService } from '../application/user-lookup.service';
+import { MfaChallengeResponseDto, VerifyMfaChallengeDto } from './dto/mfa.dto';
+import { sessionClientFrom } from './session-client';
 import { ConfirmEmailVerificationDto } from './dto/confirm-email-verification.dto';
 import { ConfirmInviteDto } from './dto/confirm-invite.dto';
 import { ConfirmPasswordResetDto } from './dto/confirm-password-reset.dto';
@@ -51,6 +59,9 @@ export class AuthController {
     private readonly confirmInviteService: ConfirmInviteService,
     private readonly googleAuthService: GoogleAuthService,
     private readonly configService: ConfigService<Env, true>,
+    private readonly mfaService: MfaService,
+    private readonly sessionStarter: SessionStarterService,
+    private readonly userLookupService: UserLookupService,
   ) {}
 
   // Stricter than the app-wide default (100/min) — these two are the
@@ -63,18 +74,20 @@ export class AuthController {
     return this.registerUserService.register(dto);
   }
 
+  // Accounts with 2FA get `{ mfaRequired: true, mfaToken }` instead of a
+  // session — finish at POST /auth/mfa/verify.
   @Throttle({ default: { limit: 5, ttl: seconds(60) } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
     @Body() dto: LoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<UserResponseDto> {
-    const { user, session } = await this.loginUserService.login(dto);
-
-    setSessionCookies(res, session, this.useSecureCookies());
-
-    return UserResponseDto.fromEntity(user);
+  ): Promise<UserResponseDto | MfaChallengeResponseDto> {
+    return this.respond(
+      await this.loginUserService.login(dto, sessionClientFrom(req)),
+      res,
+    );
   }
 
   // Same 5/min throttle bracket as register/login — a comparable
@@ -85,12 +98,37 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async google(
     @Body() dto: GoogleAuthDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<UserResponseDto | MfaChallengeResponseDto> {
+    return this.respond(
+      await this.googleAuthService.authenticate(dto, sessionClientFrom(req)),
+      res,
+    );
+  }
+
+  // Second step of a 2FA sign-in. Per-IP throttle on top of the per-
+  // challenge attempt limit (MFA_CHALLENGE_MAX_ATTEMPTS).
+  @Throttle({ default: { limit: 10, ttl: seconds(60) } })
+  @Post('mfa/verify')
+  @HttpCode(HttpStatus.OK)
+  async verifyMfa(
+    @Body() dto: VerifyMfaChallengeDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<UserResponseDto> {
-    const { user, session } = await this.googleAuthService.authenticate(dto);
-
+    const userId = await this.mfaService.completeChallenge(
+      dto.mfaToken,
+      dto.recoveryCode !== undefined
+        ? { recoveryCode: dto.recoveryCode }
+        : { code: dto.code ?? '' },
+    );
+    const user = await this.userLookupService.getActiveUserForSession(userId);
+    const session = await this.sessionStarter.finishAfterMfa(
+      user,
+      sessionClientFrom(req),
+    );
     setSessionCookies(res, session, this.useSecureCookies());
-
     return UserResponseDto.fromEntity(user);
   }
 
@@ -109,8 +147,10 @@ export class AuthController {
     }
 
     try {
-      const { user, session } =
-        await this.refreshSessionService.refresh(rawToken);
+      const { user, session } = await this.refreshSessionService.refresh(
+        rawToken,
+        sessionClientFrom(req),
+      );
       setSessionCookies(res, session, this.useSecureCookies());
       return UserResponseDto.fromEntity(user);
     } catch (error) {
@@ -175,6 +215,17 @@ export class AuthController {
   async confirmInvite(@Body() dto: ConfirmInviteDto): Promise<null> {
     await this.confirmInviteService.confirmInvite(dto);
     return null;
+  }
+
+  private respond(
+    result: LoginResult,
+    res: Response,
+  ): UserResponseDto | MfaChallengeResponseDto {
+    if (result.session) {
+      setSessionCookies(res, result.session, this.useSecureCookies());
+      return UserResponseDto.fromEntity(result.user);
+    }
+    return { mfaRequired: true, mfaToken: result.mfaToken };
   }
 
   private useSecureCookies(): boolean {

@@ -7,7 +7,7 @@ import { RiderStatus } from '../domain/rider-status.enum';
 import { InvalidVerificationDocumentException } from '../domain/exceptions/invalid-verification-document.exception';
 import { ProfileIncompleteException } from '../domain/exceptions/profile-incomplete.exception';
 import { RiderAlreadyOnboardedException } from '../domain/exceptions/rider-already-onboarded.exception';
-import { CloudinaryService } from '../infrastructure/cloudinary.service';
+import { CloudinaryService } from '../../../common/cloudinary/cloudinary.service';
 import { RiderProfileEntity } from '../infrastructure/entities/rider-profile.entity';
 import { RiderVerificationDocumentEntity } from '../infrastructure/entities/rider-verification-document.entity';
 import { OnboardRiderDto } from '../interface/dto/onboard-rider.dto';

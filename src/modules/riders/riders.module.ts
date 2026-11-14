@@ -8,7 +8,7 @@ import { OnboardRiderService } from './application/onboard-rider.service';
 import { RiderCapacityService } from './application/rider-capacity.service';
 import { RiderQueryService } from './application/rider-query.service';
 import { SetRiderPayoutAccountService } from './application/set-rider-payout-account.service';
-import { CloudinaryService } from './infrastructure/cloudinary.service';
+import { CloudinaryModule } from '../../common/cloudinary/cloudinary.module';
 import { RiderProfileEntity } from './infrastructure/entities/rider-profile.entity';
 import { RiderVerificationDocumentEntity } from './infrastructure/entities/rider-verification-document.entity';
 import { RidersController } from './interface/riders.controller';
@@ -23,10 +23,11 @@ import { RidersController } from './interface/riders.controller';
     IdentityModule,
     // PaystackBankService, for PATCH me/payout-account verification.
     PaymentsModule,
+    // Signed verification-evidence uploads (shared with merchant KYC).
+    CloudinaryModule,
   ],
   controllers: [RidersController],
   providers: [
-    CloudinaryService,
     GetUploadSignatureService,
     OnboardRiderService,
     ApproveRiderService,
