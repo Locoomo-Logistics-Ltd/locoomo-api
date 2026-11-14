@@ -119,7 +119,7 @@ export const envSchema = z
     // How many reverse proxies sit in front of the app (Express `trust
     // proxy`), so request.ip is the real client: per-IP rate limits, audit
     // IPs, API-key IP allow-lists. Railway's edge is one hop. Unset: 1 when
-    // running on Railway (RAILWAY_ENVIRONMENT is set), else 0.
+    // running on Railway (RAILWAY_PROJECT_ID etc. are set), else 0.
     TRUST_PROXY_HOPS: z.preprocess(
       (value) => (value === '' ? undefined : value),
       z.coerce.number().int().min(0).max(5).optional(),

@@ -1,4 +1,4 @@
-import { isPublishableKeyPath } from '../../../bootstrap';
+import { isPublishableKeyPath, trustProxyHops } from '../../../bootstrap';
 import { ipAllowed } from './api-key-authenticator.service';
 import { windowsFor } from './api-rate-limiter';
 
@@ -28,5 +28,18 @@ describe('API key checks', () => {
     expect(isPublishableKeyPath('/api/v1/merchant/nodesx')).toBe(false);
     expect(isPublishableKeyPath('/api/v1/merchant/shipments')).toBe(false);
     expect(isPublishableKeyPath('/api/v1/merchant/api-keys')).toBe(false);
+  });
+});
+
+describe('trust proxy hops', () => {
+  const config = (hops?: number) =>
+    ({ get: () => hops }) as unknown as Parameters<typeof trustProxyHops>[0];
+
+  it('trusts Railway’s one proxy hop when running there, and nothing locally', () => {
+    expect(trustProxyHops(config(), { RAILWAY_PROJECT_ID: 'p' })).toBe(1);
+    expect(trustProxyHops(config(), { RAILWAY_ENVIRONMENT_ID: 'e' })).toBe(1);
+    expect(trustProxyHops(config(), {})).toBe(0);
+    expect(trustProxyHops(config(2), { RAILWAY_PROJECT_ID: 'p' })).toBe(2);
+    expect(trustProxyHops(config(0), { RAILWAY_PROJECT_ID: 'p' })).toBe(0);
   });
 });

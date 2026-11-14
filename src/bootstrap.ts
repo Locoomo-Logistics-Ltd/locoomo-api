@@ -57,10 +57,23 @@ export function isPublishableKeyPath(url: string): boolean {
 
 // Reverse proxies in front of the app. Without this, request.ip is the
 // proxy for every user, so per-IP limits are shared by everyone.
-export function trustProxyHops(config: ConfigService<Env, true>): number {
+export function trustProxyHops(
+  config: ConfigService<Env, true>,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
   return (
     config.get('TRUST_PROXY_HOPS', { infer: true }) ??
-    (process.env.RAILWAY_ENVIRONMENT ? 1 : 0)
+    (isOnRailway(env) ? 1 : 0)
+  );
+}
+
+// Railway always injects these into a running service (the older
+// RAILWAY_ENVIRONMENT alias isn't guaranteed on every project).
+function isOnRailway(env: NodeJS.ProcessEnv): boolean {
+  return !!(
+    env.RAILWAY_ENVIRONMENT_ID ||
+    env.RAILWAY_PROJECT_ID ||
+    env.RAILWAY_ENVIRONMENT
   );
 }
 
