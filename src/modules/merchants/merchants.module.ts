@@ -53,6 +53,14 @@ import { VolumeDiscountTierSetEntity } from './infrastructure/entities/volume-di
 import { AdminMerchantPricingController } from './interface/admin-merchant-pricing.controller';
 import { EarningsModule } from '../earnings/earnings.module';
 import { ShipmentImportEntity } from './infrastructure/entities/shipment-import.entity';
+import { MerchantClaimEntity } from './infrastructure/entities/merchant-claim.entity';
+import { MerchantClaimsService } from './application/merchant-claims.service';
+import { AdminClaimsService } from './application/admin-claims.service';
+import {
+  ClaimsController,
+  TestClaimsController,
+} from './interface/claims.controller';
+import { AdminMerchantClaimsController } from './interface/admin-merchant-claims.controller';
 import { ShipmentImportRowEntity } from './infrastructure/entities/shipment-import-row.entity';
 import { ShipmentImportsController } from './interface/shipment-imports.controller';
 import { LabelRenderer } from './infrastructure/label-renderer';
@@ -128,6 +136,7 @@ import { WebhooksController } from './interface/webhooks.controller';
       WalletTopUpEntity,
       MerchantFundingAccountEntity,
       ShipmentImportEntity,
+      MerchantClaimEntity,
       ShipmentImportRowEntity,
       VolumeDiscountTierSetEntity,
     ]),
@@ -170,6 +179,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     AdminMerchantWalletController,
     MerchantDocumentsController,
     AdminMerchantDocumentsController,
+    ClaimsController,
+    TestClaimsController,
+    AdminMerchantClaimsController,
     ShipmentImportsController,
     MerchantPricingController,
     AdminMerchantPricingController,
@@ -204,6 +216,8 @@ import { WebhooksController } from './interface/webhooks.controller';
     LabelRenderer,
     DocumentRenderer,
     MerchantDocumentsService,
+    MerchantClaimsService,
+    AdminClaimsService,
     ShipmentLabelService,
     ShipmentImportService,
     MerchantPricingService,

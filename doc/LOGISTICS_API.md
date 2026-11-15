@@ -1272,7 +1272,8 @@ For a parcel in our care that's gone missing or been damaged:
 `OrderTransition` with `"status": "exception"`. Whatever the parcel was holding (origin or
 destination shelf space, the rider's slot) is freed and the sender is emailed. Not allowed
 before drop-off or after it's finished (`409 ILLEGAL_ORDER_TRANSITION`). An active courier
-booking isn't cancelled automatically; check *Deliveries* (§8.5).
+booking isn't cancelled automatically; check *Deliveries* (§8.5). For a merchant parcel
+a claim opens automatically (API.md, *Admin: merchant claims*).
 
 ### 8.0 Public holidays — `/admin/public-holidays` (`ops`)
 

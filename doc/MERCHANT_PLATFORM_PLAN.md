@@ -1181,6 +1181,31 @@ Decisions:
 - Set `INVOICE_SELLER_NAME`, `INVOICE_SELLER_ADDRESS` and `INVOICE_SELLER_TIN` in
   production before merchants download live invoices.
 
+### M4f1 Claims: done (2026-11-15)
+
+M4f ships as **M4f1 claims** (this) → M4f2 merchant return batches.
+
+| Item | Where |
+|---|---|
+| `merchant_claims` (one open/approved claim per shipment via a partial unique index; payout snapshot `maxPayoutKobo`), `limits.claimCapKobo` (default ₦50,000). Migration 373 | entities, `merchant-limits.ts` |
+| `POST /merchant/claims` (+ `/uploads` for Cloudinary evidence), `GET /merchant/claims[/:id]`, sandbox `POST /merchant/test/claims/:id/decide` | `claims.controller.ts`, `merchant-claims.service.ts`, `domain/claim.ts` |
+| A shipment moving to `exception` (live mirror or simulator) opens a claim (`source: exception`) and sets `exception.claimId` | `live-shipment-sync.service.ts`, `shipment-simulator.service.ts` |
+| Admin queue, notes, reject (`ops`/`finance`); payout raised by `finance` as approval `merchant.claim_payout`, executed by a second `finance` admin: `claim_credit` wallet entry (unique `claim:<id>` ref), `claim.decided` webhook, team email | `admin-claims.service.ts`, `admin-merchant-claims.controller.ts` |
+
+Decisions:
+- **Who can claim what:** `lost` only while the parcel is in our care; `damaged` /
+  `missing_item` also after hand-over (`collected`, `returned`). 30-day window from the
+  shipment's last status change (F5).
+- **Payout ceiling** = min(declared value, cap), fixed at filing; without a declared value
+  the cap is the ceiling and ops assess. Partial payouts allowed.
+- **Rejection is single-admin** (no money moves); **payout is two-admin** (E12). A pending
+  payout blocks rejection and a second payout; a rejected or expired approval frees the
+  claim again (no approval hooks needed).
+- **Test claims** are decided by the merchant (sandbox), never by admins.
+- **Not yet:** the delivery fee isn't refunded on a lost parcel (only the goods'
+  value is paid); auto-flagging parcels with no scan for 5 working days (§6.6) is still
+  to build. The MERCHANT_API no longer promises it.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

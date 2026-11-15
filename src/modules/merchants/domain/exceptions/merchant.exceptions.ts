@@ -579,3 +579,69 @@ export class InvoiceNotAvailableException extends BusinessException {
     super(message);
   }
 }
+
+export class ClaimNotAllowedException extends BusinessException {
+  readonly errorCode = 'CLAIM_NOT_ALLOWED';
+  readonly httpStatus = 409;
+
+  constructor(type: string, status: string) {
+    super(
+      type === 'lost'
+        ? `A shipment can be claimed as lost only while it's in our care (it is ${status})`
+        : `This shipment was never in our care (it is ${status}), so there's nothing to claim`,
+    );
+    this.details = { type, status };
+  }
+}
+
+export class ClaimWindowClosedException extends BusinessException {
+  readonly errorCode = 'CLAIM_WINDOW_CLOSED';
+  readonly httpStatus = 422;
+
+  constructor(windowDays: number) {
+    super(
+      `Claims must be filed within ${windowDays} days of the shipment's last status change`,
+    );
+  }
+}
+
+export class ClaimAlreadyOpenException extends BusinessException {
+  readonly errorCode = 'CLAIM_ALREADY_OPEN';
+  readonly httpStatus = 409;
+
+  constructor(claimId: string) {
+    super('This shipment already has an open or approved claim');
+    this.details = { claimId };
+  }
+}
+
+export class ClaimAlreadyDecidedException extends BusinessException {
+  readonly errorCode = 'CLAIM_ALREADY_DECIDED';
+  readonly httpStatus = 409;
+
+  constructor(status: string) {
+    super(`This claim was already ${status}`);
+  }
+}
+
+export class ClaimPayoutPendingException extends BusinessException {
+  readonly errorCode = 'CLAIM_PAYOUT_PENDING';
+  readonly httpStatus = 409;
+
+  constructor(approvalId: string) {
+    super(
+      'A payout for this claim is waiting for approval. Reject that approval first.',
+    );
+    this.details = { approvalId };
+  }
+}
+
+export class ClaimPayoutTooHighException extends BusinessException {
+  readonly errorCode = 'CLAIM_PAYOUT_TOO_HIGH';
+  readonly httpStatus = 422;
+
+  constructor(maxPayoutKobo: number) {
+    super('The payout is more than this claim can pay');
+    this.details = { maxPayoutKobo };
+  }
+}

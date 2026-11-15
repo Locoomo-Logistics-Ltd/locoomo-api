@@ -442,6 +442,67 @@ export class MerchantNotifierService {
     );
   }
 
+  // A claim was approved (and paid into the wallet) or rejected (D18).
+  async claimDecided(
+    merchant: MerchantEntity,
+    claim: {
+      status: 'approved' | 'rejected';
+      mode: 'test' | 'live';
+      trackingCode: string;
+      reference: string;
+      payoutKobo: number | null;
+      merchantNote: string | null;
+    },
+    manager: EntityManager,
+  ): Promise<void> {
+    const recipients = await this.teamLeads(merchant.id, manager, [
+      MerchantRole.OWNER,
+      MerchantRole.ADMIN,
+      MerchantRole.FINANCE,
+    ]);
+    const approved = claim.status === 'approved';
+    const test = claim.mode === 'test' ? ' (test)' : '';
+    await this.send(
+      recipients,
+      {
+        subject: approved
+          ? `Claim approved${test}: ${formatNaira(claim.payoutKobo ?? 0)} credited for ${claim.reference}`
+          : `Claim not approved${test}: ${claim.reference}`,
+        heading: approved
+          ? 'Your claim was approved'
+          : 'Your claim was not approved',
+        blocks: [
+          {
+            kind: 'details',
+            rows: [
+              { label: 'Business', value: merchant.tradingName },
+              {
+                label: 'Shipment',
+                value: `${claim.reference} (${claim.trackingCode})`,
+              },
+              ...(approved
+                ? [
+                    {
+                      label: 'Credited to your wallet',
+                      value: formatNaira(claim.payoutKobo ?? 0),
+                    },
+                  ]
+                : []),
+              ...(claim.merchantNote
+                ? [{ label: 'Note from Locoomo', value: claim.merchantNote }]
+                : []),
+            ],
+          },
+          {
+            kind: 'paragraph',
+            text: `See the claim in the merchant dashboard: ${this.dashboardUrl('/claims')}`,
+          },
+        ],
+      },
+      manager,
+    );
+  }
+
   // A live wallet went below its tier's negative floor (plan §8.4): ops
   // follow up; parcels in flight keep moving.
   async walletBelowFloor(

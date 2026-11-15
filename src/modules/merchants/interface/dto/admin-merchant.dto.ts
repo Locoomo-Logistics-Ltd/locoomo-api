@@ -82,6 +82,13 @@ export class MerchantLimitsDto {
   @IsInt()
   @Max(0)
   negativeBalanceFloorKobo?: number | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000_000)
+  claimCapKobo?: number | null;
 }
 
 export class ApproveMerchantDto {

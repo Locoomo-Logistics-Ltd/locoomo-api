@@ -920,7 +920,7 @@ failure), so register the final URL.
 | `shipment.disposed` | An uncollected return was disposed of |
 | `shipment.exception` | Lost or damaged |
 | `manifest.received` | Hub finished checking a manifest in |
-| `claim.decided` | Claim approved or rejected |
+| `claim.decided` | Claim approved (paid into your wallet) or rejected: `data.claim` (§15) |
 | `wallet.funded` | A top-up was credited: `data.topUp` (§14.1) and `data.wallet` (the wallet after it) |
 | `wallet.low_balance` | Available balance fell below your threshold: `data.wallet`, `data.thresholdKobo`. Once per crossing |
 | `merchant.status_changed` | Your account was submitted, approved, suspended, etc. Sent to test and live endpoints |
@@ -928,8 +928,8 @@ failure), so register the final URL.
 
 Sent today: every `shipment.*` event above except `collection_reminder` and
 `destination_changed` for live parcels (test mode simulates both), plus `wallet.funded`,
-`wallet.low_balance`, `merchant.status_changed` and `webhook.test`. `manifest.received`
-and `claim.decided` arrive with their features. Expect new event types over time
+`wallet.low_balance`, `claim.decided`, `merchant.status_changed` and `webhook.test`.
+`manifest.received` arrives with manifests. Expect new event types over time
 ([§3](#3-versioning-and-stability)). Ignore the ones you
 don't handle and still respond 2xx.
 
@@ -963,6 +963,10 @@ don't handle and still respond 2xx.
   weight. An impossible move returns `409 INVALID_SIMULATION`; a live shipment
   `403 TEST_MODE_ONLY`.
 - Test top-ups use Paystack's test cards.
+- Test claims ([§15](#15-claims-lost-or-damaged-parcels)) are decided by you:
+  `POST /test/claims/{id}/decide` with `{ "decision": "approve" | "reject", "amountKobo"?,
+  "note"? }` (scope `claims:write`). Approving credits the test wallet and both send
+  `claim.decided`. `amountKobo` defaults to the most the claim can pay.
 
 ---
 
@@ -1051,7 +1055,7 @@ be negative after a re-measure (see above).
 | `shipment_charge` | A shipment's fee, charged when we received it | − |
 | `shipment_adjustment` | Re-priced after we measured it | − (or + if it came out cheaper) |
 | `adjustment` | A correction by Locoomo (approved by two Locoomo staff) | ± |
-| `claim_credit` | An approved claim *(coming with claims)* | + |
+| `claim_credit` | An approved claim's payout (§15) | + |
 | `refund` | Balance refunded to your bank account *(on closure)* | − |
 | `test_funding` | Test mode only: the starting ₦1,000,000 and resets | ± |
 
@@ -1128,14 +1132,69 @@ Errors: `422 INVALID_STATEMENT_MONTH` (not `YYYY-MM`, or in the future),
 
 ## 15. Claims (lost or damaged parcels)
 
-- `POST /claims` with `{ "shipmentId", "type": "lost" | "damaged" | "missing_item", "description", "evidence": ["…upload ids"] }`
-  within **30 days** of the last status change.
-- We investigate and decide (`claim.decided`). Approved claims are credited to your wallet:
-  **the declared value, capped at ₦50,000** per parcel unless your contract says otherwise.
-  Declare values accurately; insure high-value goods yourself.
-- A parcel with no scan for 5 working days while in our custody is investigated
-  automatically.
-- Prohibited items (listed in the merchant terms) are refused at drop-off.
+If a parcel is lost or damaged while Locoomo has it, or arrives with something missing,
+file a claim. We investigate, decide, and pay approved claims into your wallet.
+
+**What we pay:** the parcel's declared value (`parcel.declaredValueKobo`), **capped at
+₦50,000** per parcel unless your contract says otherwise. Without a declared value we
+assess the loss, up to the cap. Each claim shows its ceiling as `maxPayoutKobo`. Declare
+values accurately and insure high-value goods yourself.
+
+**When you can claim** (within **30 days** of the shipment's last status change):
+
+| `type` | Allowed when the shipment is |
+|---|---|
+| `lost` | In our care: `received`, `in_transit`, `ready_for_collection`, `returning`, `return_ready` or `exception` |
+| `damaged`, `missing_item` | Any of those, or after hand-over: `collected`, `returned` |
+
+Never for `created`, `cancelled`, `expired`, `refused` or `disposed` shipments. One open
+or approved claim per shipment; after a rejection you may file again (for example with
+better evidence).
+
+**When we find the problem first:** if we record a parcel lost or damaged, we open a claim
+for you (`source: "exception"`); its id is in the shipment's `exception.claimId` and the
+`shipment.exception` webhook.
+
+**Evidence (optional, up to 10 files).** For each photo or PDF, get a signed upload with
+**`POST /claims/uploads`** (scope `claims:write`), upload the file straight to our file
+store with it, and send the returned `public_id` in `evidence`.
+
+**`POST /claims`** (scope `claims:write`, `Idempotency-Key` supported):
+
+```json
+{
+  "shipmentId": "3f0c…",
+  "type": "damaged",
+  "description": "Screen cracked on arrival, box crushed.",
+  "evidence": ["merchants/…/claims/abc123"]
+}
+```
+
+→ `201` with the Claim:
+
+```json
+{
+  "id": "9b1d…", "shipmentId": "3f0c…", "reference": "ORDER-1042", "trackingCode": "LCM-2611-7KQ2",
+  "type": "damaged", "source": "merchant", "status": "open",
+  "description": "Screen cracked on arrival, box crushed.", "evidence": ["merchants/…/claims/abc123"],
+  "declaredValueKobo": 2000000, "maxPayoutKobo": 2000000, "payoutKobo": null,
+  "decisionNote": null, "decidedAt": null,
+  "createdAt": "2026-11-15T10:05:00.000Z", "updatedAt": "2026-11-15T10:05:00.000Z"
+}
+```
+
+`status`: `open` (we're looking at it), `approved` (`payoutKobo` was credited to your
+wallet as a `claim_credit` entry) or `rejected`. `decisionNote` explains the decision.
+
+**`GET /claims?status=&shipmentId=&limit=&cursor=`** and **`GET /claims/{id}`** (scope
+`shipments:read`). You also get `claim.decided` with `data.claim` and an email when we
+decide.
+
+Errors: `409 CLAIM_NOT_ALLOWED` (wrong status for that type), `422 CLAIM_WINDOW_CLOSED`,
+`409 CLAIM_ALREADY_OPEN` (`details.claimId`), `422 UPLOAD_NOT_FOUND` (an evidence id that
+isn't one of your uploads).
+
+Prohibited items (listed in the merchant terms) are refused at drop-off.
 
 ---
 
@@ -1174,6 +1233,10 @@ Errors: `422 INVALID_STATEMENT_MONTH` (not `YYYY-MM`, or in the future),
 | 409 | `WEBHOOK_ENDPOINT_LIMIT_REACHED` | 5 endpoints per mode |
 | 422 | `REPLAY_WINDOW_EXCEEDED` | Replays reach back 30 days at most |
 | 422 | `CLAIM_WINDOW_CLOSED` | More than 30 days |
+| 409 | `CLAIM_NOT_ALLOWED` | That claim type doesn't fit the shipment's status (§15) |
+| 409 | `CLAIM_ALREADY_OPEN` | One open or approved claim per shipment; `details.claimId` |
+| 409 | `CLAIM_ALREADY_DECIDED` | Test claims: already approved or rejected |
+| 422 | `CLAIM_PAYOUT_TOO_HIGH` | Test claims: more than `maxPayoutKobo` |
 | 422 | `INVALID_STATEMENT_MONTH` | Use `YYYY-MM`, not in the future |
 | 409 | `INVOICE_NOT_AVAILABLE` | Invoices are live-only, for months that have ended |
 | 429 | `RATE_LIMITED` | Back off; honour `Retry-After` |
@@ -1225,6 +1288,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Claims** (§15): `POST /claims` with optional evidence uploads (`POST /claims/uploads`), `GET /claims`, `claim.decided`, payouts as `claim_credit` wallet entries. A parcel we record lost or damaged opens a claim for you (`exception.claimId`). In test mode, decide your own claims with `POST /test/claims/{id}/decide` |
 | 2026-11-15 | **Statements and tax invoices** (§14.2): `GET /statements/{yyyy-mm}` (either mode, current month to date) and `GET /invoices/{yyyy-mm}` (live, finished months), as PDF or CSV |
 | 2026-11-15 | **Volume discounts and low-balance alerts** (§14): your discount is applied to quotes and shipments, `GET /pricing` explains it, and `wallet.low_balance` fires when available balance drops below the line you set in the dashboard. `GET /wallet` adds `lowBalanceThresholdKobo` |
 | 2026-11-15 | **Shipment imports** (§7.3): up to 10,000 shipments from JSON or a CSV file, created in the background with per-row results (`GET /shipment-imports/{id}/rows`) and a CSV template |

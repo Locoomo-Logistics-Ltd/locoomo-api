@@ -44,7 +44,7 @@ interface Shipment {
     method: string | null;
   };
   return: { reason: string; readyForCollectionAt: string | null } | null;
-  exception: { type: string } | null;
+  exception: { type: string; claimId: string | null } | null;
 }
 interface Order {
   id: string;
@@ -1004,6 +1004,182 @@ describe('Live merchant shipments (e2e)', () => {
       await handoff(originOperator, orderId, 'drop-off', {
         measured: { lengthCm: 20 },
       }).expect(400);
+    });
+  });
+
+  describe('claims (M4f1)', () => {
+    let opsAdmin: string[];
+    let financeMaker: string[];
+    let financeChecker: string[];
+    const admin = (cookie: string[]) => ({
+      get: (url: string) =>
+        http().get(`/api/v1/admin${url}`).set('Cookie', cookie),
+      post: (url: string, body: object = {}) =>
+        http().post(`/api/v1/admin${url}`).set('Cookie', cookie).send(body),
+    });
+    interface Claim {
+      id: string;
+      source: string;
+      status: string;
+      maxPayoutKobo: number;
+      payoutKobo: number | null;
+      decisionNote: string | null;
+      pendingPayoutApprovalId?: string | null;
+    }
+
+    beforeAll(async () => {
+      const adminUser = (name: string, permissions: AdminPermission[]) =>
+        makeUser(name, { role: UserRole.ADMIN, adminPermissions: permissions });
+      opsAdmin = await signIn(
+        await adminUser('claims-ops', [AdminPermission.OPS]),
+      );
+      financeMaker = await signIn(
+        await adminUser('claims-finance', [AdminPermission.FINANCE]),
+      );
+      financeChecker = await signIn(
+        await adminUser('claims-checker', [AdminPermission.FINANCE]),
+      );
+    });
+
+    afterAll(async () => {
+      await dataSource.query(
+        `DELETE FROM approval_requests WHERE "requestedByUserId" IN (SELECT id FROM users WHERE email LIKE $1)`,
+        [`claims-%@${DOMAIN}`],
+      );
+    });
+
+    it('opens a claim for a parcel lost in our care and pays it after two finance admins', async () => {
+      const s = await create({
+        parcel: {
+          description: 'Phone',
+          size: 'small',
+          weightKg: 0.4,
+          declaredValueKobo: 3_000_000,
+        },
+      });
+      const orderId = (await orderOf(s.trackingCode)).id;
+      await handoff(originOperator, orderId, 'drop-off').expect(200);
+      await pickUp(orderId);
+      await admin(opsAdmin)
+        .post(`/orders/${orderId}/exception`, {
+          type: 'lost',
+          note: 'Rider reports the parcel fell off the bike',
+        })
+        .expect(200);
+
+      const after = await shipment(s.id);
+      expect(after.status).toBe('exception');
+      const claimId = after.exception!.claimId!;
+      expect(
+        data<Claim>(await live.get(`/claims/${claimId}`).expect(200)),
+      ).toMatchObject({
+        source: 'exception',
+        status: 'open',
+        maxPayoutKobo: 3_000_000,
+      });
+      expect(
+        code(
+          await live
+            .post('/claims', {
+              shipmentId: s.id,
+              type: 'lost',
+              description: 'Never arrived at the Node.',
+            })
+            .expect(409),
+        ),
+      ).toBe('CLAIM_ALREADY_OPEN');
+
+      const payout = (cookie: string[], amountKobo: number) =>
+        admin(cookie).post(`/merchant-claims/${claimId}/payout`, {
+          amountKobo,
+          merchantNote: 'Declared value refunded.',
+          reason: 'Rider confirmed the loss',
+        });
+      expect(code(await payout(opsAdmin, 3_000_000).expect(403))).toBe(
+        'FORBIDDEN',
+      );
+      expect(code(await payout(financeMaker, 3_000_001).expect(422))).toBe(
+        'CLAIM_PAYOUT_TOO_HIGH',
+      );
+      const requested = data<{ approvalId: string; summary: string }>(
+        await payout(financeMaker, 3_000_000).expect(201),
+      );
+      expect(requested.summary).toContain('lost claim');
+      expect(code(await payout(financeMaker, 3_000_000).expect(409))).toBe(
+        'CLAIM_PAYOUT_PENDING',
+      );
+      expect(
+        code(
+          await admin(opsAdmin)
+            .post(`/merchant-claims/${claimId}/reject`, { merchantNote: 'No.' })
+            .expect(409),
+        ),
+      ).toBe('CLAIM_PAYOUT_PENDING');
+      expect(
+        data<Claim>(
+          await admin(opsAdmin).get(`/merchant-claims/${claimId}`).expect(200),
+        ).pendingPayoutApprovalId,
+      ).toBe(requested.approvalId);
+
+      const before = (await wallet()).balanceKobo;
+      await admin(financeChecker)
+        .post(`/approvals/${requested.approvalId}/approve`)
+        .expect(200);
+      expect((await wallet()).balanceKobo).toBe(before + 3_000_000);
+      expect(
+        data<Claim>(await live.get(`/claims/${claimId}`).expect(200)),
+      ).toMatchObject({
+        status: 'approved',
+        payoutKobo: 3_000_000,
+        decisionNote: 'Declared value refunded.',
+      });
+    });
+
+    it('rejects a merchant claim with a note, and the merchant can file again', async () => {
+      const s = await create();
+      const orderId = (await orderOf(s.trackingCode)).id;
+      await handoff(originOperator, orderId, 'drop-off').expect(200);
+      const claim = data<Claim>(
+        await live
+          .post('/claims', {
+            shipmentId: s.id,
+            type: 'damaged',
+            description: 'Box arrived wet at the Node.',
+          })
+          .expect(201),
+      );
+      expect(claim).toMatchObject({ source: 'merchant', status: 'open' });
+
+      await http()
+        .patch(`/api/v1/admin/merchant-claims/${claim.id}`)
+        .set('Cookie', opsAdmin)
+        .send({ internalNote: 'Node photos show a dry box.' })
+        .expect(200);
+      const queue = data<{ items: Claim[] }>(
+        await admin(opsAdmin)
+          .get(`/merchant-claims?status=open&merchantId=${merchantId}`)
+          .expect(200),
+      );
+      expect(queue.items.map((c) => c.id)).toContain(claim.id);
+
+      const rejected = data<Claim>(
+        await admin(opsAdmin)
+          .post(`/merchant-claims/${claim.id}/reject`, {
+            merchantNote: 'The Node photographed it dry at drop-off.',
+          })
+          .expect(200),
+      );
+      expect(rejected).toMatchObject({
+        status: 'rejected',
+        decisionNote: 'The Node photographed it dry at drop-off.',
+      });
+      await live
+        .post('/claims', {
+          shipmentId: s.id,
+          type: 'damaged',
+          description: 'New photos from the buyer attached.',
+        })
+        .expect(201);
     });
   });
 

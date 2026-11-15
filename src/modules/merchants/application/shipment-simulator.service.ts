@@ -27,6 +27,7 @@ import {
 import { ShipmentEventsService } from './shipment-events.service';
 import { ShipmentPresenter } from './shipment-presenter';
 import { WalletService } from './wallet.service';
+import { MerchantClaimsService } from './merchant-claims.service';
 
 const S = ShipmentStatus;
 // How much a simulated re-measure raises the fee.
@@ -44,6 +45,7 @@ export class ShipmentSimulatorService {
     private readonly nodes: NodesService,
     private readonly wallet: WalletService,
     private readonly presenter: ShipmentPresenter,
+    private readonly claims: MerchantClaimsService,
   ) {}
 
   async simulate(
@@ -180,7 +182,11 @@ export class ShipmentSimulatorService {
         shipment.exceptionInfo = {
           type: exceptionType,
           reportedAt: now.toISOString(),
-          claimId: null,
+          claimId: await this.claims.openForException(
+            manager,
+            shipment,
+            exceptionType,
+          ),
         };
         data = { type: exceptionType };
         break;
