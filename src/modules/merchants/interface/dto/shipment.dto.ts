@@ -23,6 +23,8 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import type { LabelFormat } from '../../domain/label';
+import { LABEL_FORMATS, MAX_LABELS_PER_REQUEST } from '../../domain/label';
 import { CursorQueryDto } from '../../../../common/pagination/cursor-query.dto';
 import { HANDLING_FLAGS } from '../../../../common/parcel/parcel-details.dto';
 import { ParcelSize } from '../../../../common/parcel-size.enum';
@@ -255,6 +257,26 @@ export class BulkCreateShipmentsDto {
   @ArrayMaxSize(100)
   @IsObject({ each: true })
   items!: Record<string, unknown>[];
+}
+
+export class LabelFormatQueryDto {
+  /** `a6` (one label per page, default) or `a4` (four per page). */
+  @IsOptional()
+  @IsIn(LABEL_FORMATS)
+  format: LabelFormat = 'a6';
+}
+
+export class ShipmentLabelsDto {
+  /** 1–100 shipment ids, printed in this order. */
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(MAX_LABELS_PER_REQUEST)
+  @IsUUID('all', { each: true })
+  shipmentIds!: string[];
+
+  @IsOptional()
+  @IsIn(LABEL_FORMATS)
+  format: LabelFormat = 'a6';
 }
 
 export class ListShipmentsQueryDto extends CursorQueryDto {

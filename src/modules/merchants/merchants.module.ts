@@ -44,6 +44,12 @@ import { TrackingModule } from '../tracking/tracking.module';
 import { LiveShipmentSyncService } from './application/live-shipment-sync.service';
 import { ShipmentExpiryService } from './application/shipment-expiry.service';
 import { ShipmentPresenter } from './application/shipment-presenter';
+import { ShipmentLabelService } from './application/shipment-label.service';
+import { ShipmentImportService } from './application/shipment-import.service';
+import { ShipmentImportEntity } from './infrastructure/entities/shipment-import.entity';
+import { ShipmentImportRowEntity } from './infrastructure/entities/shipment-import-row.entity';
+import { ShipmentImportsController } from './interface/shipment-imports.controller';
+import { LabelRenderer } from './infrastructure/label-renderer';
 import { ApiKeyEntity } from './infrastructure/entities/api-key.entity';
 import { MerchantApiRequestEntity } from './infrastructure/entities/merchant-api-request.entity';
 import { MerchantBankAccountEntity } from './infrastructure/entities/merchant-bank-account.entity';
@@ -109,6 +115,8 @@ import { WebhooksController } from './interface/webhooks.controller';
       WalletHoldEntity,
       WalletTopUpEntity,
       MerchantFundingAccountEntity,
+      ShipmentImportEntity,
+      ShipmentImportRowEntity,
     ]),
     // ApprovalService + registry: wallet adjustments need a second admin.
     AdminModule,
@@ -145,6 +153,7 @@ import { WebhooksController } from './interface/webhooks.controller';
     WalletController,
     TestWalletController,
     AdminMerchantWalletController,
+    ShipmentImportsController,
   ],
   providers: [
     MerchantContextService,
@@ -173,6 +182,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     ShipmentPresenter,
     LiveShipmentSyncService,
     ShipmentExpiryService,
+    LabelRenderer,
+    ShipmentLabelService,
+    ShipmentImportService,
   ],
 })
 export class MerchantsModule {}

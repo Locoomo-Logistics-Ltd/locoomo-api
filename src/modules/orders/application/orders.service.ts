@@ -49,6 +49,7 @@ export interface CreateOrderFromPaidIntentFields {
 // orders, it holds no origin slot until the parcel is received (§5.2).
 export interface CreateMerchantOrderFields {
   merchantId: string;
+  notifyReceiver: 'locoomo' | 'merchant' | 'both';
   originNodeId: string;
   destinationNodeId: string;
   receiverFullName: string;
@@ -1035,6 +1036,8 @@ export class OrdersService {
             vehicleClass: fields.vehicleClass,
             amountKobo: fields.amountKobo,
             destinationFeeKobo: fields.destinationFeeKobo,
+            notifyReceiver:
+              'notifyReceiver' in fields ? fields.notifyReceiver : 'locoomo',
             status: OrderStatus.AWAITING_DROP_OFF,
             trackingCode: generateTrackingCode(),
           }),

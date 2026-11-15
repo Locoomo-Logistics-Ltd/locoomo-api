@@ -143,6 +143,11 @@ export class OrderEntity {
   @Column({ type: 'jsonb', nullable: true })
   measured!: Record<string, unknown> | null;
 
+  // Who tells the receiver (plan D19): `locoomo` (email/SMS), `merchant`
+  // (the merchant relays the code; we stay silent) or `both`.
+  @Column({ type: 'varchar', default: 'locoomo' })
+  notifyReceiver!: 'locoomo' | 'merchant' | 'both';
+
   // Whether this parcel currently counts against its destination Node's
   // capacity (nodes.destinationHeldCount). Managed only by handoffs'
   // DestinationCapacitySubscriber.

@@ -1,5 +1,9 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
+import {
+  ReceiverCodeRelay,
+  RelayedCode,
+} from '../../handoffs/application/receiver-code-relay';
 import { SenderContactService } from '../../handoffs/application/sender-contact.service';
 import {
   OrderStatusChanged,
@@ -47,6 +51,7 @@ interface OrderFacts {
   exception: { type?: ExceptionType } | null;
   originNodeId: string;
   measured: MeasuredParcel | null;
+  notifyReceiver: string;
 }
 
 // What the origin counter measured (orders.measured).
@@ -77,10 +82,14 @@ export class LiveShipmentSyncService
     private readonly senderContacts: SenderContactService,
     private readonly shipments: MerchantShipmentService,
     private readonly orders: OrdersService,
+    private readonly codeRelay: ReceiverCodeRelay,
   ) {}
 
   onModuleInit(): void {
     this.bus.subscribe(this);
+    this.codeRelay.register({
+      relay: (code, manager) => this.relayCode(code, manager),
+    });
     // Return, refusal and lost/damaged emails for merchant orders go to the
     // merchant's contact email (handoffs can't import merchants).
     this.senderContacts.register('merchant', async (order, manager) => {
@@ -136,12 +145,20 @@ export class LiveShipmentSyncService
     const [facts] = await manager.query<OrderFacts[]>(
       `SELECT "returnReason", "collectionDeadlineAt", "collectedAt",
               "collectionMethod", "collectorName", refusal, exception,
-              "originNodeId", measured
+              "originNodeId", measured, "notifyReceiver"
          FROM orders WHERE id = $1`,
       [change.orderId],
     );
     if (target === S.RECEIVED) {
       await this.receive(manager, shipment, facts, change);
+      return;
+    }
+    // Relayed parcels become ready when their code is issued (relayCode),
+    // so the webhook carries it.
+    if (
+      target === S.READY_FOR_COLLECTION &&
+      facts.notifyReceiver !== 'locoomo'
+    ) {
       return;
     }
     shipment.status = target;
@@ -344,6 +361,49 @@ export class LiveShipmentSyncService
                 : 'measured',
         },
       },
+    });
+  }
+
+  // notifyReceiver merchant/both (plan D19): every collection code we
+  // issue reaches the merchant, never stored, only in the webhook. The
+  // first moves the shipment to ready_for_collection; a replacement
+  // (resend, new receiver contact) comes as shipment.updated.
+  private async relayCode(
+    code: RelayedCode,
+    manager: EntityManager,
+  ): Promise<void> {
+    const shipment = await manager
+      .getRepository(MerchantShipmentEntity)
+      .createQueryBuilder('s')
+      .where('s."trackingCode" = :trackingCode AND s.mode = :mode', {
+        trackingCode: code.trackingCode,
+        mode: 'live',
+      })
+      .setLock('pessimistic_write')
+      .getOne();
+    if (!shipment) {
+      return;
+    }
+    const secrets = { collectionCode: code.collectionCode };
+    if (code.kind === 'ready') {
+      if (!canTransition(shipment.status, S.READY_FOR_COLLECTION)) {
+        return;
+      }
+      shipment.status = S.READY_FOR_COLLECTION;
+      shipment.statusChangedAt = new Date();
+      shipment.collectionDeadline = code.collectBy;
+      await this.events.apply(manager, shipment, S.READY_FOR_COLLECTION, {
+        nodeName: shipment.destination.nodeName,
+        secrets,
+      });
+      return;
+    }
+    if (shipment.status !== S.READY_FOR_COLLECTION) {
+      return;
+    }
+    await this.events.apply(manager, shipment, 'updated', {
+      data: { changed: ['collectionCode'] },
+      secrets,
     });
   }
 }

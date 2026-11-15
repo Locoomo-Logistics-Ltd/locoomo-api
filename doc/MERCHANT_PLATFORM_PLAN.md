@@ -1098,6 +1098,50 @@ Decisions:
   skip transport; refused with a clear message instead.
 - The origin slot is taken where the parcel physically is (the new origin).
 
+### M4d1 Receiver code relay for live parcels: done (2026-11-15)
+
+M4d ships as **M4d1 relay** → M4d2 labels → M4d3 imports.
+
+| Item | Where |
+|---|---|
+| `orders.notifyReceiver` (`locoomo`/`merchant`/`both`, CHECK), set from the live shipment. Migration 370 | `order.entity.ts`, `orders.service.ts` |
+| `ReceiverNotificationService` decides in one place: `merchant` → no on-its-way, code, new-code or reminder messages to the buyer; `merchant`/`both` → every issued code goes to `ReceiverCodeRelay` in the issuing transaction | `receiver-notification.service.ts`, `receiver-code-relay.ts` (exported) |
+| Merchants' relay handler: first code moves the shipment to `ready_for_collection` with `collectionCode` in the webhook (the mirror leaves that status to it for relay orders); replacements go out as `shipment.updated` (`changed: ["collectionCode"]`). Codes are only ever in webhook bodies, never in shipment history | `live-shipment-sync.service.ts` |
+
+Decisions:
+- **A receiver change that reissues a code sends two `shipment.updated` events** (one for
+  the receiver, one carrying the new code), so the code never rides on an unrelated event.
+- Reminders aren't relayed yet (`shipment.collection_reminder` stays simulator-only).
+
+### M4d2 Labels: done (2026-11-15)
+
+| Item | Where |
+|---|---|
+| Label content (first name + phone last 4 only, tracking code as scan value, route, merchant, reference, size, handling, test marker) | `merchants/domain/label.ts` |
+| PDF rendering: A6 one-up or A4 four-up with cut guides; Code 128 (`bwip-js`) and QR (`qrcode`), `pdfkit` | `merchants/infrastructure/label-renderer.ts` |
+| `GET /merchant/shipments/:id/label?format=a6\|a4`, `POST /merchant/shipments/labels` (1–100, in order); raw PDF (`@SkipResponseEnvelope`), errors still enveloped | `shipment-label.service.ts`, `shipments.controller.ts` |
+
+Decision: **labels are synchronous** (`POST /shipments/labels`, ≤ 100) instead of the
+planned async `POST /label-batches`. 100 labels render in well under a second, so a job
+queue added nothing; larger runs page through.
+
+### M4d3 Shipment imports: done (2026-11-15). M4d complete
+
+| Item | Where |
+|---|---|
+| `shipment_imports` (status, counts, worker lock) and `shipment_import_rows` (input, CSV line, status, shipment or error). Migration 371 | `merchants/infrastructure/entities/` |
+| CSV parser (RFC 4180, BOM, quoted commas/newlines), column mapping (`meta_*` → metadata, naira → kobo, unknown columns refused), template | `merchants/domain/shipment-import.ts` |
+| `POST /merchant/shipment-imports` (JSON `{ items }` or multipart CSV ≤ 5 MB, ≤ 10,000 rows, ≤ 3 in flight per mode), list, detail, rows (`?status=failed`), `template.csv` | `shipment-imports.controller.ts` |
+| Worker (5 s ticks, 20 s budget): claims the oldest open import (`SKIP LOCKED`, lease), creates 100 rows per claim through `MerchantShipmentService.createItem` (the bulk path), re-checks the account per chunk (fails the rest with the reason if it can't create any more), recognises its own rows after an interruption via `DUPLICATE_REFERENCE` | `shipment-import.service.ts` |
+
+Decisions:
+- **No new dependency for CSV**: a ~60-line parser with tests covers RFC 4180 and Excel's
+  BOM.
+- **No Idempotency-Key on imports** (multipart bodies); per-account unique references make
+  re-uploading the same file safe: already-created rows fail with `DUPLICATE_REFERENCE`.
+- **Row results are a separate paged endpoint** rather than inlined on the import (10,000
+  rows don't belong in one response).
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).
