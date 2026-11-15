@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import {
   CursorPage,
   decodeOffsetCursor,
@@ -12,6 +14,7 @@ import {
 } from '../../nodes/application/nodes.service';
 import { DeliveryQuoteService } from '../../payments/application/delivery-quote.service';
 import { OriginRequiredException } from '../domain/exceptions/merchant.exceptions';
+import { MerchantEntity } from '../infrastructure/entities/merchant.entity';
 import { MerchantPricingService } from './merchant-pricing.service';
 import {
   estimatedReadyInWorkingDays,
@@ -48,6 +51,7 @@ export class MerchantCatalogService {
     private readonly quotes: DeliveryQuoteService,
     private readonly config: ConfigService<Env, true>,
     private readonly pricing: MerchantPricingService,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
   async listNodes(
@@ -87,13 +91,22 @@ export class MerchantCatalogService {
       merchant: { merchantId: string; mode: 'test' | 'live' } | null;
     },
   ): Promise<QuoteView> {
-    // Hubs (the default origin) arrive with M5.
-    if (!query.originNodeId) {
+    // Without an origin, quote from the merchant's assigned hub (plan D2).
+    const originNodeId =
+      query.originNodeId ??
+      (options.merchant
+        ? (
+            await this.dataSource.manager.findOneBy(MerchantEntity, {
+              id: options.merchant.merchantId,
+            })
+          )?.hubNodeId
+        : null);
+    if (!originNodeId) {
       throw new OriginRequiredException();
     }
     const quote = await this.quotes.quote(
       {
-        originNodeId: query.originNodeId,
+        originNodeId,
         destinationNodeId: query.destinationNodeId,
       },
       {

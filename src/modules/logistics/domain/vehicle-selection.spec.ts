@@ -1,3 +1,4 @@
+import { bagVehicleClass } from './delivery-leg';
 import { VehicleClass } from './delivery-leg';
 import { chooseVehicleClass, VehicleClassRule } from './vehicle-selection';
 
@@ -82,5 +83,14 @@ describe('chooseVehicleClass', () => {
         heightCm: 50,
       }),
     ).toBeNull();
+  });
+});
+
+describe('bagVehicleClass', () => {
+  it('takes the largest parcel vehicle, and a car past a motorbike load', () => {
+    expect(bagVehicleClass(['bicycle', 'motorbike'])).toBe('motorbike');
+    expect(bagVehicleClass(['bicycle', 'car'])).toBe('car');
+    expect(bagVehicleClass(Array(6).fill('bicycle'))).toBe('car');
+    expect(bagVehicleClass(['van', null])).toBe('van');
   });
 });

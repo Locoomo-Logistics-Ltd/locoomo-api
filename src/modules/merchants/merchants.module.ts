@@ -65,6 +65,16 @@ import {
   TestReturnBatchesController,
 } from './interface/return-batches.controller';
 import { NodeOperatorsModule } from '../node-operators/node-operators.module';
+import {
+  MerchantManifestEntity,
+  MerchantManifestItemEntity,
+} from './infrastructure/entities/merchant-manifest.entity';
+import { ManifestService } from './application/manifest.service';
+import {
+  HubManifestsController,
+  ManifestsController,
+  TestManifestsController,
+} from './interface/manifests.controller';
 import { MerchantClaimsService } from './application/merchant-claims.service';
 import { AdminClaimsService } from './application/admin-claims.service';
 import {
@@ -150,6 +160,8 @@ import { WebhooksController } from './interface/webhooks.controller';
       MerchantClaimEntity,
       MerchantReturnBatchEntity,
       MerchantReturnBatchItemEntity,
+      MerchantManifestEntity,
+      MerchantManifestItemEntity,
       ShipmentImportRowEntity,
       VolumeDiscountTierSetEntity,
     ]),
@@ -201,6 +213,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     ReturnBatchesController,
     TestReturnBatchesController,
     NodeReturnBatchesController,
+    ManifestsController,
+    TestManifestsController,
+    HubManifestsController,
     ShipmentImportsController,
     MerchantPricingController,
     AdminMerchantPricingController,
@@ -238,6 +253,7 @@ import { WebhooksController } from './interface/webhooks.controller';
     MerchantClaimsService,
     AdminClaimsService,
     ReturnBatchService,
+    ManifestService,
     ShipmentLabelService,
     ShipmentImportService,
     MerchantPricingService,

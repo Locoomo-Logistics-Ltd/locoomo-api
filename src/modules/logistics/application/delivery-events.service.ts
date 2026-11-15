@@ -207,29 +207,46 @@ export class DeliveryEventsService {
     }
     await manager.getRepository(DeliveryLegEntity).save(leg);
 
-    await this.bus.publish(
-      {
-        orderId: leg.orderId,
-        legId: leg.id,
-        legType: leg.legType,
-        providerKey: leg.providerKey,
-        event,
-        courierUserId: leg.courierUserId,
-        reason: leg.failureReason,
-      },
-      manager,
-    );
+    // A bag's leg (M5b) moves every parcel in the bag: the same event once
+    // per parcel, in id order (the order locks every writer takes).
+    const orderIds = leg.bagId
+      ? (
+          await manager.query<{ id: string }[]>(
+            `SELECT id FROM orders WHERE "bagId" = $1 ORDER BY id`,
+            [leg.bagId],
+          )
+        ).map((row) => row.id)
+      : [leg.orderId!];
+    for (const orderId of orderIds) {
+      await this.bus.publish(
+        {
+          orderId,
+          bagId: leg.bagId,
+          legId: leg.id,
+          legType: leg.legType,
+          providerKey: leg.providerKey,
+          event,
+          courierUserId: leg.courierUserId,
+          reason: leg.failureReason,
+        },
+        manager,
+      );
+    }
 
     // A cancelled leg (before pickup — later states can't be cancelled)
-    // means the parcel is still at the Node: route it again, to this
-    // provider if it allows another attempt, else down the list.
+    // means the parcel (or bag) is still at the Node: route it again, to
+    // this provider if it allows another attempt, else down the list.
     if (event === DeliveryEventType.CANCELLED) {
-      await this.deliveryDispatchService.dispatch(
-        leg.orderId,
-        manager,
-        leg.legType,
-        { providerKey: options.routeTo },
-      );
+      if (leg.bagId) {
+        await this.deliveryDispatchService.dispatchBag(leg.bagId, manager);
+      } else {
+        await this.deliveryDispatchService.dispatch(
+          leg.orderId!,
+          manager,
+          leg.legType,
+          { providerKey: options.routeTo },
+        );
+      }
     }
     return true;
   }

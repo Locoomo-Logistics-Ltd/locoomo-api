@@ -160,6 +160,11 @@ export class OrderEntity {
   @Column({ type: 'boolean', default: false })
   destinationSlotHeld!: boolean;
 
+  // The bag it travels in (M5b): merchant parcels sorted at a hub. Its
+  // courier leg is the bag's, not its own.
+  @Column({ type: 'uuid', nullable: true })
+  bagId!: string | null;
+
   // Proof of delivery (plan §5.4): when, how (code | id_check), who
   // collected, and an optional photo taken at the counter.
   @Column({ type: 'timestamptz', nullable: true })

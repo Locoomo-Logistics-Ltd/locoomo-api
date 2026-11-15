@@ -1,3 +1,7 @@
+import { BagService } from './application/bag.service';
+import { BagsController } from './interface/bags.controller';
+import { BagEntity } from './infrastructure/entities/bag.entity';
+import { IdentityModule } from '../identity/identity.module';
 import { CollectionCompletionService } from './application/collection-completion.service';
 import { CollectWithIdService } from './application/collect-with-id.service';
 import { CounterUploadsService } from './application/counter-uploads.service';
@@ -46,7 +50,7 @@ import { HandoffsController } from './interface/handoffs.controller';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([HandoffCodeEntity]),
+    TypeOrmModule.forFeature([HandoffCodeEntity, BagEntity]),
     // OrdersModule: OrdersService narrow writes (assignRider,
     // markReceivedAtOrigin, markPickedUpByRider, markArrivedAtDestination,
     // markReadyForCollection, markCollected).
@@ -70,9 +74,12 @@ import { HandoffsController } from './interface/handoffs.controller';
     LogisticsModule,
     // Counter photos (refusals, ID-check collections).
     CloudinaryModule,
+    // AdminPermissionService: who to alert about parcels missing from bags.
+    IdentityModule,
   ],
-  controllers: [HandoffsController, AdminOrdersController],
+  controllers: [HandoffsController, AdminOrdersController, BagsController],
   providers: [
+    BagService,
     ParcelRecallService,
     ReceiverCodeRelay,
     BrowseAvailableOrdersService,
@@ -114,6 +121,8 @@ import { HandoffsController } from './interface/handoffs.controller';
     ReceiverCodeRelay,
     // handBackInBatch: merchant return batches (merchants module).
     ReturnCollectionService,
+    // Hub check-in scans (merchants module, M5a) drop parcels off through it.
+    ConfirmDropOffService,
   ],
 })
 export class HandoffsModule {}

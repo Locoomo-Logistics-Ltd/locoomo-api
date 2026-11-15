@@ -683,3 +683,61 @@ export class InvalidReturnBatchCodeException extends BusinessException {
     super('Invalid or expired handoff code');
   }
 }
+
+export class NotAHubException extends BusinessException {
+  readonly errorCode = 'NOT_A_HUB';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super('That Node isn’t an active hub');
+  }
+}
+
+export class ManifestInvalidException extends BusinessException {
+  readonly errorCode = 'MANIFEST_INVALID';
+  readonly httpStatus = 422;
+
+  constructor(
+    problems: {
+      shipmentId: string;
+      problem: 'not_found' | 'not_awaiting_drop_off' | 'in_another_manifest';
+    }[],
+  ) {
+    super(
+      'Some shipments can’t go on this manifest: each must be yours, not yet dropped off, and not on another manifest',
+    );
+    this.details = { problems };
+  }
+}
+
+export class ManifestNotEditableException extends BusinessException {
+  readonly errorCode = 'MANIFEST_NOT_EDITABLE';
+  readonly httpStatus = 409;
+
+  constructor(status: string) {
+    super(`This manifest is ${status}`);
+    this.details = { status };
+  }
+}
+
+export class ParcelNotFoundException extends BusinessException {
+  readonly errorCode = 'PARCEL_NOT_FOUND';
+  readonly httpStatus = 404;
+
+  constructor() {
+    super(
+      'No parcel waiting for drop-off matches that code. Set it aside as unidentified for ops.',
+    );
+  }
+}
+
+export class AmbiguousParcelCodeException extends BusinessException {
+  readonly errorCode = 'AMBIGUOUS_PARCEL_CODE';
+  readonly httpStatus = 409;
+
+  constructor() {
+    super(
+      'More than one parcel matches that code. Scan the Locoomo label, or scan the manifest first.',
+    );
+  }
+}

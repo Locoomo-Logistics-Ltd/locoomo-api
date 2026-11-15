@@ -21,6 +21,10 @@ import { NodeMembershipEntity } from '../../src/modules/node-operators/infrastru
 import { MerchantPricingService } from '../../src/modules/merchants/application/merchant-pricing.service';
 import { OrdersService } from '../../src/modules/orders/application/orders.service';
 import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
+import { BagService } from '../../src/modules/handoffs/application/bag.service';
+import { DeliveryEventsService } from '../../src/modules/logistics/application/delivery-events.service';
+import { LogisticsProviderRegistry } from '../../src/modules/logistics/application/logistics-provider.registry';
+import { DeliveryLegStatus } from '../../src/modules/logistics/domain/delivery-leg';
 
 const PASSWORD = 'Correct-Horse-Battery-1';
 const DOMAIN = 'live.e2e.test';
@@ -33,6 +37,9 @@ interface ErrorBody {
 interface Shipment {
   id: string;
   mode: string;
+  reference: string;
+  externalBarcode: string | null;
+  origin: { type: string; nodeId: string | null };
   trackingCode: string;
   trackingUrl: string | null;
   status: string;
@@ -393,6 +400,15 @@ describe('Live merchant shipments (e2e)', () => {
         `DELETE FROM pricing_rules WHERE "createdByAdminId" IN (SELECT id FROM users WHERE email LIKE $1)`,
         [pattern],
       );
+      // Bags packed at our hub (M5b), and their courier legs.
+      const ourBags = `SELECT id FROM bags WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)`;
+      await dataSource.query(
+        `DELETE FROM delivery_legs WHERE "bagId" IN (${ourBags})`,
+        [`${NODE_PREFIX}%`],
+      );
+      await dataSource.query(`DELETE FROM bags WHERE id IN (${ourBags})`, [
+        `${NODE_PREFIX}%`,
+      ]);
       await dataSource.query(
         `DELETE FROM node_memberships WHERE "nodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)`,
         [`${NODE_PREFIX}%`],
@@ -1321,6 +1337,454 @@ describe('Live merchant shipments (e2e)', () => {
             .expect(409),
         ),
       ).toBe('RETURN_BATCH_NOT_OPEN');
+    });
+  });
+
+  describe('hubs and manifests (M5a)', () => {
+    let superAdmin: string[];
+    interface Manifest {
+      id: string;
+      reference: string;
+      status: string;
+      shipmentCount: number;
+      receivedCount: number;
+      unexpectedCount: number;
+      missingCount: number | null;
+    }
+    interface Receipt {
+      received: number;
+      missing: { shipmentId: string }[];
+      unexpected: { shipmentId: string }[];
+    }
+    interface Scan {
+      trackingCode: string;
+      sortInstruction: string;
+      manifest: { reference: string; expected: boolean } | null;
+      alreadyReceived: boolean;
+    }
+    const sandbox = {
+      get: (url: string) =>
+        http()
+          .get(`/api/v1/merchant${url}`)
+          .set('Cookie', owner)
+          .set('Locoomo-Mode', 'test'),
+      post: (url: string, body: object = {}) =>
+        http()
+          .post(`/api/v1/merchant${url}`)
+          .set('Cookie', owner)
+          .set('X-Locoomo-Client', 'web')
+          .set('Locoomo-Mode', 'test')
+          .send(body),
+    };
+    const hub = (cookie: string[]) => ({
+      get: (url: string) =>
+        http().get(`/api/v1/handoffs${url}`).set('Cookie', cookie),
+      post: (url: string, body: object = {}) =>
+        http()
+          .post(`/api/v1/handoffs${url}`)
+          .set('Cookie', cookie)
+          .set('X-Locoomo-Client', 'web')
+          .send(body),
+    });
+    const hubShipment = (
+      via: Pick<typeof live, 'post'> = live,
+      overrides: Record<string, unknown> = {},
+    ) =>
+      via
+        .post('/shipments', {
+          reference: `H-${randomUUID().slice(0, 8)}`,
+          destinationNodeId: node.destination,
+          origin: { type: 'hub' },
+          receiver: {
+            name: 'Chioma Okafor',
+            phone: '08031234567',
+            email: `buyer+${randomUUID().slice(0, 6)}@${DOMAIN}`,
+          },
+          parcel: { description: 'Earbuds', size: 'small', weightKg: 0.4 },
+          ...overrides,
+        })
+        .expect(201)
+        .then((r) => data<Shipment>(r));
+
+    beforeAll(async () => {
+      superAdmin = await signIn(
+        await makeUser('hub-super', {
+          role: UserRole.ADMIN,
+          adminPermissions: [AdminPermission.SUPER],
+        }),
+      );
+      const settings = (hubNodeId: string | null) =>
+        http()
+          .patch(`/api/v1/admin/merchants/${merchantId}/settings`)
+          .set('Cookie', superAdmin)
+          .send({ hubNodeId });
+      expect(code(await settings(node.origin).expect(422))).toBe('NOT_A_HUB');
+      await http()
+        .patch(`/api/v1/nodes/${node.origin}`)
+        .set('Cookie', superAdmin)
+        .send({ isHub: true })
+        .expect(200);
+      await settings(node.origin).expect(200);
+    });
+
+    it('ships from the assigned hub by default and quotes from it', async () => {
+      const s = await hubShipment();
+      expect(s.origin).toMatchObject({ type: 'hub', nodeId: node.origin });
+      await live
+        .get(`/quotes?destinationNodeId=${node.destination}&parcelSize=small`)
+        .expect(200);
+    });
+
+    it('checks a truck in against its manifest and reports what was missing', async () => {
+      const a = await hubShipment();
+      const b = await hubShipment(live, {
+        externalBarcode: `XB${randomUUID().slice(0, 10)}`,
+      });
+      const c = await hubShipment();
+      const stray = await hubShipment();
+
+      const manifest = data<Manifest>(
+        await live
+          .post('/manifests', {
+            expectedDropAt: new Date(Date.now() + 3_600_000).toISOString(),
+            shipmentIds: [a.id, b.id, c.id],
+          })
+          .expect(201),
+      );
+      expect(manifest).toMatchObject({ status: 'open', shipmentCount: 3 });
+      const other = data<Manifest>(await live.post('/manifests').expect(201));
+      const clash = await live
+        .post(`/manifests/${other.id}/shipments`, { shipmentIds: [a.id] })
+        .expect(422);
+      expect(code(clash)).toBe('MANIFEST_INVALID');
+      await live.post(`/manifests/${other.id}/cancel`).expect(200);
+
+      await live.post(`/manifests/${manifest.id}/close`).expect(200);
+      expect(
+        code(
+          await live
+            .post(`/manifests/${manifest.id}/shipments`, {
+              shipmentIds: [stray.id],
+            })
+            .expect(409),
+        ),
+      ).toBe('MANIFEST_NOT_EDITABLE');
+      const pdf = await live
+        .get(`/manifests/${manifest.id}/document`)
+        .buffer(true)
+        .parse((res, done) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => done(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      expect((pdf.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+
+      // Only the hub's own staff see it.
+      await hub(destinationOperator)
+        .get(`/manifests/${manifest.reference}`)
+        .expect(404);
+      const expected = data<{ reference: string }[]>(
+        await hub(originOperator).get('/manifests').expect(200),
+      );
+      expect(expected.map((m) => m.reference)).toContain(manifest.reference);
+
+      const scan = (code_: string) =>
+        hub(originOperator).post('/hub-intake', {
+          code: code_,
+          manifestReference: manifest.reference.toLowerCase(),
+        });
+      const first = data<Scan>(await scan(a.trackingCode).expect(200));
+      expect(first).toMatchObject({
+        alreadyReceived: false,
+        manifest: { reference: manifest.reference, expected: true },
+      });
+      expect(first.sortInstruction).toContain('Destination');
+      expect((await shipment(a.id)).status).toBe('received');
+      expect(
+        data<Scan>(await scan(a.trackingCode).expect(200)).alreadyReceived,
+      ).toBe(true);
+      const byBarcode = data<Scan>(await scan(b.externalBarcode!).expect(200));
+      expect(byBarcode.trackingCode).toBe(b.trackingCode);
+      const unexpected = data<Scan>(await scan(stray.reference).expect(200));
+      expect(unexpected.manifest).toEqual({
+        reference: manifest.reference,
+        expected: false,
+      });
+      expect(code(await scan('NOPE-123').expect(404))).toBe('PARCEL_NOT_FOUND');
+
+      const receipt = data<Receipt>(
+        await hub(originOperator)
+          .post(`/manifests/${manifest.reference}/complete`)
+          .expect(200),
+      );
+      expect(receipt.received).toBe(3);
+      expect(receipt.missing.map((m) => m.shipmentId)).toEqual([c.id]);
+      expect(receipt.unexpected.map((m) => m.shipmentId)).toEqual([stray.id]);
+      expect(
+        data<Manifest>(await live.get(`/manifests/${manifest.id}`).expect(200)),
+      ).toMatchObject({
+        status: 'received',
+        receivedCount: 3,
+        missingCount: 1,
+      });
+      const [event] = await dataSource.query<{ body: string }[]>(
+        `SELECT body FROM webhook_events WHERE "merchantId" = $1 AND type = 'manifest.received'
+          ORDER BY "createdAt" DESC LIMIT 1`,
+        [merchantId],
+      );
+      expect((JSON.parse(event.body) as { data: Receipt }).data).toMatchObject({
+        reference: manifest.reference,
+        received: 3,
+      });
+      // The missing one can go on the next truck.
+      await live.post('/manifests', { shipmentIds: [c.id] }).expect(201);
+    });
+
+    it('simulates a hub check-in in the sandbox', async () => {
+      const x = await hubShipment(sandbox);
+      const y = await hubShipment(sandbox);
+      const m = data<Manifest>(
+        await sandbox
+          .post('/manifests', { shipmentIds: [x.id, y.id] })
+          .expect(201),
+      );
+      const receipt = data<Receipt>(
+        await sandbox
+          .post(`/test/manifests/${m.id}/receive`, {
+            missingShipmentIds: [y.id],
+          })
+          .expect(200),
+      );
+      expect(receipt).toMatchObject({
+        received: 1,
+        missing: [{ shipmentId: y.id }],
+      });
+      expect(
+        data<Shipment>(await sandbox.get(`/shipments/${x.id}`).expect(200))
+          .status,
+      ).toBe('received');
+    });
+  });
+
+  describe('bags (M5b)', () => {
+    const COURIER = 'test_bags';
+    interface ScanResult {
+      sortInstruction: string;
+      bag: { code: string; parcelCount: number; sealed: boolean } | null;
+    }
+    interface Bag {
+      code: string;
+      status: string;
+      parcelCount: number;
+      parcels: { trackingCode: string; status: string }[];
+    }
+    const counter = (cookie: string[]) => ({
+      get: (url: string) =>
+        http().get(`/api/v1/handoffs${url}`).set('Cookie', cookie),
+      post: (url: string, body: object = {}) =>
+        http()
+          .post(`/api/v1/handoffs${url}`)
+          .set('Cookie', cookie)
+          .set('X-Locoomo-Client', 'web')
+          .send(body),
+    });
+    const hubParcel = async (destinationNodeId: string) => {
+      const s = data<Shipment>(
+        await live
+          .post('/shipments', {
+            reference: `B-${randomUUID().slice(0, 8)}`,
+            destinationNodeId,
+            origin: { type: 'hub' },
+            receiver: {
+              name: 'Chioma Okafor',
+              phone: '08031234567',
+              email: `buyer+${randomUUID().slice(0, 6)}@${DOMAIN}`,
+            },
+            parcel: { description: 'Earbuds', size: 'small', weightKg: 0.4 },
+          })
+          .expect(201),
+      );
+      const scan = data<ScanResult>(
+        await counter(originOperator)
+          .post('/hub-intake', { code: s.trackingCode })
+          .expect(200),
+      );
+      return { s, orderId: (await orderOf(s.trackingCode)).id, scan };
+    };
+    // The bag courier reporting progress, as its webhooks would.
+    const courierSays = async (bagCode: string, status: string) => {
+      const [leg] = await dataSource.query<{ externalId: string }[]>(
+        `SELECT l."externalId" FROM delivery_legs l JOIN bags b ON b.id = l."bagId"
+          WHERE b.code = $1 AND l.status IN ('requested', 'assigned', 'picked_up')`,
+        [bagCode],
+      );
+      await dataSource.transaction((manager) =>
+        app.get(DeliveryEventsService).syncFromSnapshot(
+          COURIER,
+          {
+            externalId: leg.externalId,
+            status: status as DeliveryLegStatus,
+            providerStatus: status,
+            sequence: null,
+            courier: { name: 'Bayo', phone: '+2348030000000', vehicle: 'car' },
+            trackingUrl: null,
+            actualKobo: null,
+            surchargeKobo: null,
+            failureReason: null,
+          },
+          manager,
+        ),
+      );
+    };
+    const bagStatus = async (code_: string) =>
+      (
+        await dataSource.query<{ status: string }[]>(
+          `SELECT status FROM bags WHERE code = $1`,
+          [code_],
+        )
+      )[0].status;
+
+    beforeAll(async () => {
+      app.get(LogisticsProviderRegistry).register({
+        key: COURIER,
+        capabilities: {
+          vehicleClasses: ['bicycle', 'motorbike', 'car', 'van'] as never,
+          handover: 'provider_code',
+          updates: 'webhook',
+          remoteSubmission: false,
+          cancellableUntil: 'requested' as never,
+          prepaidWallet: false,
+          carriesBags: true,
+        },
+        createDelivery: (request) =>
+          Promise.resolve({
+            externalId: `ext-${request.legId}`,
+            status: 'requested' as DeliveryLegStatus,
+            providerStatus: 'pending',
+            quotedKobo: 150_000,
+            trackingUrl: null,
+            etaMinutes: 45,
+            distanceMeters: null,
+          }),
+        cancel: () => Promise.resolve(),
+        getHandoverCodes: () =>
+          Promise.resolve({ pickupCode: '4321', deliveryCode: '8765' }),
+      });
+      // After in-house (1000): parcels still go to Locoomo riders; bags
+      // only to couriers that carry them.
+      await dataSource.query(
+        `INSERT INTO logistics_providers (key, label, enabled, priority, "maxAttempts")
+         VALUES ($1, 'Test bag courier', true, 2000, 3)`,
+        [COURIER],
+      );
+    });
+
+    afterAll(async () => {
+      await dataSource.query(
+        `DELETE FROM delivery_legs WHERE "providerKey" = $1`,
+        [COURIER],
+      );
+      await dataSource.query(`DELETE FROM logistics_providers WHERE key = $1`, [
+        COURIER,
+      ]);
+    });
+
+    it('packs hub drop-offs by destination, and moves the bag as one courier job', async () => {
+      const a = await hubParcel(node.elsewhere);
+      const b = await hubParcel(node.elsewhere);
+      const other = await hubParcel(node.northB);
+      expect(a.scan.bag?.code).toMatch(/^BAG-/);
+      expect(b.scan.bag?.code).toBe(a.scan.bag?.code);
+      expect(other.scan.bag?.code).not.toBe(a.scan.bag?.code);
+      expect(a.scan.sortInstruction).toContain(a.scan.bag!.code);
+      const code_ = a.scan.bag!.code;
+      // No courier per parcel: the bag gets one.
+      const [legs] = await dataSource.query<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM delivery_legs WHERE "orderId" = ANY($1)`,
+        [[a.orderId, b.orderId]],
+      );
+      expect(legs.count).toBe(0);
+
+      const listed = data<{ code: string }[]>(
+        await counter(originOperator).get('/bags?status=open').expect(200),
+      );
+      expect(listed.map((x) => x.code)).toContain(code_);
+      await counter(destinationOperator)
+        .post(`/bags/${code_}/seal`)
+        .expect(404);
+      const sealed = data<Bag>(
+        await counter(originOperator)
+          .post(`/bags/${code_.toLowerCase()}/seal`)
+          .expect(200),
+      );
+      expect(sealed).toMatchObject({ status: 'sealed', parcelCount: 2 });
+      expect(sealed.parcels).toHaveLength(2);
+      const [leg] = await dataSource.query<
+        { providerKey: string; orderId: string | null; vehicleClass: string }[]
+      >(
+        `SELECT l."providerKey", l."orderId", l."vehicleClass"
+           FROM delivery_legs l JOIN bags b ON b.id = l."bagId" WHERE b.code = $1`,
+        [code_],
+      );
+      expect(leg).toMatchObject({
+        providerKey: COURIER,
+        orderId: null,
+        vehicleClass: 'motorbike',
+      });
+
+      await courierSays(code_, 'assigned');
+      expect((await orderOf(a.s.trackingCode)).status).toBe('rider_assigned');
+      const pickup = data<{ kind: string; pickupCode: string }>(
+        await counter(originOperator)
+          .get(`/bags/${code_}/courier-handover`)
+          .expect(200),
+      );
+      expect(pickup).toMatchObject({ kind: 'pickup', pickupCode: '4321' });
+
+      const slotsBefore = await originCount();
+      await courierSays(code_, 'picked_up');
+      expect(await bagStatus(code_)).toBe('in_transit');
+      expect(await originCount()).toBe(slotsBefore - 2);
+      expect((await shipment(a.s.id)).status).toBe('in_transit');
+      expect((await shipment(b.s.id)).status).toBe('in_transit');
+      expect(
+        data<{ kind: string }>(
+          await counter(elsewhereOperator)
+            .get(`/bags/${code_}/courier-handover`)
+            .expect(200),
+        ).kind,
+      ).toBe('delivery');
+
+      await courierSays(code_, 'delivered');
+      expect(await bagStatus(code_)).toBe('arrived');
+      expect((await orderOf(b.s.trackingCode)).status).toBe(
+        'arrived_at_destination',
+      );
+
+      await handoff(elsewhereOperator, a.orderId, 'intake').expect(200);
+      expect(await bagStatus(code_)).toBe('arrived');
+      await handoff(elsewhereOperator, b.orderId, 'intake').expect(200);
+      expect(await bagStatus(code_)).toBe('unpacked');
+      expect((await shipment(b.s.id)).status).toBe('ready_for_collection');
+    });
+
+    it('flags parcels still missing a day after their bag arrived', async () => {
+      const lone = await hubParcel(node.northA);
+      const code_ = lone.scan.bag!.code;
+      await counter(originOperator).post(`/bags/${code_}/seal`).expect(200);
+      await courierSays(code_, 'assigned');
+      await courierSays(code_, 'picked_up');
+      await courierSays(code_, 'delivered');
+      await dataSource.query(
+        `UPDATE bags SET "arrivedAt" = now() - interval '25 hours' WHERE code = $1`,
+        [code_],
+      );
+      const run = await app.get(BagService).run();
+      expect(run.missingAlerts).toBeGreaterThanOrEqual(1);
+      const notice = await latestEmailTo(`claims-ops@${DOMAIN}`);
+      expect(notice.subject).toContain(`Missing from bag ${code_}`);
+      expect((await app.get(BagService).run()).missingAlerts).toBe(0);
     });
   });
 

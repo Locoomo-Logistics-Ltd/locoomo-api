@@ -1056,6 +1056,86 @@ Response `201`: same shape as `POST /payments/intents` (redirect to `authorizati
 Errors: `403 NODE_NOT_ACTIVE` (station not approved yet), `404 NOT_FOUND`,
 `422 NO_DELIVERY_OPTION`.
 
+### 5.11 Hub check-in — `/handoffs/hub-intake`
+
+A **hub** (`isHub`) receives bulk merchant inbound. Merchants send a truck with a
+**manifest** (`MF-3HX9-0QWE`, a QR on the driver's paper) listing what's on it.
+
+| Call | |
+|---|---|
+| `GET /handoffs/manifests` | Manifests on their way to your hubs (open or closed), soonest first: `{ reference, merchantName, status, expectedDropAt, expected, received }` |
+| `GET /handoffs/manifests/:reference` | One, with `parcels: [{ trackingCode, merchantReference, externalBarcode, received, expected }]`. Any case/spacing. `404` if it isn't for one of your hubs |
+| `POST /handoffs/hub-intake` | One parcel off the truck (below). Rate limit 600/min |
+| `POST /handoffs/manifests/:reference/complete` | Done with this truck → `{ received, missing: [{ shipmentId, reference }], unexpected: [...] }`; the merchant is told |
+
+**Scan** — scan the manifest QR first, then each parcel:
+
+```json
+{ "code": "LCM-7K3M-Q9TD", "manifestReference": "MF-3HX9-0QWE", "nodeId": "…", "measured": { "weightKg": 1.2 } }
+```
+
+- `code`: our tracking code, or (with a manifest) the merchant's reference or **their own
+  barcode** (cross-border parcels arrive with it). Without a manifest a reference/barcode
+  must match exactly one waiting parcel (`409 AMBIGUOUS_PARCEL_CODE`: scan our label or the
+  manifest first). Nothing matches → `404 PARCEL_NOT_FOUND`: set it aside as unidentified.
+- `nodeId`: only if you work at several Nodes (as for drop-off). `measured`: as for drop-off.
+- The parcel is dropped off exactly as at the counter (§5.4): it moves to this hub, is
+  measured and charged, takes a slot, and goes for dispatch.
+
+Response `200`:
+
+```json
+{
+  "trackingCode": "LCM-7K3M-Q9TD", "merchantReference": "TEMU-ORD-88413-1", "merchantName": "Ada Stores",
+  "destination": { "nodeId": "…", "name": "Yaba Node", "city": "Lagos" },
+  "sortInstruction": "Bag BAG-7KQ2-M9XD → Yaba Node, Lagos",
+  "bag": { "code": "BAG-7KQ2-M9XD", "parcelCount": 12, "sealed": false },
+  "manifest": { "reference": "MF-3HX9-0QWE", "expected": true },
+  "alreadyReceived": false
+}
+```
+
+Show `sortInstruction` big: **put the parcel in that bag**. `bag.sealed: true` means it was
+the 50th parcel and the bag closed itself: tag it and set it aside for the courier (§5.12).
+`alreadyReceived: true` means it was scanned before (nothing changed).
+`manifest.expected: false`: the parcel is the merchant's but wasn't declared; it's accepted
+and reported as unexpected. The same bagging happens for a merchant parcel dropped off at
+a hub counter (§5.4).
+
+### 5.12 Bags — `/handoffs/bags`
+
+At a **hub**, merchant parcels don't get a courier each: they go into **one bag per
+destination Node** (`BAG-7KQ2-M9XD`), and a sealed bag travels as **one courier job**.
+Consumer parcels at a hub still get their own courier.
+
+| Call | |
+|---|---|
+| `GET /handoffs/bags?status=` | Bags at your Nodes, leaving (hub) or arriving (destination), newest first; finished ones only with `status` |
+| `GET /handoffs/bags/:code` | One bag with `parcels: [{ trackingCode, status, shelfNumber }]`. Any case/spacing |
+| `POST /handoffs/bags/:code/seal` | Hub staff: close it now and book its courier. `409 BAG_NOT_SEALABLE` unless `open` |
+| `GET /handoffs/bags/:code/courier-handover` | The courier's code: `kind: "pickup"` for hub staff once a courier is assigned, `kind: "delivery"` for destination staff while it's on its way. `null` when there's nothing to hand over yet |
+
+A bag: `{ code, status, origin: { id, name, city }, destination: { id, name, city },
+parcelCount, sealedAt, arrivedAt, unpackedAt, createdAt }`.
+
+**Statuses:** `open` (packing) → `sealed` (tagged, courier booked) → `in_transit` (picked
+up) → `arrived` (handed over at the destination) → `unpacked` (every parcel scanned in).
+`cancelled`: sealed with nothing left in it.
+
+**At the hub:** scan parcels in (§5.11); each tells you its bag. Seal a bag when the
+courier is due, or it seals itself at **50 parcels**. Read the courier the `pickup` code
+from `courier-handover`; every parcel in the bag then moves together (`rider_assigned`,
+then `in_transit`), and your shelf space frees up.
+
+**At the destination:** read the courier the `delivery` code. Every parcel becomes
+`arrived_at_destination`. Open the bag and **scan each parcel in as usual**
+(`intake`, §5.7): shelf number, buyer's code. When the last one is scanned the bag is
+`unpacked`. Parcels still not scanned **24 hours** after the bag arrived are emailed to ops
+as missing.
+
+Bags travel only with couriers that carry bags (Sendii today). If none can take one, the
+bag stays `sealed` and is retried every 15 minutes.
+
 ---
 
 ## 6. Rider app (Locoomo riders)
@@ -1616,6 +1696,11 @@ No body. Response `200`: the updated delivery (same shape as a list item).
 
 After `fallback` the returned delivery is `cancelled` with
 `failureReason: "admin_fallback"`, and a new `in_house` delivery appears for the order.
+
+**Bags (M5b).** A bag's delivery has `orderId: null` and a `bagId`; `orderTrackingCode` is
+the bag code and `orderStatus` the bag's status. Filtering by a parcel's `trackingCode`
+also shows its bag's delivery. `fallback` is refused for bags (Locoomo riders don't carry
+bags yet); `retry` and `reconcile` work as usual.
 
 ### 8.6 Economics
 

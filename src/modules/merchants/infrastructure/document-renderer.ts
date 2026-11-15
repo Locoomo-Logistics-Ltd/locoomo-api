@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
 import type {
   InvoiceTotals,
   StatementEntry,
@@ -20,6 +21,20 @@ export interface StatementDocument {
   totals: StatementTotals;
   entries: StatementEntry[];
   truncatedAt: number | null;
+  generatedAt: Date;
+}
+
+export interface ManifestDocument {
+  reference: string;
+  merchantName: string;
+  mode: 'test' | 'live';
+  hub: PartyDetails;
+  expectedDropAt: Date | null;
+  shipments: {
+    trackingCode: string;
+    reference: string;
+    destination: string;
+  }[];
   generatedAt: Date;
 }
 
@@ -149,6 +164,61 @@ export class DocumentRenderer {
     });
   }
 
+  // For the driver: the hub scans the QR (the manifest reference) first,
+  // then each parcel.
+  async manifestPdf(doc: ManifestDocument): Promise<Buffer> {
+    const qr = await QRCode.toBuffer(doc.reference, {
+      margin: 0,
+      width: 300,
+      errorCorrectionLevel: 'M',
+    });
+    return this.render((pdf) => {
+      this.header(pdf, 'Manifest', doc.merchantName);
+      if (doc.mode === 'test') {
+        pdf
+          .fillColor('#B00020')
+          .fontSize(10)
+          .text('TEST MODE: not for shipping');
+        pdf.fillColor('#000000').moveDown(0.5);
+      }
+      const top = pdf.y;
+      pdf.image(qr, pdf.page.width - MARGIN - 110, top, { width: 110 });
+      pdf.font('Helvetica-Bold').fontSize(22).text(doc.reference, MARGIN, top, {
+        width: 330,
+      });
+      pdf.moveDown(0.5);
+      this.party(pdf, 'Deliver to hub', doc.hub);
+      pdf.moveDown(0.5);
+      this.keyValues(pdf, [
+        ['Parcels', String(doc.shipments.length)],
+        [
+          'Expected',
+          doc.expectedDropAt
+            ? `${lagosDate(doc.expectedDropAt)} ${new Date(doc.expectedDropAt.getTime() + 3_600_000).toISOString().slice(11, 16)}`
+            : '-',
+        ],
+      ]);
+      pdf.y = Math.max(pdf.y, top + 125);
+      pdf.moveDown();
+      this.table(
+        pdf,
+        ['#', 'Tracking code', 'Your reference', 'Destination'],
+        [35, 130, 150, 180],
+        doc.shipments.map((s, i) => [
+          String(i + 1),
+          s.trackingCode,
+          s.reference,
+          s.destination,
+        ]),
+        [],
+      );
+      this.footer(
+        pdf,
+        `${doc.reference} · generated ${doc.generatedAt.toISOString()}`,
+      );
+    });
+  }
+
   private async render(
     draw: (pdf: PDFKit.PDFDocument) => void,
   ): Promise<Buffer> {
@@ -217,6 +287,8 @@ export class DocumentRenderer {
     headings: string[],
     widths: number[],
     rows: string[][],
+    // Amount columns: the last two by default.
+    rightAligned: number[] = [headings.length - 2, headings.length - 1],
   ): void {
     const drawRow = (cells: string[], bold: boolean): void => {
       if (pdf.y > pdf.page.height - 90) {
@@ -227,7 +299,7 @@ export class DocumentRenderer {
       let height = 0;
       cells.forEach((cell, i) => {
         pdf.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9);
-        const align = i >= cells.length - 2 && i > 0 ? 'right' : 'left';
+        const align = i > 0 && rightAligned.includes(i) ? 'right' : 'left';
         pdf.text(cell, x, y, { width: widths[i] - 6, align });
         height = Math.max(height, pdf.y - y);
         x += widths[i];

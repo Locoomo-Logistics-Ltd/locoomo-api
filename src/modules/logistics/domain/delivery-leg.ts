@@ -136,3 +136,31 @@ export enum VehicleClass {
   VAN = 'van',
   TRUCK = 'truck',
 }
+
+const VEHICLE_ORDER: readonly VehicleClass[] = [
+  VehicleClass.BICYCLE,
+  VehicleClass.MOTORBIKE,
+  VehicleClass.CAR,
+  VehicleClass.VAN,
+  VehicleClass.TRUCK,
+];
+
+// More than this many parcels don't fit on a motorbike, whatever their size.
+export const BAG_MOTORBIKE_MAX_PARCELS = 5;
+
+// A bag (M5b) needs the largest vehicle any of its parcels needs, and at
+// least a car once it holds more than a motorbike can carry.
+export function bagVehicleClass(
+  parcelClasses: readonly (VehicleClass | string | null)[],
+): VehicleClass {
+  const floor =
+    parcelClasses.length > BAG_MOTORBIKE_MAX_PARCELS
+      ? VehicleClass.CAR
+      : VehicleClass.MOTORBIKE;
+  return parcelClasses.reduce<VehicleClass>((largest, cls) => {
+    const index = VEHICLE_ORDER.indexOf(cls as VehicleClass);
+    return index > VEHICLE_ORDER.indexOf(largest)
+      ? VEHICLE_ORDER[index]
+      : largest;
+  }, floor);
+}

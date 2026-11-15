@@ -14,6 +14,7 @@ import { Env } from '../../../config/env.validation';
 import {
   InvalidMerchantTransitionException,
   NoRejectedItemsException,
+  NotAHubException,
   NotApplicableToIndividualsException,
   OnboardingIncompleteException,
   ReviewHasRejectedItemsException,
@@ -487,6 +488,18 @@ export class AdminMerchantsService {
       if (dto.limits !== undefined) {
         merchant.limitOverrides = this.limitOverrides(dto.limits);
       }
+      if (dto.hubNodeId !== undefined) {
+        if (dto.hubNodeId !== null) {
+          const [hub] = await manager.query<{ id: string }[]>(
+            `SELECT id FROM nodes WHERE id = $1 AND "isHub" AND status = 'active'`,
+            [dto.hubNodeId],
+          );
+          if (!hub) {
+            throw new NotAHubException();
+          }
+        }
+        merchant.hubNodeId = dto.hubNodeId;
+      }
       await manager.save(merchant);
       await this.audit.record(
         {
@@ -616,6 +629,7 @@ export class AdminMerchantsService {
       creationPaused: merchant.creationPaused,
       tier: merchant.tier,
       limitOverrides: merchant.limitOverrides,
+      hubNodeId: merchant.hubNodeId,
     };
   }
 }

@@ -29,9 +29,14 @@ export class DeliveryLegEntity {
   @PrimaryColumn('uuid', { default: () => 'gen_random_uuid()' })
   id!: string;
 
+  // The parcel this leg carries — or null for a bag's leg (M5b), which
+  // carries every parcel in `bagId`. Exactly one of the two is set.
   @Index('IDX_delivery_legs_order')
-  @Column({ type: 'uuid' })
-  orderId!: string;
+  @Column({ type: 'uuid', nullable: true })
+  orderId!: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  bagId!: string | null;
 
   @Column({ type: 'varchar' })
   legType!: DeliveryLegType;

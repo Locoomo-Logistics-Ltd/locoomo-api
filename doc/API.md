@@ -1005,7 +1005,7 @@ endpoint, a Node is never removed, only status-transitioned.
 
 Request (all optional): `name`, `address`, `city`, `state`, `country`, `latitude`,
 `longitude`, `capacity`, `contactPhone`, `openingHours`, `operatingHours`, `status`,
-`forceLocation`. Changing any address field or the coordinates re-runs the
+`isHub` (receives bulk merchant inbound against manifests, M5), `forceLocation`. Changing any address field or the coordinates re-runs the
 [location check](#location-check) (`forceLocation: true` skips it — use this to correct a
 pin for an address Google doesn't know). `onboardingType` is immutable after
 creation and isn't accepted here. `isPubliclyVisible` also isn't accepted here — that's
@@ -2807,6 +2807,10 @@ dates). Each row: `id`,
 `status`, `providerStatus`, `externalId`, `attemptNumber`, `vehicleClass`, `courierName`,
 `courierPhone`, `quotedKobo`, `actualKobo`, `surchargeKobo`, `failureReason` (e.g.
 `no_rider_found`, `assign_timeout`, `admin_fallback`, `QUOTE_ABOVE_LIMIT: …`), timestamps.
+A **bag's** delivery (M5b) has `orderId: null`, `bagId`, and the bag's code and status in
+`orderTrackingCode` / `orderStatus`; a parcel's `trackingCode` filter includes its bag's
+delivery. `fallback` refuses bag deliveries. Node app bag calls:
+[LOGISTICS_API.md §5.12](LOGISTICS_API.md#512-bags--handoffsbags).
 
 ### `POST /api/v1/admin/logistics/deliveries/:id/retry` · `/fallback` · `/reconcile`
 
@@ -3548,6 +3552,20 @@ one open or approved claim per shipment. `maxPayoutKobo` = min(declared value,
 `merchants/{id}/claims/`, checked to exist. A shipment moving to `exception` (admin, or the
 simulator) opens a claim with `source: "exception"` and sets `exception.claimId`.
 
+### Manifests: `/api/v1/merchant/manifests` (create, `/:id/shipments`, `/:id/close`, `/:id/cancel`, list, get, `/:id/document`) · `POST …/test/manifests/{id}/receive`
+
+Full contract: [MERCHANT_API.md §10](MERCHANT_API.md#10-manifests-bulk-drop-off-at-a-hub).
+Writes need scope `manifests:write` (sessions `shipments.write`); reads `shipments:read`. A
+manifest is at a hub (`hubNodeId`, default the merchant's), holds up to 10,000 `created`
+shipments (1,000 per call), none on another open or closed manifest; it sets
+`merchant_shipments.manifestId`. Hub staff: `GET /api/v1/handoffs/manifests`,
+`GET …/manifests/:reference`, `POST …/manifests/:reference/complete`,
+`POST /api/v1/handoffs/hub-intake`
+([LOGISTICS_API.md §5.11](LOGISTICS_API.md#511-hub-check-in--handoffshub-intake)). A scan
+resolves the tracking code, else the merchant's reference or `externalBarcode`, and runs
+the normal drop-off (re-home, measure, charge, capacity, dispatch); completing a manifest
+sends `manifest.received`.
+
 ### Return batches: `GET /api/v1/merchant/returns` · `/return-batches` (create, list, get, `/:id/code`, `/:id/cancel`) · `POST …/test/return-batches/{id}/collect`
 
 Full contract: [MERCHANT_API.md §11.3](MERCHANT_API.md#113-collecting-your-returns).
@@ -3725,7 +3743,10 @@ flight continue). Both email the team.
 ```
 
 `limits` **replaces** all overrides (`{}` = back to tier defaults). `creationPaused` stops
-new live shipments for this merchant only. Response `200`: the detail.
+new live shipments for this merchant only. `hubNodeId` assigns the merchant's hub (an
+active Node with `isHub`; `422 NOT_A_HUB` otherwise), or `null` to remove it: shipments
+with `origin: { type: "hub" }` and quotes without `originNodeId` use it. Response `200`:
+the detail.
 
 ## Admin: merchant wallets
 

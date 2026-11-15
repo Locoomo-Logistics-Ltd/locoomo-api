@@ -93,4 +93,9 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsBoolean()
   forceLocation?: boolean;
+
+  // Admin: receives bulk merchant inbound (manifests) and sorts it.
+  @IsOptional()
+  @IsBoolean()
+  isHub?: boolean;
 }

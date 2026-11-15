@@ -8,6 +8,7 @@ import {
   DeliveryLegStatus,
   DeliveryLegType,
   VehicleClass,
+  bagVehicleClass,
 } from '../domain/delivery-leg';
 import {
   CreateDeliveryRequest,
@@ -126,6 +127,64 @@ export class DeliveryDispatchService implements OnModuleInit {
     return legs.save(leg);
   }
 
+  // A sealed bag (M5b): one leg for every parcel in it, on a courier that
+  // carries bags. Idempotent like dispatch(). Returns null when no bag
+  // courier can take it: the bag waits sealed and the reconciler retries.
+  async dispatchBag(
+    bagId: string,
+    manager: EntityManager,
+  ): Promise<DeliveryLegEntity | null> {
+    await manager.query(`SELECT 1 FROM bags WHERE id = $1 FOR UPDATE`, [bagId]);
+    const legs = manager.getRepository(DeliveryLegEntity);
+    const active = await legs
+      .createQueryBuilder('leg')
+      .where('leg."bagId" = :bagId', { bagId })
+      .andWhere('leg.status IN (:...active)', { active: ACTIVE_LEG_STATUSES })
+      .getOne();
+    if (active) {
+      return active;
+    }
+    const parcels = await manager.query<
+      { vehicleClass: VehicleClass | null }[]
+    >(`SELECT "vehicleClass" FROM orders WHERE "bagId" = $1`, [bagId]);
+    const vehicleClass = bagVehicleClass(parcels.map((p) => p.vehicleClass));
+    const choice = await this.router.chooseForBag(bagId, vehicleClass, manager);
+    if (!choice) {
+      this.logger.error(
+        `No courier that carries bags can take bag ${bagId} — it waits sealed`,
+      );
+      return null;
+    }
+    const leg = await legs.save(
+      legs.create({
+        orderId: null,
+        bagId,
+        legType: DeliveryLegType.FORWARD,
+        providerKey: choice.provider.key,
+        status: DeliveryLegStatus.REQUESTED,
+        attemptNumber: choice.attemptNumber,
+        vehicleClass,
+      }),
+    );
+    if (choice.provider.capabilities.remoteSubmission) {
+      await this.outboxService.enqueue(
+        SUBMIT_DELIVERY_EVENT_TYPE,
+        { legId: leg.id },
+        manager,
+      );
+      return leg;
+    }
+    const result = await choice.provider.createDelivery(
+      await this.buildRequest(leg, manager),
+    );
+    leg.externalId = result.externalId;
+    leg.providerStatus = result.providerStatus;
+    leg.quotedKobo = result.quotedKobo;
+    leg.trackingUrl = result.trackingUrl;
+    leg.etaMinutes = result.etaMinutes;
+    return legs.save(leg);
+  }
+
   // Outbox handler for remote providers. A provider error marked
   // non-retryable (rejected request, no wallet balance, service paused)
   // ends this leg and routes the order onward — to the same provider again
@@ -180,7 +239,7 @@ export class DeliveryDispatchService implements OnModuleInit {
         );
       }
       this.logger.warn(
-        `Leg ${leg.id} rejected by ${leg.providerKey}, re-routing order ${leg.orderId}: ${error.message}`,
+        `Leg ${leg.id} rejected by ${leg.providerKey}, re-routing ${leg.bagId ? `bag ${leg.bagId}` : `order ${leg.orderId}`}: ${error.message}`,
       );
       await this.dataSource.transaction(async (manager) => {
         await manager.getRepository(DeliveryLegEntity).update(leg.id, {
@@ -188,7 +247,11 @@ export class DeliveryDispatchService implements OnModuleInit {
           failureReason: error.message.slice(0, 500),
           endedAt: new Date(),
         });
-        await this.dispatch(leg.orderId, manager, leg.legType);
+        if (leg.bagId) {
+          await this.dispatchBag(leg.bagId, manager);
+        } else {
+          await this.dispatch(leg.orderId!, manager, leg.legType);
+        }
       });
     }
   }
@@ -229,6 +292,9 @@ export class DeliveryDispatchService implements OnModuleInit {
     leg: DeliveryLegEntity,
     manager: EntityManager,
   ): Promise<CreateDeliveryRequest> {
+    if (leg.bagId) {
+      return this.buildBagRequest(leg, leg.bagId, manager);
+    }
     const [order] = await manager.query<
       {
         trackingCode: string;
@@ -249,16 +315,10 @@ export class DeliveryDispatchService implements OnModuleInit {
         WHERE o.id = $1`,
       [leg.orderId, leg.providerKey],
     );
-    const stops = await manager.query<StopRow[]>(
-      `SELECT id AS "nodeId", name, address, city, state, latitude, longitude,
-              "contactPhone"
-         FROM nodes WHERE id = ANY($1)`,
-      [[order.originNodeId, order.destinationNodeId]],
+    const stop = await this.stops(
+      [order.originNodeId, order.destinationNodeId],
+      manager,
     );
-    const stop = (nodeId: string): DeliveryStop => {
-      const row = stops.find((s) => s.nodeId === nodeId)!;
-      return { ...row, contactName: `${row.name} (Locoomo station)` };
-    };
     const isReturn = leg.legType === DeliveryLegType.RETURN;
 
     return {
@@ -280,6 +340,71 @@ export class DeliveryDispatchService implements OnModuleInit {
             ),
           }
         : {}),
+    };
+  }
+
+  // A bag travels hub → destination Node as one job: the courier sees the
+  // bag code and how many parcels, never what's in them. The cost cap is the
+  // sum of the parcels' delivery fees, times the provider's share.
+  private async buildBagRequest(
+    leg: DeliveryLegEntity,
+    bagId: string,
+    manager: EntityManager,
+  ): Promise<CreateDeliveryRequest> {
+    const [bag] = await manager.query<
+      {
+        code: string;
+        originNodeId: string;
+        destinationNodeId: string;
+        parcels: number;
+        deliveryFeeKobo: string | null;
+        maxCostShare: number | null;
+      }[]
+    >(
+      `SELECT b.code, b."originNodeId", b."destinationNodeId",
+              (SELECT count(*)::int FROM orders o WHERE o."bagId" = b.id) AS parcels,
+              (SELECT sum(o."amountKobo" + o."discountKobo" - o."destinationFeeKobo")
+                 FROM orders o WHERE o."bagId" = b.id) AS "deliveryFeeKobo",
+              p."maxCostShare"
+         FROM bags b
+         JOIN logistics_providers p ON p.key = $2
+        WHERE b.id = $1`,
+      [bagId, leg.providerKey],
+    );
+    const stop = await this.stops(
+      [bag.originNodeId, bag.destinationNodeId],
+      manager,
+    );
+    return {
+      legId: leg.id,
+      trackingCode: bag.code,
+      pickup: stop(bag.originNodeId),
+      dropoff: stop(bag.destinationNodeId),
+      vehicleClass: leg.vehicleClass,
+      description: `Locoomo bag ${bag.code} (${bag.parcels} parcels, sealed)`,
+      ...(bag.maxCostShare !== null && bag.deliveryFeeKobo !== null
+        ? {
+            maxCostKobo: Math.floor(
+              Number(bag.deliveryFeeKobo) * bag.maxCostShare,
+            ),
+          }
+        : {}),
+    };
+  }
+
+  private async stops(
+    nodeIds: string[],
+    manager: EntityManager,
+  ): Promise<(nodeId: string) => DeliveryStop> {
+    const rows = await manager.query<StopRow[]>(
+      `SELECT id AS "nodeId", name, address, city, state, latitude, longitude,
+              "contactPhone"
+         FROM nodes WHERE id = ANY($1)`,
+      [nodeIds],
+    );
+    return (nodeId: string): DeliveryStop => {
+      const row = rows.find((r) => r.nodeId === nodeId)!;
+      return { ...row, contactName: `${row.name} (Locoomo station)` };
     };
   }
 }

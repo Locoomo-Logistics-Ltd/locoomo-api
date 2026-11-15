@@ -7,6 +7,9 @@ import { DeliveryEventType, DeliveryLegType } from './delivery-leg';
 // the dependency only runs one way.
 export interface DeliveryEventNotice {
   orderId: string;
+  // Set when the leg is a bag's (M5b): the same event is published once per
+  // parcel in the bag, each with its own orderId.
+  bagId: string | null;
   legId: string;
   legType: DeliveryLegType;
   providerKey: string;

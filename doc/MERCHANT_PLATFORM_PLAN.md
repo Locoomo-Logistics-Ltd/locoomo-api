@@ -1230,6 +1230,53 @@ Decisions:
   (`shipment.disposed`, D20). They need the fee amount and the notice emails; MERCHANT_API
   marks them as coming.
 
+### M5a Hubs and manifests: done (2026-11-15)
+
+M5 ships in slices: **M5a hubs and manifests** (this) → M5b bags (hub sorting, sealed bag
+legs, bag handover, destination unbag, missing-from-bag) → M5c reroute queue + 1-working-day
+fallback, per-Node merchant arrival caps, reverse bags, and the 100k/day load test.
+
+| Item | Where |
+|---|---|
+| `nodes.isHub` (admin `PATCH /nodes/:id`), `merchants.hubNodeId` (admin settings, `422 NOT_A_HUB`); `origin: hub` and origin-less quotes resolve to it. Migration 375 | nodes, `admin-merchants.service.ts`, `merchant-shipment.service.ts`, `merchant-catalog.service.ts` |
+| `merchant_manifests` (`MF-XXXX-XXXX`, open → closed → received / cancelled) and `merchant_manifest_items` (expected or unexpected, `receivedAt`); indexes for barcode/reference lookups | entities, `domain/manifest.ts`, `domain/short-reference.ts` |
+| Merchant: create/add/close/cancel/list/get, PDF document (reference + QR, hub, parcels); sandbox receive | `manifest.service.ts`, `manifests.controller.ts`, `document-renderer.ts` |
+| Hub (Node app): expected manifests, manifest detail, `POST /handoffs/hub-intake` (tracking code → merchant reference/`externalBarcode`; runs `ConfirmDropOffService` exported from handoffs), complete → `manifest.received` | `HubManifestsController` |
+
+Decisions:
+- **Manifests live in the merchants module** (merchant data, test mode too) with the hub's
+  controller there, as for return batches; the physical drop-off stays in handoffs.
+- **One hub per merchant** (`merchants.hubNodeId`) rather than a `merchant_hub_assignments`
+  table: the contract speaks of "your hub". A table can come if a merchant needs several.
+- **Scans are idempotent**: a parcel already received reports `alreadyReceived` and changes
+  nothing. A parcel of another merchant scanned on this truck counts on its own manifest.
+- **Until bags (M5b)**, a hub-scanned parcel dispatches individually exactly like a counter
+  drop-off; the sort instruction is just its destination.
+
+### M5b Bags: done (2026-11-15)
+
+| Item | Where |
+|---|---|
+| `bags` (BAG-XXXX-XXXX; open → sealed → in_transit → arrived → unpacked / cancelled; one open bag per hub + destination), `orders.bagId`, `delivery_legs.bagId` with nullable `orderId` (exactly one set) and one active leg per bag. Migration 376 | handoffs `bag.entity.ts`, `domain/bag.ts` |
+| Merchant parcel dropped at a hub (counter or hub check-in) goes into the bag for its destination instead of dispatching; auto-seal at 50 | `confirm-drop-off.service.ts`, `bag.service.ts` |
+| Seal → `DeliveryDispatchService.dispatchBag`: `LogisticsRouterService.chooseForBag` (only `carriesBags` couriers; Sendii yes, in-house no), bag vehicle = largest parcel class, at least a car past 5 parcels; courier request with the bag code, both Nodes' counters, cost cap = sum of the parcels' fees × share | logistics `delivery-dispatch.service.ts`, `logistics-router.service.ts`, `domain/delivery-leg.ts` |
+| A bag leg's events are published once per parcel (`notice.bagId`); the progress listener moves each order as before, skipping parcels no longer with the bag; the bag follows (in_transit, arrived; unpacked when the last parcel is intaken; an open-bag parcel recorded lost leaves the bag) | `delivery-events.service.ts`, `delivery-progress.listener.ts`, `BagService` listeners |
+| Node app `/handoffs/bags` (list, detail, seal, courier handover); counter views and per-parcel handover resolve to the bag's leg; admin deliveries list bag legs (fallback refused) | `bags.controller.ts`, `delivery-query.service.ts`, `courier-handover.service.ts`, `admin-logistics.service.ts` |
+| Worker sweep (15 min): re-dispatch sealed bags with no courier; email ops once about parcels unscanned 24 h after their bag arrived | `BagService.run` |
+
+Decisions:
+- **Destination slots are still held at drop-off** (M3b's subscriber), not at seal: E3's
+  "reserve at seal" is already satisfied earlier. A full destination at seal time is M5c's
+  reroute queue.
+- **No in-house riders for bags yet**: the rider app has no bag flow (browse/accept/codes
+  are per order). Bags go to couriers that declare `carriesBags`.
+- **Fan-out by publishing per parcel** keeps the order state machine, capacity, mirror and
+  webhooks untouched: a bag is just a leg several orders share.
+- **Unpacking is the normal per-parcel intake**; there's no separate "bag arrived" scan,
+  because the courier handover (delivery code) is that moment.
+- **Economics** (`/admin/logistics/economics`) still joins legs to orders, so bag legs'
+  costs aren't allocated per parcel there yet (M6 reporting).
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

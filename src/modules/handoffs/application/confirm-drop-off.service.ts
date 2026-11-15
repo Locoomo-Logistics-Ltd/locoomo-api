@@ -9,6 +9,7 @@ import {
   OrdersService,
 } from '../../orders/application/orders.service';
 import { OrderTransitionResult } from '../domain/order-transition-result';
+import { BagService } from './bag.service';
 import { OrderLookupService } from './order-lookup.service';
 import { ReceiverNotificationService } from './receiver-notification.service';
 
@@ -24,6 +25,7 @@ export class ConfirmDropOffService {
     private readonly receiverNotificationService: ReceiverNotificationService,
     private readonly deliveryDispatchService: DeliveryDispatchService,
     private readonly nodesService: NodesService,
+    private readonly bags: BagService,
   ) {}
 
   async confirm(
@@ -73,9 +75,17 @@ export class ConfirmDropOffService {
               order,
               manager,
             );
-            // Hand the parcel to a courier straight away — whichever one
-            // routing picks (the in-house pool today).
-            await this.deliveryDispatchService.dispatch(orderId, manager);
+            // At a hub, a merchant parcel goes into the bag for its
+            // destination and travels with it (M5b). Otherwise hand it to a
+            // courier straight away — whichever one routing picks.
+            if (
+              order.source === 'merchant' &&
+              (await this.bags.isHub(order.originNodeId, manager))
+            ) {
+              await this.bags.place(order, manager);
+            } else {
+              await this.deliveryDispatchService.dispatch(orderId, manager);
+            }
             return order;
           },
         ),

@@ -49,7 +49,10 @@ export interface AdminProviderView {
 
 export interface AdminDeliveryRow {
   id: string;
-  orderId: string;
+  // A bag's leg (M5b) has no order: bagId/bagCode instead, and the bag's
+  // code and status in orderTrackingCode/orderStatus.
+  orderId: string | null;
+  bagId: string | null;
   orderTrackingCode: string;
   orderStatus: string;
   provider: string;
@@ -269,8 +272,11 @@ export class AdminLogisticsService {
     if (query.trackingCode !== undefined) {
       // An unparseable code matches nothing rather than everything.
       const code = normalizeTrackingCode(query.trackingCode) ?? '';
+      // A bagged parcel also shows its bag's leg.
+      const p = param(code);
       conditions.push(
-        `l."orderId" IN (SELECT id FROM orders WHERE "trackingCode" = ${param(code)})`,
+        `(l."orderId" IN (SELECT id FROM orders WHERE "trackingCode" = ${p})
+          OR l."bagId" IN (SELECT "bagId" FROM orders WHERE "trackingCode" = ${p}))`,
       );
     }
     if (query.status) conditions.push(`l.status = ${param(query.status)}`);
@@ -325,6 +331,11 @@ export class AdminLogisticsService {
     if (leg.provider === IN_HOUSE_PROVIDER_KEY) {
       throw new IllegalDeliveryActionException(
         'This delivery is already with Locoomo riders',
+      );
+    }
+    if (leg.bagId) {
+      throw new IllegalDeliveryActionException(
+        'Locoomo riders don’t carry bags yet — cancel with the courier and it will be re-routed to another bag courier',
       );
     }
     if (leg.status !== 'requested' && leg.status !== 'assigned') {
@@ -494,14 +505,16 @@ export class AdminLogisticsService {
 
   private deliverySelect(): string {
     return `
-      SELECT l.id, l."orderId", o."trackingCode" AS "orderTrackingCode",
-             o.status AS "orderStatus", l."providerKey" AS provider,
+      SELECT l.id, l."orderId", l."bagId",
+             coalesce(o."trackingCode", b.code) AS "orderTrackingCode",
+             coalesce(o.status::text, b.status) AS "orderStatus", l."providerKey" AS provider,
              p.label AS "providerLabel", l."legType", l.status, l."providerStatus",
              l."externalId", l."attemptNumber", l."vehicleClass", l."courierName",
              l."courierPhone", l."quotedKobo", l."actualKobo", l."surchargeKobo",
              l."failureReason", l."createdAt", l."updatedAt", l."endedAt"
         FROM delivery_legs l
-        JOIN orders o ON o.id = l."orderId"
+        LEFT JOIN orders o ON o.id = l."orderId"
+        LEFT JOIN bags b ON b.id = l."bagId"
         JOIN logistics_providers p ON p.key = l."providerKey"`;
   }
 
