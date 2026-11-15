@@ -75,6 +75,10 @@ export class MerchantEntity {
   tier!: MerchantTier | null;
 
   // Per-merchant overrides on top of the tier defaults (merchant-limits.ts).
+  // Default origin for `origin: { type: "hub" }` (plan D2). Set by ops.
+  @Column({ type: 'uuid', nullable: true })
+  hubNodeId!: string | null;
+
   @Column({ type: 'jsonb', nullable: true })
   limitOverrides!: Partial<MerchantLimits> | null;
 

@@ -20,6 +20,7 @@ export class NodeResponseDto {
   contactPhone!: string | null;
   locationCheck!: string | null;
   isPubliclyVisible!: boolean;
+  isHub!: boolean;
   createdAt!: Date;
 
   static fromEntity(node: NodeEntity): NodeResponseDto {
@@ -40,6 +41,7 @@ export class NodeResponseDto {
     dto.contactPhone = node.contactPhone ?? null;
     dto.locationCheck = node.locationCheck ?? null;
     dto.isPubliclyVisible = node.isPubliclyVisible;
+    dto.isHub = node.isHub;
     dto.createdAt = node.createdAt;
     return dto;
   }

@@ -1230,6 +1230,29 @@ Decisions:
   (`shipment.disposed`, D20). They need the fee amount and the notice emails; MERCHANT_API
   marks them as coming.
 
+### M5a Hubs and manifests: done (2026-11-15)
+
+M5 ships in slices: **M5a hubs and manifests** (this) → M5b bags (hub sorting, sealed bag
+legs, bag handover, destination unbag, missing-from-bag) → M5c reroute queue + 1-working-day
+fallback, per-Node merchant arrival caps, reverse bags, and the 100k/day load test.
+
+| Item | Where |
+|---|---|
+| `nodes.isHub` (admin `PATCH /nodes/:id`), `merchants.hubNodeId` (admin settings, `422 NOT_A_HUB`); `origin: hub` and origin-less quotes resolve to it. Migration 375 | nodes, `admin-merchants.service.ts`, `merchant-shipment.service.ts`, `merchant-catalog.service.ts` |
+| `merchant_manifests` (`MF-XXXX-XXXX`, open → closed → received / cancelled) and `merchant_manifest_items` (expected or unexpected, `receivedAt`); indexes for barcode/reference lookups | entities, `domain/manifest.ts`, `domain/short-reference.ts` |
+| Merchant: create/add/close/cancel/list/get, PDF document (reference + QR, hub, parcels); sandbox receive | `manifest.service.ts`, `manifests.controller.ts`, `document-renderer.ts` |
+| Hub (Node app): expected manifests, manifest detail, `POST /handoffs/hub-intake` (tracking code → merchant reference/`externalBarcode`; runs `ConfirmDropOffService` exported from handoffs), complete → `manifest.received` | `HubManifestsController` |
+
+Decisions:
+- **Manifests live in the merchants module** (merchant data, test mode too) with the hub's
+  controller there, as for return batches; the physical drop-off stays in handoffs.
+- **One hub per merchant** (`merchants.hubNodeId`) rather than a `merchant_hub_assignments`
+  table: the contract speaks of "your hub". A table can come if a merchant needs several.
+- **Scans are idempotent**: a parcel already received reports `alreadyReceived` and changes
+  nothing. A parcel of another merchant scanned on this truck counts on its own manifest.
+- **Until bags (M5b)**, a hub-scanned parcel dispatches individually exactly like a counter
+  drop-off; the sort instruction is just its destination.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

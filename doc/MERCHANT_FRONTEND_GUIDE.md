@@ -44,6 +44,7 @@ something UI-related; tell backend.)
 15. [Wallet](#15-wallet)
 15a. [Claims](#15a-claims)
 15b. [Returns to collect](#15b-returns-to-collect)
+15c. [Hub and manifests](#15c-hub-and-manifests)
 16. [Coming next 🛠](#16-coming-next-)
 
 **Part C: Admin app**
@@ -128,7 +129,8 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 12 | Wallet: balance, statement, holds, card top-up, bank-transfer account, test reset | §15 | ✅ |
 | 13 | Claims: file with evidence, track, sandbox decisions | §15a | ✅ |
 | 14 | Returns to collect: one code per batch | §15b | ✅ |
-| 15 | Manifests, audit log, go-live checklist | §16 | 🛠 |
+| 15 | Hub and manifests: bulk drop-off at a hub | §15c | ✅ |
+| 16 | Audit log, go-live checklist | §16 | 🛠 |
 
 **Admin app screens**
 
@@ -2032,6 +2034,52 @@ A "Batches" list: **`GET /merchant/return-batches?status=open|collected|cancelle
 
 ---
 
+## 15c. Hub and manifests
+
+✅ Ready. For merchants who drop in bulk at a **hub**. Locoomo assigns the hub
+(`merchant.hubNodeId`, §18.4); until then hide this page and keep the Node picker on the
+shipment form.
+
+**Shipment form once a hub is assigned:** "Drop-off" defaults to "Our hub ({hub name})"
+(`origin: { type: "hub" }`); "A specific Node" stays available. Quotes no longer need
+`originNodeId`.
+
+**Manifests page** (`shipments.read` to view, `shipments.write` to change):
+
+- List: **`GET /merchant/manifests?status=&limit=&cursor=`** → `CursorPage<Manifest>` (§20):
+  reference, status badge (`open` "Loading", `closed` "On its way", `received` "Checked in",
+  `cancelled`), hub, expected drop, shipments, received, missing.
+- **"New manifest"**: **`POST /merchant/manifests`** `{ expectedDropAt?, shipmentIds? }`
+  (send an `Idempotency-Key`). Offer to start from selected `created` shipments on the
+  Shipments list (bulk action "Add to manifest"; up to 1,000 per call).
+- **Detail** (`GET /merchant/manifests/:id`): the counters, and the shipments with
+  `GET /merchant/shipments?manifestId=…`.
+  - "Add shipments" → **`POST /merchant/manifests/:id/shipments`** `{ shipmentIds }` while
+    `open`.
+  - "Truck has left" → **`POST /merchant/manifests/:id/close`**.
+  - "Print manifest" → **`GET /merchant/manifests/:id/document`** (PDF, open in a new tab).
+    Help: "Give this to the driver. The hub scans its QR first."
+  - "Cancel manifest" → **`POST /merchant/manifests/:id/cancel`** (open or closed).
+  - After the hub finishes (`received`): "{receivedCount} checked in, {missingCount}
+    missing, {unexpectedCount} not on the manifest". Missing shipments are still `created`:
+    offer "Add missing to a new manifest".
+
+Errors:
+
+| Code | UI |
+|---|---|
+| `422 MANIFEST_INVALID` | `details.problems` per shipment: `not_awaiting_drop_off` "Already dropped off", `in_another_manifest` "On another manifest", `not_found` |
+| `409 MANIFEST_NOT_EDITABLE` | Refetch; the manifest moved on |
+| `422 NOT_A_HUB` | "No hub is set up for your account yet. Contact your account manager." |
+
+**Test mode:** on an open or closed test manifest, "Simulate hub check-in" →
+**`POST /merchant/test/manifests/:id/receive`** `{ missingShipmentIds? }` → the receipt
+(`{ received, missing, unexpected }`); let the user tick parcels to leave "off the truck".
+
+**Hub app side** (scan the manifest, scan parcels, finish): LOGISTICS_API.md §5.11.
+
+---
+
 ## 16. Coming next 🛠
 
 Build these behind feature flags against the shapes below. Final shapes land with the backend
@@ -2039,7 +2087,6 @@ phase; we'll update this section.
 
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
-| **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
 | **Go-live checklist** | `GET /merchant/go-live-checklist` | On Home: approved, 2FA, live key, live webhook, wallet funded, test shipment simulated to `collected` and `returned` |
 | **Audit log** | TBD | Who did what in the team |
 | **Home KPIs** | TBD | Shipments today, awaiting drop-off, ready for collection, returns waiting |
@@ -2262,6 +2309,7 @@ Disable **Approve** while any panel is set to Reject, and **Request changes** wh
   | `creationPaused` | "Pause new live shipments for this merchant" |
   | `tier` | Tier select |
   | `limits` | **Replaces** all overrides; `{}` = back to tier defaults |
+  | `hubNodeId` | "Hub" select of active hub Nodes (`isHub`), or none. `422 NOT_A_HUB` |
 
   Response `200`: the detail.
 
@@ -2346,6 +2394,12 @@ the approval is rejected or expires, Pay and Reject come back.
 first.
 
 A claim is opened automatically when ops records a parcel lost or damaged (§19).
+
+### 18.6c Hubs ✅ (admin)
+
+On the Node edit form, a **"Hub"** switch: `PATCH /nodes/:id` `{ "isHub": true }`. Help:
+"Receives bulk merchant drops against manifests." Hubs show `isHub: true` in Node lists;
+use that to fill the merchant "Hub" select (§18.4).
 
 ### 18.7 Coming 🛠
 
@@ -2493,6 +2547,7 @@ export interface Merchant {
   limits: MerchantLimits | null;           // set once approved
   receiverCodeRelay: boolean;
   creationPaused: boolean;
+  hubNodeId: string | null;                // the merchant's hub, set by Locoomo
   terms: { acceptedVersion: string | null; acceptedAt: string | null; currentVersion: string };
   submittedAt: string | null;
   decidedAt: string | null;
@@ -2784,6 +2839,29 @@ export interface FundingAccount {
   accountName: string;
   createdAt: string;
 }
+// ─── Manifests (§15c) ───────────────────────────────────────────────────
+export interface Manifest {
+  id: string;
+  reference: string;                       // MF-3HX9-0QWE
+  status: 'open' | 'closed' | 'received' | 'cancelled';
+  hub: { id: string; name: string; address: string; city: string };
+  expectedDropAt: string | null;
+  shipmentCount: number;
+  receivedCount: number;
+  unexpectedCount: number;
+  missingCount: number | null;             // once received
+  closedAt: string | null;
+  receivedAt: string | null;
+  createdAt: string;
+}
+export interface ManifestReceipt {
+  manifestId: string;
+  reference: string;
+  received: number;
+  missing: { shipmentId: string; reference: string }[];
+  unexpected: { shipmentId: string; reference: string }[];
+}
+
 // ─── Returns (§15b) ─────────────────────────────────────────────────────
 export interface ReturnNode { id: string; name: string; address: string; city: string }
 export interface ReturnItem {
@@ -2992,6 +3070,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 409 / 422 | `CLAIM_NOT_ALLOWED`, `CLAIM_ALREADY_OPEN`, `CLAIM_ALREADY_DECIDED` / `CLAIM_WINDOW_CLOSED`, `CLAIM_PAYOUT_TOO_HIGH` | Claims: §15a |
 | 409 | `CLAIM_PAYOUT_PENDING` | Admin claims: §18.6b |
 | 422 / 409 | `RETURN_BATCH_INVALID` / `RETURN_BATCH_NOT_OPEN` | Returns: §15b |
+| 422 / 409 / 422 | `MANIFEST_INVALID` / `MANIFEST_NOT_EDITABLE` / `NOT_A_HUB` | Manifests: §15c (admin `NOT_A_HUB`: §18.4) |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | "Live shipments aren't available yet. Switch to Test." |
 | 403 | `SHIPMENT_CREATION_PAUSED` | "New live shipments are paused on your account." |
 | 403 | `TEST_MODE_ONLY` | Hide the simulator on live shipments |
@@ -3093,6 +3172,9 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | GET | `/merchant/claims`, `/merchant/claims/:id` | `shipments.read` | Mode |
 | POST | `/merchant/test/claims/:id/decide` | `shipments.write` | Test only |
 | GET | `/merchant/returns` | `shipments.read` | Mode |
+| GET | `/merchant/manifests`, `/merchant/manifests/:id`, `…/:id/document` | `shipments.read` | Mode; document is a PDF |
+| POST | `/merchant/manifests`, `…/:id/shipments`, `…/:id/close`, `…/:id/cancel` | `shipments.write` | Mode; Idempotency-Key on create/add |
+| POST | `/merchant/test/manifests/:id/receive` | `shipments.write` | Test only |
 | GET / POST | `/merchant/return-batches`, `/merchant/return-batches/:id`, `…/:id/code`, `…/:id/cancel` | `returns.collect` | Mode; Idempotency-Key on create |
 | POST | `/merchant/test/return-batches/:id/collect` | `shipments.write` | Test only |
 | POST | `/merchant/wallet/top-ups` | `wallet.manage` | Mode; dashboard only; `Idempotency-Key` |

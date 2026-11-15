@@ -246,6 +246,7 @@ export class NodesService {
     node.openingHours = dto.openingHours ?? node.openingHours;
     node.contactPhone = dto.contactPhone ?? node.contactPhone;
     node.status = dto.status ?? node.status;
+    node.isHub = dto.isHub ?? node.isHub;
 
     // Re-check only when something the check depends on actually changed —
     // a status-only update (Admin approval, which runs inside a transaction)

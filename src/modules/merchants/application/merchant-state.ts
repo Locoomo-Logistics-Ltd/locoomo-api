@@ -63,6 +63,8 @@ export interface MerchantView {
   limits: MerchantLimits | null;
   receiverCodeRelay: boolean;
   creationPaused: boolean;
+  // Default origin for `origin: { type: "hub" }`; set by Locoomo.
+  hubNodeId: string | null;
   terms: {
     acceptedVersion: string | null;
     acceptedAt: string | null;
@@ -129,6 +131,7 @@ export function merchantView(merchant: MerchantEntity): MerchantView {
       : null,
     receiverCodeRelay: merchant.receiverCodeRelay,
     creationPaused: merchant.creationPaused,
+    hubNodeId: merchant.hubNodeId,
     terms: {
       acceptedVersion: merchant.termsVersion,
       acceptedAt: iso(merchant.termsAcceptedAt),

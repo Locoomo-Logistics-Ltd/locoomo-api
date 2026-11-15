@@ -566,13 +566,15 @@ export class MerchantShipmentService {
       await this.assertDailyLimit(merchant);
     }
 
-    // Hubs (the default origin) arrive with M5.
+    // `hub` (the default) is the merchant's assigned hub (plan D2).
     const originType = dto.origin?.type ?? 'hub';
-    if (originType === 'hub' || !dto.origin?.nodeId) {
+    const originNodeId =
+      originType === 'hub' ? merchant.hubNodeId : dto.origin?.nodeId;
+    if (!originNodeId) {
       throw new OriginRequiredException();
     }
     const origin = await this.nodes
-      .getAvailable(dto.origin.nodeId)
+      .getAvailable(originNodeId)
       .catch((error: unknown) => {
         throw error instanceof EntityNotFoundException
           ? new OriginNodeUnavailableException()

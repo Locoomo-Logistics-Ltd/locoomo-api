@@ -2,7 +2,7 @@ import { createHmac, randomBytes, randomInt } from 'crypto';
 import { isIP } from 'net';
 
 // Event types we send (MERCHANT_API.md §12.6). Public contract: add, never
-// rename. manifest.* arrive with their feature.
+// rename.
 export const WEBHOOK_EVENT_TYPES = [
   'shipment.created',
   'shipment.updated',
@@ -25,6 +25,7 @@ export const WEBHOOK_EVENT_TYPES = [
   'wallet.funded',
   'wallet.low_balance',
   'claim.decided',
+  'manifest.received',
 ] as const;
 export type WebhookEventType =
   | (typeof WEBHOOK_EVENT_TYPES)[number]

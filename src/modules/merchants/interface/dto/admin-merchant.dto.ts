@@ -12,6 +12,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  IsUUID,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
@@ -144,4 +145,10 @@ export class UpdateMerchantSettingsDto {
   @ValidateNested()
   @Type(() => MerchantLimitsDto)
   limits?: MerchantLimitsDto;
+
+  // The merchant's hub (an active hub Node), or null to remove it.
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsUUID()
+  hubNodeId?: string | null;
 }

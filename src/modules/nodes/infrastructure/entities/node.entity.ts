@@ -67,6 +67,11 @@ export class NodeEntity {
   @Column({ type: 'int', default: 0 })
   destinationHeldCount!: number;
 
+  // Receives bulk merchant inbound (manifests) and sorts it (plan §7).
+  // Set by an admin.
+  @Column({ type: 'boolean', default: false })
+  isHub!: boolean;
+
   @Index()
   @Column({ type: 'enum', enum: NodeStatus, default: NodeStatus.PENDING })
   status!: NodeStatus;

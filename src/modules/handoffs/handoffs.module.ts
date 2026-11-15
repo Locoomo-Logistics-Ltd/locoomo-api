@@ -114,6 +114,8 @@ import { HandoffsController } from './interface/handoffs.controller';
     ReceiverCodeRelay,
     // handBackInBatch: merchant return batches (merchants module).
     ReturnCollectionService,
+    // Hub check-in scans (merchants module, M5a) drop parcels off through it.
+    ConfirmDropOffService,
   ],
 })
 export class HandoffsModule {}

@@ -663,25 +663,43 @@ created ──► received ──► in_transit ──► ready_for_collection �
 A manifest tells the hub what's coming, so a truckload is checked in quickly and anything
 missing is reported back to you.
 
-1. `POST /manifests` with `{ "hubNodeId": "…", "expectedDropAt": "2026-11-14T09:00:00Z", "shipmentIds": ["…"] }`.
-   Add more with `POST /manifests/{id}/shipments`.
-2. `POST /manifests/{id}/close` when the truck leaves. Download the manifest PDF/QR
-   (`GET /manifests/{id}/document`) for the driver.
-3. At the hub, staff scan the manifest and then each parcel. Each one fires
-   `shipment.received`.
+Your account manager assigns your **hub**. From then on `origin: { "type": "hub" }` is the
+default for shipments and quotes without an origin use it. Scope `manifests:write` for
+changes, `shipments:read` to read.
+
+1. **`POST /manifests`** `{ "hubNodeId"?: "…", "expectedDropAt"?: "2026-11-14T09:00:00Z",
+   "shipmentIds"?: ["…"] }` (`hubNodeId` defaults to your hub; up to 1,000 shipments per
+   call, 10,000 per manifest; `Idempotency-Key` supported). Add more with
+   **`POST /manifests/{id}/shipments`** `{ "shipmentIds": [...] }`. Shipments must be
+   `created` and not on another open manifest (`422 MANIFEST_INVALID` with
+   `details.problems`: `not_found`, `not_awaiting_drop_off`, `in_another_manifest`). Each
+   shipment's `manifestId` is set, and `GET /shipments?manifestId=` lists them.
+2. **`POST /manifests/{id}/close`** when the truck leaves (no more additions:
+   `409 MANIFEST_NOT_EDITABLE`). Print **`GET /manifests/{id}/document`** (PDF: the
+   manifest reference as text and QR, the hub, and every parcel) for the driver.
+   **`POST /manifests/{id}/cancel`** frees its shipments for another manifest.
+3. At the hub, staff scan the manifest and then each parcel: our label, your reference or
+   your own barcode (`externalBarcode`). Each one is received exactly like a counter
+   drop-off and fires `shipment.received` (and `shipment.fee_adjusted` if re-priced).
 4. When the hub finishes, you get **`manifest.received`**:
 
    ```json
    {
      "manifestId": "…",
+     "reference": "MF-3HX9-0QWE",
      "received": 482,
      "missing": [{ "shipmentId": "…", "reference": "TEMU-ORD-88413-1" }],
      "unexpected": [{ "shipmentId": "…", "reference": "TEMU-ORD-90001-1" }]
    }
    ```
 
-   Missing parcels stay `created`, so you can drop them later or cancel them. Unexpected
-   parcels that belong to you are accepted normally.
+   Missing parcels stay `created`, so you can drop them later (put them on your next
+   manifest) or cancel them. Unexpected parcels that belong to you are accepted normally.
+
+A manifest: `{ id, reference, status: "open" | "closed" | "received" | "cancelled", hub:
+{ id, name, address, city }, expectedDropAt, shipmentCount, receivedCount,
+unexpectedCount, missingCount (once received), closedAt, receivedAt, createdAt }`.
+`GET /manifests?status=&limit=&cursor=` and `GET /manifests/{id}`.
 
 ---
 
@@ -958,8 +976,8 @@ failure), so register the final URL.
 
 Sent today: every `shipment.*` event above except `collection_reminder` and
 `destination_changed` for live parcels (test mode simulates both), plus `wallet.funded`,
-`wallet.low_balance`, `claim.decided`, `merchant.status_changed` and `webhook.test`.
-`manifest.received` arrives with manifests. Expect new event types over time
+`wallet.low_balance`, `claim.decided`, `manifest.received`, `merchant.status_changed` and
+`webhook.test`. Expect new event types over time
 ([§3](#3-versioning-and-stability)). Ignore the ones you
 don't handle and still respond 2xx.
 
@@ -993,6 +1011,9 @@ don't handle and still respond 2xx.
   weight. An impossible move returns `409 INVALID_SIMULATION`; a live shipment
   `403 TEST_MODE_ONLY`.
 - Test top-ups use Paystack's test cards.
+- Test manifests are checked in with `POST /test/manifests/{id}/receive`
+  `{ "missingShipmentIds"?: [...] }`: every other declared shipment still `created` is
+  received (with its webhooks), then `manifest.received` is sent.
 - Test return batches are handed over with `POST /test/return-batches/{id}/collect`:
   each waiting shipment becomes `returned` (with its webhook) and the batch `collected`.
 - Test claims ([§15](#15-claims-lost-or-damaged-parcels)) are decided by you:
@@ -1270,6 +1291,9 @@ Prohibited items (listed in the merchant terms) are refused at drop-off.
 | 409 | `CLAIM_ALREADY_DECIDED` | Test claims: already approved or rejected |
 | 422 | `CLAIM_PAYOUT_TOO_HIGH` | Test claims: more than `maxPayoutKobo` |
 | 422 | `RETURN_BATCH_INVALID` | See `details.problems` (§11.3) |
+| 422 | `MANIFEST_INVALID` | See `details.problems` (§10) |
+| 409 | `MANIFEST_NOT_EDITABLE` | Closed, received or cancelled |
+| 422 | `NOT_A_HUB` | No hub assigned (or that Node isn't an active hub): ask your account manager |
 | 409 | `RETURN_BATCH_NOT_OPEN` | The batch was already collected or cancelled |
 | 422 | `INVALID_STATEMENT_MONTH` | Use `YYYY-MM`, not in the future |
 | 409 | `INVOICE_NOT_AVAILABLE` | Invoices are live-only, for months that have ended |
@@ -1322,6 +1346,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Hubs and manifests** (§10): hub assignment makes `origin: { "type": "hub" }` the default (and quotes work without `originNodeId`); manifests (create, add, close, cancel, PDF document); hub check-in by our label, your reference or your barcode; `manifest.received`; sandbox check-in |
 | 2026-11-15 | **Return batches** (§11.3): `GET /returns`, `POST /return-batches` (one code for up to 200 returns at a Node), get, list, new code, cancel; `POST /test/return-batches/{id}/collect` in the sandbox. Storage fees for uncollected returns are not charged yet |
 | 2026-11-15 | **Claims** (§15): `POST /claims` with optional evidence uploads (`POST /claims/uploads`), `GET /claims`, `claim.decided`, payouts as `claim_credit` wallet entries. A parcel we record lost or damaged opens a claim for you (`exception.claimId`). In test mode, decide your own claims with `POST /test/claims/{id}/decide` |
 | 2026-11-15 | **Statements and tax invoices** (§14.2): `GET /statements/{yyyy-mm}` (either mode, current month to date) and `GET /invoices/{yyyy-mm}` (live, finished months), as PDF or CSV |

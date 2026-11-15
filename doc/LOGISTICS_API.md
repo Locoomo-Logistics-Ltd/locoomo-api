@@ -1056,6 +1056,49 @@ Response `201`: same shape as `POST /payments/intents` (redirect to `authorizati
 Errors: `403 NODE_NOT_ACTIVE` (station not approved yet), `404 NOT_FOUND`,
 `422 NO_DELIVERY_OPTION`.
 
+### 5.11 Hub check-in — `/handoffs/hub-intake`
+
+A **hub** (`isHub`) receives bulk merchant inbound. Merchants send a truck with a
+**manifest** (`MF-3HX9-0QWE`, a QR on the driver's paper) listing what's on it.
+
+| Call | |
+|---|---|
+| `GET /handoffs/manifests` | Manifests on their way to your hubs (open or closed), soonest first: `{ reference, merchantName, status, expectedDropAt, expected, received }` |
+| `GET /handoffs/manifests/:reference` | One, with `parcels: [{ trackingCode, merchantReference, externalBarcode, received, expected }]`. Any case/spacing. `404` if it isn't for one of your hubs |
+| `POST /handoffs/hub-intake` | One parcel off the truck (below). Rate limit 600/min |
+| `POST /handoffs/manifests/:reference/complete` | Done with this truck → `{ received, missing: [{ shipmentId, reference }], unexpected: [...] }`; the merchant is told |
+
+**Scan** — scan the manifest QR first, then each parcel:
+
+```json
+{ "code": "LCM-7K3M-Q9TD", "manifestReference": "MF-3HX9-0QWE", "nodeId": "…", "measured": { "weightKg": 1.2 } }
+```
+
+- `code`: our tracking code, or (with a manifest) the merchant's reference or **their own
+  barcode** (cross-border parcels arrive with it). Without a manifest a reference/barcode
+  must match exactly one waiting parcel (`409 AMBIGUOUS_PARCEL_CODE`: scan our label or the
+  manifest first). Nothing matches → `404 PARCEL_NOT_FOUND`: set it aside as unidentified.
+- `nodeId`: only if you work at several Nodes (as for drop-off). `measured`: as for drop-off.
+- The parcel is dropped off exactly as at the counter (§5.4): it moves to this hub, is
+  measured and charged, takes a slot, and goes for dispatch.
+
+Response `200`:
+
+```json
+{
+  "trackingCode": "LCM-7K3M-Q9TD", "merchantReference": "TEMU-ORD-88413-1", "merchantName": "Ada Stores",
+  "destination": { "nodeId": "…", "name": "Yaba Node", "city": "Lagos" },
+  "sortInstruction": "To Yaba Node, Lagos",
+  "manifest": { "reference": "MF-3HX9-0QWE", "expected": true },
+  "alreadyReceived": false
+}
+```
+
+Show `sortInstruction` big. `alreadyReceived: true` means it was scanned before (nothing
+changed). `manifest.expected: false`: the parcel is the merchant's but wasn't declared;
+it's accepted and reported as unexpected. *Coming with bags (M5b): `sortInstruction` names
+the bag to put the parcel in.*
+
 ---
 
 ## 6. Rider app (Locoomo riders)
