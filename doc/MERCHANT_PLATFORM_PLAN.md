@@ -1098,6 +1098,21 @@ Decisions:
   skip transport; refused with a clear message instead.
 - The origin slot is taken where the parcel physically is (the new origin).
 
+### M4d1 Receiver code relay for live parcels: done (2026-11-15)
+
+M4d ships as **M4d1 relay** → M4d2 labels → M4d3 imports.
+
+| Item | Where |
+|---|---|
+| `orders.notifyReceiver` (`locoomo`/`merchant`/`both`, CHECK), set from the live shipment. Migration 370 | `order.entity.ts`, `orders.service.ts` |
+| `ReceiverNotificationService` decides in one place: `merchant` → no on-its-way, code, new-code or reminder messages to the buyer; `merchant`/`both` → every issued code goes to `ReceiverCodeRelay` in the issuing transaction | `receiver-notification.service.ts`, `receiver-code-relay.ts` (exported) |
+| Merchants' relay handler: first code moves the shipment to `ready_for_collection` with `collectionCode` in the webhook (the mirror leaves that status to it for relay orders); replacements go out as `shipment.updated` (`changed: ["collectionCode"]`). Codes are only ever in webhook bodies, never in shipment history | `live-shipment-sync.service.ts` |
+
+Decisions:
+- **A receiver change that reissues a code sends two `shipment.updated` events** (one for
+  the receiver, one carrying the new code), so the code never rides on an unrelated event.
+- Reminders aren't relayed yet (`shipment.collection_reminder` stays simulator-only).
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

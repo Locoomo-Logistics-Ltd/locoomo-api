@@ -705,6 +705,101 @@ describe('Live merchant shipments (e2e)', () => {
     );
   });
 
+  describe('relaying collection codes (M4d)', () => {
+    // The newest event of this type for the shipment; with withCode, the
+    // newest one carrying a collection code.
+    const latestWebhook = async (
+      type: string,
+      shipmentId: string,
+      withCode = false,
+    ) => {
+      const rows = await dataSource.query<{ body: string }[]>(
+        `SELECT body FROM webhook_events
+          WHERE "merchantId" = $1 AND mode = 'live' AND type = $2
+          ORDER BY "createdAt" DESC`,
+        [merchantId, type],
+      );
+      return rows
+        .map((r) => JSON.parse(r.body) as { data: Record<string, unknown> })
+        .find(
+          (b) =>
+            (b.data.shipment as { id: string } | undefined)?.id ===
+              shipmentId &&
+            (!withCode || typeof b.data.collectionCode === 'string'),
+        );
+    };
+    const drive = async (s: Shipment) => {
+      const orderId = (await orderOf(s.trackingCode)).id;
+      await handoff(originOperator, orderId, 'drop-off').expect(200);
+      await pickUp(orderId);
+      await arrive(orderId);
+      await handoff(destinationOperator, orderId, 'intake').expect(200);
+      return orderId;
+    };
+
+    beforeAll(async () => {
+      await dataSource.query(
+        `UPDATE merchants SET "receiverCodeRelay" = true WHERE id = $1`,
+        [merchantId],
+      );
+    });
+
+    it('sends the code only to the merchant, who relays it to the buyer', async () => {
+      const s = await create({
+        receiver: { name: 'Relay Buyer', phone: '08039990001' },
+        notifyReceiver: 'merchant',
+      });
+      const orderId = await drive(s);
+      expect((await shipment(s.id)).status).toBe('ready_for_collection');
+
+      const ready = await latestWebhook('shipment.ready_for_collection', s.id);
+      const collectionCode = ready?.data.collectionCode as string;
+      expect(collectionCode).toMatch(/^\d{6}$/);
+      // Nothing from us to the buyer.
+      const [{ count }] = await dataSource.query<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM outbox_events
+          WHERE payload::text LIKE '%' || $1 || '%' AND "eventType" IN ('email', 'sms')`,
+        [s.trackingCode],
+      );
+      expect(count).toBe(0);
+      // The code is never stored on the shipment's history.
+      const [stored] = await dataSource.query<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM merchant_shipment_events
+          WHERE "shipmentId" = $1 AND data::text LIKE '%' || $2 || '%'`,
+        [s.id, collectionCode],
+      );
+      expect(stored.count).toBe(0);
+
+      // A new receiver phone: a fresh code, relayed as shipment.updated.
+      await live
+        .patch(`/shipments/${s.id}`, { receiver: { phone: '08039990002' } })
+        .expect(200);
+      const updated = await latestWebhook('shipment.updated', s.id, true);
+      expect(updated?.data).toMatchObject({ changed: ['collectionCode'] });
+      const replacement = updated?.data.collectionCode as string;
+      expect(replacement).toMatch(/^\d{6}$/);
+
+      await handoff(destinationOperator, orderId, 'collect', {
+        code: replacement,
+        identityConfirmed: true,
+      }).expect(200);
+      expect((await shipment(s.id)).status).toBe('collected');
+    });
+
+    it('with both, the buyer and the merchant get the same code', async () => {
+      const email = `both+${randomUUID().slice(0, 6)}@${DOMAIN}`;
+      const s = await create({
+        receiver: { name: 'Both Buyer', phone: '08039990003', email },
+        notifyReceiver: 'both',
+      });
+      await drive(s);
+      const ready = await latestWebhook('shipment.ready_for_collection', s.id);
+      expect(codeIn((await latestEmailTo(email)).text)).toBe(
+        ready?.data.collectionCode,
+      );
+    });
+  });
+
   describe('drop-off at another Node and re-pricing (M4c2)', () => {
     it('re-homes a parcel dropped at another Node and charges the re-priced fee', async () => {
       const before = await wallet();

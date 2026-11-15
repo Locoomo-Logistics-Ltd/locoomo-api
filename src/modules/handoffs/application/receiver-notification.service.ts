@@ -4,6 +4,7 @@ import { formatLagosDay } from '../../../common/time/working-days';
 import { escapeHtml } from '../../../common/html/escape-html';
 import { OutboxService } from '../../notifications/application/outbox.service';
 import { TrackingEmailService } from '../../tracking/application/tracking-email.service';
+import { ReceiverCodeRelay, RelayKind } from './receiver-code-relay';
 
 interface OrderForReceiverEmail {
   trackingCode: string;
@@ -29,7 +30,22 @@ export class ReceiverNotificationService {
   constructor(
     private readonly outboxService: OutboxService,
     private readonly trackingEmailService: TrackingEmailService,
+    private readonly codeRelay: ReceiverCodeRelay,
   ) {}
+
+  // Who tells the buyer (orders.notifyReceiver, plan D19): `locoomo`
+  // (default), `merchant` (the merchant relays the code; we stay silent) or
+  // `both`. Looked up here so no caller can forget it.
+  private async notifyMode(
+    trackingCode: string,
+    manager: EntityManager,
+  ): Promise<string> {
+    const [row] = await manager.query<{ notifyReceiver: string }[]>(
+      `SELECT "notifyReceiver" FROM orders WHERE "trackingCode" = $1`,
+      [trackingCode],
+    );
+    return row?.notifyReceiver ?? 'locoomo';
+  }
 
   // First contact — sent when the origin Node confirms drop-off. Before this
   // the receiver hears nothing until the parcel is ready.
@@ -37,7 +53,10 @@ export class ReceiverNotificationService {
     order: OrderForReceiverEmail,
     manager: EntityManager,
   ): Promise<void> {
-    if (!order.receiverEmail) {
+    if (
+      !order.receiverEmail ||
+      (await this.notifyMode(order.trackingCode, manager)) === 'merchant'
+    ) {
       return;
     }
     const destination = await this.destinationOf(order, manager);
@@ -72,6 +91,13 @@ export class ReceiverNotificationService {
     collectBy: Date,
     manager: EntityManager,
   ): Promise<void> {
+    await this.relayIfMerchant(
+      order,
+      collectionCode,
+      collectBy,
+      'ready',
+      manager,
+    );
     await this.enqueueCollectionCode(
       order,
       collectionCode,
@@ -88,6 +114,13 @@ export class ReceiverNotificationService {
     collectBy: Date,
     manager: EntityManager,
   ): Promise<void> {
+    await this.relayIfMerchant(
+      order,
+      collectionCode,
+      collectBy,
+      'reissued',
+      manager,
+    );
     await this.enqueueCollectionCode(
       order,
       collectionCode,
@@ -105,6 +138,9 @@ export class ReceiverNotificationService {
     collectBy: Date,
     manager: EntityManager,
   ): Promise<void> {
+    if ((await this.notifyMode(order.trackingCode, manager)) === 'merchant') {
+      return;
+    }
     const destination = await this.destinationOf(order, manager);
     const where = `${destination.name}, ${destination.address}, ${destination.city}`;
     const deadline = formatLagosDay(collectBy);
@@ -145,6 +181,9 @@ export class ReceiverNotificationService {
     intro: string,
     manager: EntityManager,
   ): Promise<void> {
+    if ((await this.notifyMode(order.trackingCode, manager)) === 'merchant') {
+      return;
+    }
     const destination = await this.destinationOf(order, manager);
     const where = `${destination.name}, ${destination.address}, ${destination.city}`;
     const deadline = formatLagosDay(collectBy);
@@ -183,6 +222,24 @@ export class ReceiverNotificationService {
         manager,
       );
     }
+  }
+
+  // merchant/both: the merchant gets the code (webhook) in this
+  // transaction, to show the buyer in their own app.
+  private async relayIfMerchant(
+    order: OrderForReceiverEmail,
+    collectionCode: string,
+    collectBy: Date,
+    kind: RelayKind,
+    manager: EntityManager,
+  ): Promise<void> {
+    if ((await this.notifyMode(order.trackingCode, manager)) === 'locoomo') {
+      return;
+    }
+    await this.codeRelay.relay(
+      { trackingCode: order.trackingCode, collectionCode, collectBy, kind },
+      manager,
+    );
   }
 
   private async destinationOf(

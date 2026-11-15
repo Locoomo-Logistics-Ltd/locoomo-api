@@ -1469,7 +1469,6 @@ On success, go to the detail page with a toast: "Shipment created. Drop it off a
 | `403 MERCHANT_NOT_APPROVED`, `403 LIVE_SHIPMENTS_NOT_AVAILABLE` | Live mode: "Live shipments aren't available yet. Switch to Test." |
 | `403 MERCHANT_SUSPENDED` | Live: "Your account is suspended, so you can't create live shipments. Existing parcels keep moving." |
 | `403 SHIPMENT_CREATION_PAUSED` | Live: "New live shipments are paused on your account. Contact your account manager." |
-| `422 RECEIVER_RELAY_NOT_ENABLED` (live) | Hide the `merchant`/`both` options in Live mode for now: Locoomo sends live codes to the buyer |
 | `429 DAILY_LIMIT_REACHED` 🛠 (live only) | "You've reached today's shipment limit. It resets at midnight." |
 
 **Bulk (optional for the dashboard).** **`POST /merchant/shipments/bulk`** with

@@ -440,9 +440,7 @@ What happens at creation:
   Live shipments get an `LCM-` tracking code and a public `trackingUrl`. Also refused in
   live mode: `403 MERCHANT_SUSPENDED` (no new shipments while suspended; existing ones
   continue), `403 SHIPMENT_CREATION_PAUSED` (paused by Locoomo for your account),
-  `429 DAILY_LIMIT_REACHED` (§5.5), and `notifyReceiver` `merchant`/`both`
-  (`422 RECEIVER_RELAY_NOT_ENABLED`: relaying codes for live parcels comes next; we send
-  the code to the buyer).
+  and `429 DAILY_LIMIT_REACHED` (§5.5).
 
 ### 7.2 Read and list
 
@@ -654,8 +652,13 @@ When the parcel is shelved at their Node, the buyer gets a **one-time collection
 | `notifyReceiver` | The buyer gets the code by |
 |---|---|
 | `locoomo` (default) | SMS (where available) **and** email (if you gave one) |
-| `merchant` | You: the code is in the `shipment.ready_for_collection` webhook (`data.collectionCode`). Show it in your app or send it yourself |
+| `merchant` | You: the code is in the `shipment.ready_for_collection` webhook (`data.collectionCode`). Show it in your app or send it yourself. We send the buyer nothing about this parcel (no "on its way", code or reminder messages) |
 | `both` | Both of the above |
+
+If the code is replaced (Node staff resend it, or you change the receiver's contact
+details), the new code reaches you as `shipment.updated` with `data.changed:
+["collectionCode"]` and `data.collectionCode`; the old one stops working. Codes are never
+stored on the shipment or its timeline: the webhook is your only copy.
 
 Treat a relayed code like a password: show it only to the buyer, never log it, and never
 display it to your support staff. `merchant`/`both` must be enabled on your account.
@@ -740,8 +743,9 @@ webhook-signature: v1,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4=
 }
 ```
 
-Extras in `data` for some events: `collectionCode` (`ready_for_collection`, only when you
-relay codes, §11.1), `adjustment` (`fee_adjusted`: `previousKobo`, `newKobo`,
+Extras in `data` for some events: `collectionCode` (`ready_for_collection`, and
+`updated` with `changed: ["collectionCode"]` for a replacement; only when you relay codes,
+§11.1), `adjustment` (`fee_adjusted`: `previousKobo`, `newKobo`,
 `differenceKobo`, `reason`: `measured`, `dropped_elsewhere` or
 `measured_and_dropped_elsewhere`), `previousOrigin` (`received`, when the parcel was
 dropped at a different Node than you declared: `{ nodeId, nodeName }`; the shipment's
@@ -1131,6 +1135,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Relaying collection codes works for live parcels** (§11.1): with `notifyReceiver` `merchant` or `both` (enabled on your account by Locoomo), the code arrives in `shipment.ready_for_collection`, and a replacement code in `shipment.updated` (`changed: ["collectionCode"]`). With `merchant`, we send the buyer nothing |
 | 2026-11-15 | **Drop off anywhere; re-priced at drop-off** (live). A live parcel can be dropped at any Node except the buyer's: that Node becomes its `origin` (`shipment.received` carries `previousOrigin`). The Node may measure it. The fee is re-priced from the real origin and measurements, and the difference is charged or refunded (`shipment.fee_adjusted`, `reason`: `measured`, `dropped_elsewhere`, `measured_and_dropped_elsewhere`). Measurements show in `parcel.measured` |
 | 2026-11-15 | **Live shipments are built** (§7.1), drop-off at a Node: each live shipment is a real parcel in our network with an `LCM-` code and a public `trackingUrl`. The fee is held at creation and charged when the Node receives it. Every status change reaches you as a webhook. Cancel, edit and return-to-sender work live (§7.5; a parcel already on its way turns round at the buyer's Node). Unshipped shipments expire after their drop-off deadline in both modes. Live opens per environment as Locoomo switches it on. Not yet for live parcels: relaying collection codes, return batches |
 | 2026-11-14 | **Top-ups are live** (§14): card payments from the dashboard (test and live), and a dedicated bank-transfer account for the live wallet once approved. New: `GET /wallet/top-ups`, `/wallet/top-ups/{id}`, `/wallet/funding-account`, and the `wallet.funded` webhook. Card fees are deducted from what's credited; transfers are credited in full |

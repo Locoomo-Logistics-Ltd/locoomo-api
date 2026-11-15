@@ -538,12 +538,6 @@ export class MerchantShipmentService {
     const notifyReceiver = dto.notifyReceiver ?? 'locoomo';
     this.assertReachable(merchant, notifyReceiver, dto.receiver.email ?? null);
     const live = caller.mode === 'live';
-    if (live && notifyReceiver !== 'locoomo') {
-      // The code is sent by Locoomo for live parcels until relay (M4d).
-      throw new ReceiverRelayNotEnabledException(
-        "Relaying collection codes isn't available for live shipments yet. Use notifyReceiver: locoomo.",
-      );
-    }
     if (live) {
       await this.assertDailyLimit(merchant);
     }
@@ -575,6 +569,7 @@ export class MerchantShipmentService {
             ? await this.orders.createForMerchant(
                 {
                   merchantId: caller.merchantId,
+                  notifyReceiver,
                   originNodeId: origin.id,
                   destinationNodeId: destination.id,
                   receiverFullName: dto.receiver.name,
