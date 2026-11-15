@@ -1253,6 +1253,30 @@ Decisions:
 - **Until bags (M5b)**, a hub-scanned parcel dispatches individually exactly like a counter
   drop-off; the sort instruction is just its destination.
 
+### M5b Bags: done (2026-11-15)
+
+| Item | Where |
+|---|---|
+| `bags` (BAG-XXXX-XXXX; open → sealed → in_transit → arrived → unpacked / cancelled; one open bag per hub + destination), `orders.bagId`, `delivery_legs.bagId` with nullable `orderId` (exactly one set) and one active leg per bag. Migration 376 | handoffs `bag.entity.ts`, `domain/bag.ts` |
+| Merchant parcel dropped at a hub (counter or hub check-in) goes into the bag for its destination instead of dispatching; auto-seal at 50 | `confirm-drop-off.service.ts`, `bag.service.ts` |
+| Seal → `DeliveryDispatchService.dispatchBag`: `LogisticsRouterService.chooseForBag` (only `carriesBags` couriers; Sendii yes, in-house no), bag vehicle = largest parcel class, at least a car past 5 parcels; courier request with the bag code, both Nodes' counters, cost cap = sum of the parcels' fees × share | logistics `delivery-dispatch.service.ts`, `logistics-router.service.ts`, `domain/delivery-leg.ts` |
+| A bag leg's events are published once per parcel (`notice.bagId`); the progress listener moves each order as before, skipping parcels no longer with the bag; the bag follows (in_transit, arrived; unpacked when the last parcel is intaken; an open-bag parcel recorded lost leaves the bag) | `delivery-events.service.ts`, `delivery-progress.listener.ts`, `BagService` listeners |
+| Node app `/handoffs/bags` (list, detail, seal, courier handover); counter views and per-parcel handover resolve to the bag's leg; admin deliveries list bag legs (fallback refused) | `bags.controller.ts`, `delivery-query.service.ts`, `courier-handover.service.ts`, `admin-logistics.service.ts` |
+| Worker sweep (15 min): re-dispatch sealed bags with no courier; email ops once about parcels unscanned 24 h after their bag arrived | `BagService.run` |
+
+Decisions:
+- **Destination slots are still held at drop-off** (M3b's subscriber), not at seal: E3's
+  "reserve at seal" is already satisfied earlier. A full destination at seal time is M5c's
+  reroute queue.
+- **No in-house riders for bags yet**: the rider app has no bag flow (browse/accept/codes
+  are per order). Bags go to couriers that declare `carriesBags`.
+- **Fan-out by publishing per parcel** keeps the order state machine, capacity, mirror and
+  webhooks untouched: a bag is just a leg several orders share.
+- **Unpacking is the normal per-parcel intake**; there's no separate "bag arrived" scan,
+  because the courier handover (delivery code) is that moment.
+- **Economics** (`/admin/logistics/economics`) still joins legs to orders, so bag legs'
+  costs aren't allocated per parcel there yet (M6 reporting).
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

@@ -696,6 +696,10 @@ changes, `shipments:read` to read.
    Missing parcels stay `created`, so you can drop them later (put them on your next
    manifest) or cancel them. Unexpected parcels that belong to you are accepted normally.
 
+At the hub, your parcels are sorted into sealed bags, one per destination Node, and each
+bag travels as one trip. Nothing changes for you: every shipment still moves through
+`received` → `in_transit` → `ready_for_collection` with its own webhooks.
+
 A manifest: `{ id, reference, status: "open" | "closed" | "received" | "cancelled", hub:
 { id, name, address, city }, expectedDropAt, shipmentCount, receivedCount,
 unexpectedCount, missingCount (once received), closedAt, receivedAt, createdAt }`.
@@ -1346,6 +1350,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Hub bags** (§10): parcels checked in at a hub travel in sealed bags per destination Node. No API change; shipment statuses and webhooks are as before |
 | 2026-11-15 | **Hubs and manifests** (§10): hub assignment makes `origin: { "type": "hub" }` the default (and quotes work without `originNodeId`); manifests (create, add, close, cancel, PDF document); hub check-in by our label, your reference or your barcode; `manifest.received`; sandbox check-in |
 | 2026-11-15 | **Return batches** (§11.3): `GET /returns`, `POST /return-batches` (one code for up to 200 returns at a Node), get, list, new code, cancel; `POST /test/return-batches/{id}/collect` in the sandbox. Storage fees for uncollected returns are not charged yet |
 | 2026-11-15 | **Claims** (§15): `POST /claims` with optional evidence uploads (`POST /claims/uploads`), `GET /claims`, `claim.decided`, payouts as `claim_credit` wallet entries. A parcel we record lost or damaged opens a claim for you (`exception.claimId`). In test mode, decide your own claims with `POST /test/claims/{id}/decide` |

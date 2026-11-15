@@ -33,13 +33,33 @@ export class CourierHandoverService {
 
   // null when the order's current leg isn't one that uses provider codes
   // (in-house riders, or no courier assigned yet).
+  // A bagged parcel (M5b) is handed over with its bag: the bag's codes.
   async handoverFor(orderId: string): Promise<CourierHandoverInfo | null> {
     const leg = await this.dataSource
       .getRepository(DeliveryLegEntity)
       .createQueryBuilder('leg')
-      .where('leg."orderId" = :orderId', { orderId })
+      .where(
+        `(leg."orderId" = :orderId OR leg."bagId" = (SELECT "bagId" FROM orders WHERE id = :orderId))`,
+        { orderId },
+      )
       .andWhere(`leg.status IN ('assigned', 'picked_up', 'returning')`)
       .getOne();
+    return this.handoverForLeg(leg);
+  }
+
+  async handoverForBag(bagId: string): Promise<CourierHandoverInfo | null> {
+    const leg = await this.dataSource
+      .getRepository(DeliveryLegEntity)
+      .createQueryBuilder('leg')
+      .where('leg."bagId" = :bagId', { bagId })
+      .andWhere(`leg.status IN ('assigned', 'picked_up', 'returning')`)
+      .getOne();
+    return this.handoverForLeg(leg);
+  }
+
+  private async handoverForLeg(
+    leg: DeliveryLegEntity | null,
+  ): Promise<CourierHandoverInfo | null> {
     const provider = leg && this.registry.get(leg.providerKey);
     if (
       !leg?.externalId ||

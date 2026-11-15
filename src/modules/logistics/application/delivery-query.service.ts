@@ -57,17 +57,20 @@ export class DeliveryQueryService {
     if (orderIds.length === 0) {
       return new Map();
     }
-    // Per order: the active leg if there is one, else the most recent.
+    // Per order: the active leg if there is one, else the most recent. A
+    // bagged parcel (M5b) travels on its bag's leg.
     const rows = await this.dataSource.query<LegRow[]>(
-      `SELECT DISTINCT ON (l."orderId")
-              l."orderId", l."providerKey", p.label AS "providerLabel",
+      `SELECT DISTINCT ON (o.id)
+              o.id AS "orderId", l."providerKey", p.label AS "providerLabel",
               l."legType", l.status, l."vehicleClass", l."courierName",
               l."courierPhone", l."courierVehicle", l."etaMinutes",
               l."attemptNumber", l."updatedAt"
-         FROM delivery_legs l
+         FROM orders o
+         JOIN delivery_legs l
+           ON l."orderId" = o.id OR (o."bagId" IS NOT NULL AND l."bagId" = o."bagId")
          JOIN logistics_providers p ON p.key = l."providerKey"
-        WHERE l."orderId" = ANY($1)
-        ORDER BY l."orderId",
+        WHERE o.id = ANY($1)
+        ORDER BY o.id,
                  (l.status IN ('requested', 'assigned', 'picked_up', 'returning')) DESC,
                  l."createdAt" DESC`,
       [orderIds],

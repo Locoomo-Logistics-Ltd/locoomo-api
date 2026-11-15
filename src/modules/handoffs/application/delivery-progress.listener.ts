@@ -46,6 +46,11 @@ export class DeliveryProgressListener
     if (notice.legType === DeliveryLegType.RETURN) {
       return this.onReturnLeg(notice, manager);
     }
+    // A bag's leg (M5b) reaches every parcel in it; one that has left the
+    // journey (recorded lost, say) is skipped instead of failing the bag.
+    if (notice.bagId && !(await this.stillWithBag(notice, manager))) {
+      return;
+    }
 
     switch (notice.event) {
       case DeliveryEventType.ASSIGNED:
@@ -225,5 +230,29 @@ export class DeliveryProgressListener
           `Return leg ${notice.legId} for order ${notice.orderId} reported ${String(notice.event)}; needs ops follow-up`,
         );
     }
+  }
+
+  // The status each bag event expects a parcel to be in; any other status
+  // means the parcel isn't travelling with the bag any more.
+  private async stillWithBag(
+    notice: DeliveryEventNotice,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const expected: Partial<Record<DeliveryEventType, string[]>> = {
+      [DeliveryEventType.ASSIGNED]: ['parcel_received_at_origin'],
+      [DeliveryEventType.PICKED_UP]: ['rider_assigned'],
+      [DeliveryEventType.DELIVERED]: ['in_transit'],
+      [DeliveryEventType.RETURNING]: ['in_transit'],
+      [DeliveryEventType.RETURNED]: ['return_initiated', 'return_in_transit'],
+    };
+    const allowed = expected[notice.event];
+    if (!allowed) {
+      return true;
+    }
+    const [order] = await manager.query<{ status: string }[]>(
+      `SELECT status FROM orders WHERE id = $1`,
+      [notice.orderId],
+    );
+    return !!order && allowed.includes(order.status);
   }
 }

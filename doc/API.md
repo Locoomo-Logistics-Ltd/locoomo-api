@@ -2807,6 +2807,10 @@ dates). Each row: `id`,
 `status`, `providerStatus`, `externalId`, `attemptNumber`, `vehicleClass`, `courierName`,
 `courierPhone`, `quotedKobo`, `actualKobo`, `surchargeKobo`, `failureReason` (e.g.
 `no_rider_found`, `assign_timeout`, `admin_fallback`, `QUOTE_ABOVE_LIMIT: …`), timestamps.
+A **bag's** delivery (M5b) has `orderId: null`, `bagId`, and the bag's code and status in
+`orderTrackingCode` / `orderStatus`; a parcel's `trackingCode` filter includes its bag's
+delivery. `fallback` refuses bag deliveries. Node app bag calls:
+[LOGISTICS_API.md §5.12](LOGISTICS_API.md#512-bags--handoffsbags).
 
 ### `POST /api/v1/admin/logistics/deliveries/:id/retry` · `/fallback` · `/reconcile`
 

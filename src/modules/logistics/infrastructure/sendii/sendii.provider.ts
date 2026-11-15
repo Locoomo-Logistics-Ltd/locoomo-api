@@ -87,6 +87,7 @@ export class SendiiProvider implements LogisticsProvider, OnModuleInit {
     handover: 'provider_code',
     updates: 'webhook',
     remoteSubmission: true,
+    carriesBags: true,
     cancellableUntil: DeliveryLegStatus.REQUESTED,
     prepaidWallet: true,
     surchargeHeadroomFactor: MAX_SURCHARGE_FACTOR,

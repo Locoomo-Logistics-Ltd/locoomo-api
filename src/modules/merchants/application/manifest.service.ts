@@ -98,9 +98,10 @@ export interface HubScanResult {
   merchantReference: string;
   merchantName: string;
   destination: { nodeId: string; name: string; city: string };
-  // Where it goes next at the hub. Today: the destination; with bags
-  // (M5b), the bag to put it in.
+  // Where it goes next at the hub: the bag for its destination (M5b).
   sortInstruction: string;
+  // The bag it went into; it seals itself when full (`sealed`).
+  bag: { code: string; parcelCount: number; sealed: boolean } | null;
   manifest: { reference: string; expected: boolean } | null;
   // Scanned before: nothing changed.
   alreadyReceived: boolean;
@@ -492,13 +493,19 @@ export class ManifestService {
         destinationName: string;
         destinationCity: string;
         merchantName: string;
+        bagCode: string | null;
+        bagCount: number | null;
+        bagStatus: string | null;
       }[]
     >(
       `SELECT n.id AS "destinationNodeId", n.name AS "destinationName",
-              n.city AS "destinationCity", m."tradingName" AS "merchantName"
+              n.city AS "destinationCity", m."tradingName" AS "merchantName",
+              b.code AS "bagCode", b."parcelCount" AS "bagCount", b.status AS "bagStatus"
          FROM merchant_shipments s
          JOIN nodes n ON n.id = (s.destination->>'nodeId')::uuid
          JOIN merchants m ON m.id = s."merchantId"
+         LEFT JOIN orders o ON o.id = s."orderId"
+         LEFT JOIN bags b ON b.id = o."bagId"
         WHERE s.id = $1`,
       [shipment.id],
     );
@@ -511,7 +518,16 @@ export class ManifestService {
         name: after.destinationName,
         city: after.destinationCity,
       },
-      sortInstruction: `To ${after.destinationName}, ${after.destinationCity}`,
+      sortInstruction: after.bagCode
+        ? `Bag ${after.bagCode} → ${after.destinationName}, ${after.destinationCity}`
+        : `To ${after.destinationName}, ${after.destinationCity}`,
+      bag: after.bagCode
+        ? {
+            code: after.bagCode,
+            parcelCount: after.bagCount ?? 0,
+            sealed: after.bagStatus !== 'open',
+          }
+        : null,
       manifest: onManifest,
       alreadyReceived,
     };

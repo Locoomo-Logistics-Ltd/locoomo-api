@@ -114,6 +114,9 @@ export interface ProviderCapabilities {
   cancellableUntil: DeliveryLegStatus.REQUESTED | DeliveryLegStatus.ASSIGNED;
   // Prepaid wallet that must cover the fee before dispatch.
   prepaidWallet: boolean;
+  // Takes a sealed bag of parcels (M5b) as one job. Bags only go to
+  // providers that do.
+  carriesBags?: boolean;
   // Prepaid wallets only: the most surcharges can add to a delivery, as a
   // share of its fee — the headroom kept for in-flight deliveries.
   surchargeHeadroomFactor?: number;
