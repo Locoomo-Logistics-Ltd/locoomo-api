@@ -28,6 +28,18 @@ export class MerchantWalletEntity {
   @Column({ type: 'bigint', default: 0, transformer: numericTransformer })
   heldKobo!: number;
 
+  // The merchant's low-balance alert (available below it → email +
+  // wallet.low_balance, once until it recovers).
+  @Column({ type: 'bigint', nullable: true, transformer: numericTransformer })
+  lowBalanceThresholdKobo!: number | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  lowBalanceAlertedAt!: Date | null;
+
+  // Ops were told the balance fell below the tier's negative floor.
+  @Column({ type: 'timestamptz', nullable: true })
+  floorAlertedAt!: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

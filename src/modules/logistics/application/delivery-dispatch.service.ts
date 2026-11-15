@@ -242,7 +242,7 @@ export class DeliveryDispatchService implements OnModuleInit {
     >(
       `SELECT o."trackingCode", o."parcelSize", o.handling, o."originNodeId",
               o."destinationNodeId",
-              o."amountKobo" - o."destinationFeeKobo" AS "deliveryFeeKobo",
+              o."amountKobo" + o."discountKobo" - o."destinationFeeKobo" AS "deliveryFeeKobo",
               p."maxCostShare"
          FROM orders o
          JOIN logistics_providers p ON p.key = $2

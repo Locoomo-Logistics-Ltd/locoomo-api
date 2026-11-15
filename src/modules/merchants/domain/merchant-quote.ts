@@ -25,10 +25,16 @@ export interface QuoteBreakdown {
 
 export function merchantQuoteAmounts(
   fee: FeeParts,
-  options: { discountRate: number; vatEnabled: boolean },
+  options: {
+    discountRate: number;
+    vatEnabled: boolean;
+    // Cap on the discount (the platform share it comes out of, E7).
+    maxDiscountKobo?: number;
+  },
 ): { amountKobo: number; breakdown: QuoteBreakdown } {
+  const wanted = Math.round(fee.totalKobo * options.discountRate);
   const volumeDiscountKobo =
-    0 - Math.round(fee.totalKobo * options.discountRate);
+    0 - Math.min(wanted, options.maxDiscountKobo ?? wanted);
   const amountKobo = fee.totalKobo + volumeDiscountKobo;
   return {
     amountKobo,

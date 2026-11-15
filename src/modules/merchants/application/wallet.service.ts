@@ -19,15 +19,11 @@ import {
 import { MerchantWalletEntity } from '../infrastructure/entities/merchant-wallet.entity';
 import { WalletEntryEntity } from '../infrastructure/entities/wallet-entry.entity';
 import { WalletHoldEntity } from '../infrastructure/entities/wallet-hold.entity';
+import { WalletAlertsService } from './wallet-alerts.service';
+import { WalletView, walletView } from './wallet-view';
 
-export interface WalletView {
-  mode: ApiKeyMode;
-  currency: 'NGN';
-  balanceKobo: number;
-  heldKobo: number;
-  availableKobo: number;
-  updatedAt: string;
-}
+export { walletView };
+export type { WalletView };
 
 export interface WalletEntryView {
   id: string;
@@ -68,15 +64,6 @@ interface Movement {
   externalRef?: string | null;
 }
 
-export const walletView = (w: MerchantWalletEntity): WalletView => ({
-  mode: w.mode,
-  currency: 'NGN',
-  balanceKobo: w.balanceKobo,
-  heldKobo: w.heldKobo,
-  availableKobo: availableKobo(w),
-  updatedAt: w.updatedAt.toISOString(),
-});
-
 type RawEntry = Omit<WalletEntryView, 'createdAt'> & { createdAt: Date };
 type RawHold = Omit<WalletHoldView, 'createdAt' | 'resolvedAt'> & {
   createdAt: Date;
@@ -112,7 +99,20 @@ function afterCursor(
 // first (callers already hold it), then wallet.
 @Injectable()
 export class WalletService {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly alerts: WalletAlertsService,
+  ) {}
+
+  // Every change to a wallet goes through here: saved, then the low-balance
+  // and floor alerts are checked in the same transaction.
+  private async saveWallet(
+    manager: EntityManager,
+    wallet: MerchantWalletEntity,
+  ): Promise<void> {
+    await manager.save(wallet);
+    await this.alerts.check(manager, wallet);
+  }
 
   // ─── Reads ────────────────────────────────────────────────────────────
 
@@ -219,7 +219,7 @@ export class WalletService {
     );
     this.assertAvailable(wallet, input.amountKobo);
     wallet.heldKobo += input.amountKobo;
-    await manager.save(wallet);
+    await this.saveWallet(manager, wallet);
     return manager.save(
       manager.create(WalletHoldEntity, {
         walletId: wallet.id,
@@ -250,7 +250,7 @@ export class WalletService {
     }
     wallet.heldKobo += difference;
     hold.amountKobo = newAmountKobo;
-    await manager.save(wallet);
+    await this.saveWallet(manager, wallet);
     await manager.save(hold);
   }
 
@@ -264,7 +264,7 @@ export class WalletService {
     wallet.heldKobo -= hold.amountKobo;
     hold.status = 'released';
     hold.resolvedAt = new Date();
-    await manager.save(wallet);
+    await this.saveWallet(manager, wallet);
     await manager.save(hold);
   }
 
@@ -291,7 +291,7 @@ export class WalletService {
         holdId: hold.id,
       });
     } else {
-      await manager.save(wallet);
+      await this.saveWallet(manager, wallet);
     }
   }
 
@@ -395,6 +395,23 @@ export class WalletService {
     return { entry, wallet };
   }
 
+  // The merchant's low-balance alert line (null = off). Re-armed, so a
+  // wallet already below it alerts right away.
+  async setLowBalanceThreshold(
+    merchantId: string,
+    mode: ApiKeyMode,
+    thresholdKobo: number | null,
+  ): Promise<WalletView> {
+    const wallet = await this.dataSource.transaction(async (manager) => {
+      const locked = await this.walletFor(manager, merchantId, mode, true);
+      locked.lowBalanceThresholdKobo = thresholdKobo;
+      locked.lowBalanceAlertedAt = null;
+      await this.saveWallet(manager, locked);
+      return locked;
+    });
+    return walletView(wallet);
+  }
+
   // Test mode: back to ₦1,000,000. Holds stay (their shipments still exist).
   async resetTestWallet(
     manager: EntityManager,
@@ -475,7 +492,7 @@ export class WalletService {
     movement: Movement,
   ): Promise<WalletEntryEntity> {
     wallet.balanceKobo += movement.amountKobo;
-    await manager.save(wallet);
+    await this.saveWallet(manager, wallet);
     return manager.save(
       manager.create(WalletEntryEntity, {
         walletId: wallet.id,

@@ -68,6 +68,7 @@ import { MerchantCaller } from './merchant-state';
 import { ShipmentEventsService } from './shipment-events.service';
 import { ShipmentPresenter } from './shipment-presenter';
 import { WalletService } from './wallet.service';
+import { MerchantPricingService } from './merchant-pricing.service';
 import { OrdersService } from '../../orders/application/orders.service';
 import { ParcelRecallService } from '../../handoffs/application/parcel-recall.service';
 import { lagosDate } from '../../../common/time/working-days';
@@ -115,6 +116,7 @@ export class MerchantShipmentService {
     private readonly presenter: ShipmentPresenter,
     private readonly orders: OrdersService,
     private readonly parcelRecall: ParcelRecallService,
+    private readonly pricing: MerchantPricingService,
   ) {}
 
   async create(
@@ -309,6 +311,7 @@ export class MerchantShipmentService {
         current.origin.nodeId!,
         destination?.id ?? current.destination.nodeId!,
         dto.parcel ? parcelFrom(dto.parcel) : current.parcel,
+        { merchantId: caller.merchantId, mode: caller.mode },
       );
     }
 
@@ -394,6 +397,7 @@ export class MerchantShipmentService {
               vehicleClass: repriced.vehicleClass,
               amountKobo: repriced.amountKobo,
               destinationFeeKobo: repriced.destinationFeeKobo,
+              discountKobo: repriced.discountKobo,
             },
             manager,
           );
@@ -576,7 +580,10 @@ export class MerchantShipmentService {
       });
     const destination = await this.availableDestination(dto.destinationNodeId);
     const parcel = parcelFrom(dto.parcel);
-    const priced = await this.price(origin.id, destination.id, parcel);
+    const priced = await this.price(origin.id, destination.id, parcel, {
+      merchantId: caller.merchantId,
+      mode: caller.mode,
+    });
 
     for (let attempt = 1; ; attempt++) {
       try {
@@ -605,6 +612,7 @@ export class MerchantShipmentService {
                   vehicleClass: priced.vehicleClass,
                   amountKobo: priced.amountKobo,
                   destinationFeeKobo: priced.destinationFeeKobo,
+                  discountKobo: priced.discountKobo,
                 },
                 manager,
               )
@@ -680,13 +688,19 @@ export class MerchantShipmentService {
     originNodeId: string,
     destinationNodeId: string,
     parcel: ShipmentParcel,
-    options: { anyNode?: boolean } = {},
+    options: {
+      anyNode?: boolean;
+      merchantId: string;
+      mode: MerchantCaller['mode'];
+    },
   ): Promise<{
     amountKobo: number;
     breakdown: ShipmentFeeBreakdown;
     vehicleClass: string;
     // The destination Node's share, carried on the order (revenue split).
     destinationFeeKobo: number;
+    // The volume discount taken off (positive), carried on the order (E7).
+    discountKobo: number;
   }> {
     const quote = await this.quotes.quote(
       { originNodeId, destinationNodeId },
@@ -700,15 +714,24 @@ export class MerchantShipmentService {
       },
       { restrictToPublicNodes: !options.anyNode },
     );
+    const discount = await this.pricing.discountFor(
+      options.merchantId,
+      options.mode,
+    );
     const { amountKobo, breakdown } = merchantQuoteAmounts(quote.feeBreakdown, {
-      discountRate: 0,
+      discountRate: discount.percent / 100,
       vatEnabled: this.config.get('VAT_ENABLED', { infer: true }),
+      maxDiscountKobo: await this.pricing.discountCap(
+        quote.feeBreakdown.totalKobo,
+        quote.feeBreakdown.destinationFeeKobo,
+      ),
     });
     return {
       amountKobo,
       breakdown,
       vehicleClass: quote.feeBreakdown.vehicleClass,
       destinationFeeKobo: quote.feeBreakdown.destinationFeeKobo,
+      discountKobo: -breakdown.volumeDiscountKobo,
     };
   }
 

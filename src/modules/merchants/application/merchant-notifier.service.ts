@@ -17,6 +17,7 @@ import { MerchantRole, ReviewItemKey } from '../domain/merchant.enums';
 import { MerchantEntity } from '../infrastructure/entities/merchant.entity';
 import { MerchantMemberEntity } from '../infrastructure/entities/merchant-member.entity';
 import { WalletTopUpEntity } from '../infrastructure/entities/wallet-top-up.entity';
+import { MerchantWalletEntity } from '../infrastructure/entities/merchant-wallet.entity';
 import { formatNaira } from '../domain/wallet';
 
 export type MerchantStatusEmail =
@@ -395,6 +396,85 @@ export class MerchantNotifierService {
           {
             kind: 'paragraph',
             text: `Your statement is in the merchant dashboard: ${this.dashboardUrl('/wallet')}`,
+          },
+        ],
+      },
+      manager,
+    );
+  }
+
+  // Available balance fell below the merchant's own threshold.
+  async walletLowBalance(
+    merchant: MerchantEntity,
+    wallet: MerchantWalletEntity,
+    manager: EntityManager,
+  ): Promise<void> {
+    const recipients = await this.teamLeads(merchant.id, manager, [
+      MerchantRole.OWNER,
+      MerchantRole.ADMIN,
+      MerchantRole.FINANCE,
+    ]);
+    const available = wallet.balanceKobo - wallet.heldKobo;
+    await this.send(
+      recipients,
+      {
+        subject: `Low wallet balance${wallet.mode === 'test' ? ' (test)' : ''}: ${formatNaira(available)} available`,
+        heading: 'Your wallet is running low',
+        blocks: [
+          {
+            kind: 'details',
+            rows: [
+              { label: 'Business', value: merchant.tradingName },
+              { label: 'Available', value: formatNaira(available) },
+              {
+                label: 'Your alert level',
+                value: formatNaira(wallet.lowBalanceThresholdKobo ?? 0),
+              },
+            ],
+          },
+          {
+            kind: 'paragraph',
+            text: `New shipments need enough available balance. Top up in the merchant dashboard: ${this.dashboardUrl('/wallet')}`,
+          },
+        ],
+      },
+      manager,
+    );
+  }
+
+  // A live wallet went below its tier's negative floor (plan §8.4): ops
+  // follow up; parcels in flight keep moving.
+  async walletBelowFloor(
+    merchant: MerchantEntity,
+    wallet: MerchantWalletEntity,
+    floorKobo: number,
+    manager: EntityManager,
+  ): Promise<void> {
+    const admins = await this.adminsWith(AdminPermission.FINANCE);
+    if (admins.length === 0) {
+      this.logger.error(
+        `Merchant ${merchant.id} wallet below floor but no active admin has the finance permission`,
+      );
+      return;
+    }
+    await this.send(
+      admins,
+      {
+        subject: `Wallet below floor: ${merchant.tradingName}`,
+        heading: 'Merchant wallet below its negative floor',
+        blocks: [
+          {
+            kind: 'details',
+            rows: [
+              { label: 'Merchant', value: merchant.tradingName },
+              { label: 'Merchant ID', value: merchant.id },
+              { label: 'Balance', value: formatNaira(wallet.balanceKobo) },
+              { label: 'Floor', value: formatNaira(floorKobo) },
+            ],
+          },
+          {
+            kind: 'paragraph',
+            text: 'Re-measured parcels took the balance below the allowed floor. New shipments are already refused until they top up; contact the merchant.',
           },
         ],
       },

@@ -16,6 +16,10 @@ export interface RecordRevenueSplitFields {
   riderId: string | null;
   originNodeId: string;
   destinationNodeId: string;
+  // A merchant's volume discount on this order (plan E7). Rider and Node
+  // shares are computed on the undiscounted fee; only the platform share
+  // pays for it. 0 when absent.
+  discountKobo?: number;
 }
 
 // Narrow cross-module write export, called by handoffs' ConfirmCollectionService
@@ -27,6 +31,17 @@ export interface RecordRevenueSplitFields {
 // COMPLETED transition (decision #4: strict-consistency effect).
 @Injectable()
 export class RecordRevenueSplitService {
+  // The platform's share of delivery revenue today, in percent: the most a
+  // volume discount may take (plan E7). Null when no rule is set yet.
+  async currentPlatformPercent(manager: EntityManager): Promise<number | null> {
+    const rule = await manager
+      .createQueryBuilder(RevenueSplitRuleEntity, 'rule')
+      .where('rule.effectiveFrom <= :now', { now: new Date() })
+      .orderBy('rule.effectiveFrom', 'DESC')
+      .getOne();
+    return rule ? Number(rule.platformPercent) : null;
+  }
+
   async record(
     fields: RecordRevenueSplitFields,
     manager: EntityManager,
@@ -46,7 +61,9 @@ export class RecordRevenueSplitService {
     // Node/platform split — the split ratio only ever applies to the
     // remaining delivery revenue, so a destination-fee change never dilutes
     // rider/platform economics and vice versa.
-    const deliveryRevenueKobo = fields.amountKobo - fields.destinationFeeKobo;
+    const discountKobo = Math.max(fields.discountKobo ?? 0, 0);
+    const deliveryRevenueKobo =
+      fields.amountKobo + discountKobo - fields.destinationFeeKobo;
     const shares = calculateSplit(
       deliveryRevenueKobo,
       rule.riderPercent,
@@ -95,7 +112,8 @@ export class RecordRevenueSplitService {
         orderId: fields.orderId,
         partyType: RevenueSplitPartyType.PLATFORM,
         partyId: null,
-        amountKobo: shares.platformShareKobo,
+        // Pricing caps the discount at this share, so it never goes below 0.
+        amountKobo: Math.max(shares.platformShareKobo - discountKobo, 0),
         splitRuleId: rule.id,
       }),
     ]);

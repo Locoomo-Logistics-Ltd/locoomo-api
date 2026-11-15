@@ -148,6 +148,12 @@ export class OrderEntity {
   @Column({ type: 'varchar', default: 'locoomo' })
   notifyReceiver!: 'locoomo' | 'merchant' | 'both';
 
+  // A merchant's volume discount already taken off amountKobo (plan E7).
+  // Earnings and the courier cost cap use amountKobo + discountKobo; only
+  // the platform share pays for it.
+  @Column({ type: 'int', default: 0 })
+  discountKobo!: number;
+
   // Whether this parcel currently counts against its destination Node's
   // capacity (nodes.destinationHeldCount). Managed only by handoffs'
   // DestinationCapacitySubscriber.

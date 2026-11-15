@@ -1,9 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsIn,
   IsInt,
   IsISO8601,
+  IsNumber,
   IsOptional,
   IsString,
   Length,
@@ -11,6 +15,8 @@ import {
   MaxLength,
   Min,
   NotEquals,
+  ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { CursorQueryDto } from '../../../../common/pagination/cursor-query.dto';
 import { MAX_ADJUSTMENT_KOBO, WalletEntryType } from '../../domain/wallet';
@@ -138,4 +144,56 @@ export class WalletAdjustmentRequestedView {
   status!: string;
   summary!: string;
   expiresAt!: string;
+}
+
+export class WalletSettingsDto {
+  /** Alert when available balance falls below this (kobo); null turns it off. */
+  @ValidateIf((_dto, value) => value !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(MAX_ADJUSTMENT_KOBO)
+  lowBalanceThresholdKobo!: number | null;
+}
+
+export class DiscountTierDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  minShipments!: number;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(50)
+  percent!: number;
+}
+
+export class SetDiscountTiersDto {
+  /** Must start at 0 shipments; no two at the same threshold. */
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => DiscountTierDto)
+  tiers!: DiscountTierDto[];
+}
+
+export class SetMerchantDiscountDto {
+  /** A negotiated discount (percent) replacing the tier; null = use the tier. */
+  @ValidateIf((_dto, value) => value !== null)
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(50)
+  discountPercent!: number | null;
+}
+
+export class MerchantDiscountView {
+  percent!: number;
+  @ApiProperty({ enum: ['tier', 'negotiated'] })
+  source!: 'tier' | 'negotiated';
+  basis!: { month: string; shipments: number };
+  tier!: DiscountTierDto;
+  nextTier!: DiscountTierDto | null;
 }

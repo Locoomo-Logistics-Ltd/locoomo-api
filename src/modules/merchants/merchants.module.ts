@@ -34,6 +34,7 @@ import { WalletEntryEntity } from './infrastructure/entities/wallet-entry.entity
 import { WalletHoldEntity } from './infrastructure/entities/wallet-hold.entity';
 import { AdminMerchantWalletController } from './interface/admin-merchant-wallet.controller';
 import {
+  MerchantPricingController,
   TestWalletController,
   WalletController,
 } from './interface/wallet.controller';
@@ -46,10 +47,21 @@ import { ShipmentExpiryService } from './application/shipment-expiry.service';
 import { ShipmentPresenter } from './application/shipment-presenter';
 import { ShipmentLabelService } from './application/shipment-label.service';
 import { ShipmentImportService } from './application/shipment-import.service';
+import { MerchantPricingService } from './application/merchant-pricing.service';
+import { WalletAlertsService } from './application/wallet-alerts.service';
+import { VolumeDiscountTierSetEntity } from './infrastructure/entities/volume-discount-tier-set.entity';
+import { AdminMerchantPricingController } from './interface/admin-merchant-pricing.controller';
+import { EarningsModule } from '../earnings/earnings.module';
 import { ShipmentImportEntity } from './infrastructure/entities/shipment-import.entity';
 import { ShipmentImportRowEntity } from './infrastructure/entities/shipment-import-row.entity';
 import { ShipmentImportsController } from './interface/shipment-imports.controller';
 import { LabelRenderer } from './infrastructure/label-renderer';
+import { DocumentRenderer } from './infrastructure/document-renderer';
+import { MerchantDocumentsService } from './application/merchant-documents.service';
+import {
+  AdminMerchantDocumentsController,
+  MerchantDocumentsController,
+} from './interface/merchant-documents.controller';
 import { ApiKeyEntity } from './infrastructure/entities/api-key.entity';
 import { MerchantApiRequestEntity } from './infrastructure/entities/merchant-api-request.entity';
 import { MerchantBankAccountEntity } from './infrastructure/entities/merchant-bank-account.entity';
@@ -117,6 +129,7 @@ import { WebhooksController } from './interface/webhooks.controller';
       MerchantFundingAccountEntity,
       ShipmentImportEntity,
       ShipmentImportRowEntity,
+      VolumeDiscountTierSetEntity,
     ]),
     // ApprovalService + registry: wallet adjustments need a second admin.
     AdminModule,
@@ -126,6 +139,8 @@ import { WebhooksController } from './interface/webhooks.controller';
     OrdersModule,
     HandoffsModule,
     TrackingModule,
+    // RecordRevenueSplitService.currentPlatformPercent: the discount cap (E7).
+    EarningsModule,
     // UserLookupService (team names/emails), AdminPermissionService (KYC
     // reviewers to notify), MfaService (2FA before live keys).
     IdentityModule,
@@ -153,7 +168,11 @@ import { WebhooksController } from './interface/webhooks.controller';
     WalletController,
     TestWalletController,
     AdminMerchantWalletController,
+    MerchantDocumentsController,
+    AdminMerchantDocumentsController,
     ShipmentImportsController,
+    MerchantPricingController,
+    AdminMerchantPricingController,
   ],
   providers: [
     MerchantContextService,
@@ -183,8 +202,12 @@ import { WebhooksController } from './interface/webhooks.controller';
     LiveShipmentSyncService,
     ShipmentExpiryService,
     LabelRenderer,
+    DocumentRenderer,
+    MerchantDocumentsService,
     ShipmentLabelService,
     ShipmentImportService,
+    MerchantPricingService,
+    WalletAlertsService,
   ],
 })
 export class MerchantsModule {}

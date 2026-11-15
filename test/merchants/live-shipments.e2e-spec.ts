@@ -18,6 +18,7 @@ import { WalletReconciliationService } from '../../src/modules/merchants/applica
 import { WalletService } from '../../src/modules/merchants/application/wallet.service';
 import { WalletEntryType } from '../../src/modules/merchants/domain/wallet';
 import { NodeMembershipEntity } from '../../src/modules/node-operators/infrastructure/entities/node-membership.entity';
+import { MerchantPricingService } from '../../src/modules/merchants/application/merchant-pricing.service';
 import { OrdersService } from '../../src/modules/orders/application/orders.service';
 import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
@@ -703,6 +704,86 @@ describe('Live merchant shipments (e2e)', () => {
       `UPDATE merchants SET "creationPaused" = false WHERE id = $1`,
       [merchantId],
     );
+  });
+
+  describe('volume discounts (M4e)', () => {
+    afterAll(async () => {
+      await dataSource.query(
+        `UPDATE merchants SET "discountPercentOverride" = NULL WHERE id = $1`,
+        [merchantId],
+      );
+      app.get(MerchantPricingService).forget(merchantId);
+    });
+
+    it('takes the discount off the price and only out of the platform share', async () => {
+      const undiscounted = await create();
+      await dataSource.query(
+        `UPDATE merchants SET "discountPercentOverride" = 10 WHERE id = $1`,
+        [merchantId],
+      );
+      app.get(MerchantPricingService).forget(merchantId);
+
+      expect(
+        data<{ percent: number; source: string }>(
+          await live.get('/pricing').expect(200),
+        ),
+      ).toMatchObject({ percent: 10, source: 'negotiated' });
+
+      const email = `disc+${randomUUID().slice(0, 6)}@${DOMAIN}`;
+      const s = await create({
+        receiver: { name: 'Disc Buyer', phone: '08031234567', email },
+      });
+      expect(s.fee.quotedKobo).toBeLessThan(undiscounted.fee.quotedKobo);
+      const order = await dataSource.query<
+        {
+          id: string;
+          amountKobo: number;
+          discountKobo: number;
+          destinationFeeKobo: number;
+        }[]
+      >(
+        `SELECT id, "amountKobo", "discountKobo", "destinationFeeKobo" FROM orders WHERE "trackingCode" = $1`,
+        [s.trackingCode],
+      );
+      const {
+        id: orderId,
+        amountKobo,
+        discountKobo,
+        destinationFeeKobo,
+      } = order[0];
+      expect(discountKobo).toBeGreaterThan(0);
+      expect(amountKobo + discountKobo).toBe(undiscounted.fee.quotedKobo);
+
+      await handoff(originOperator, orderId, 'drop-off').expect(200);
+      await pickUp(orderId);
+      await arrive(orderId);
+      await handoff(destinationOperator, orderId, 'intake').expect(200);
+      await handoff(destinationOperator, orderId, 'collect', {
+        code: codeIn((await latestEmailTo(email)).text),
+        identityConfirmed: true,
+      }).expect(200);
+
+      const entries = await dataSource.query<
+        { partyType: string; amountKobo: number }[]
+      >(
+        `SELECT "partyType", "amountKobo" FROM revenue_split_entries WHERE "orderId" = $1`,
+        [orderId],
+      );
+      const by = Object.fromEntries(
+        entries.map((e) => [e.partyType, Number(e.amountKobo)]),
+      );
+      const base = amountKobo + discountKobo - destinationFeeKobo;
+      const courierShare = by.rider ?? by.courier_allocation;
+      // Rider and Node are paid on the undiscounted fee (60% / 20%)...
+      expect(Math.abs(courierShare - base * 0.6)).toBeLessThanOrEqual(1);
+      expect(Math.abs(by.node - base * 0.2)).toBeLessThanOrEqual(1);
+      // ...the platform share pays for the discount...
+      expect(by.platform).toBe(base - courierShare - by.node - discountKobo);
+      // ...and everything adds up to what the merchant paid.
+      expect(Object.values(by).reduce((sum, value) => sum + value, 0)).toBe(
+        amountKobo,
+      );
+    });
   });
 
   describe('relaying collection codes (M4d)', () => {

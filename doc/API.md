@@ -3526,6 +3526,17 @@ reference, from the webhook, the status check or the worker's 15-minute sweep (w
 fails declined cards and marks card payments abandoned after a day; a late success still
 credits).
 
+### Statements and invoices: `GET /api/v1/merchant/statements/{yyyy-mm}` · `…/invoices/{yyyy-mm}`
+
+`?format=pdf|csv` (default `pdf`); scope `wallet:read` / `wallet.manage`. File downloads,
+no envelope. Statement: either mode, any month up to the current one (Lagos), opening and
+closing balance computed from the ledger. Invoice: live mode, finished months, number
+`LCM-INV-YYYYMM-<first 8 hex of the merchant id>`, bills `shipment_charge` and
+`shipment_adjustment` lines; VAT is itemised as included when `VAT_ENABLED`. Seller block
+from `INVOICE_SELLER_NAME` (default "Locoomo"), `INVOICE_SELLER_ADDRESS` (lines split on
+`|`) and `INVOICE_SELLER_TIN`. Errors `422 INVALID_STATEMENT_MONTH`,
+`409 INVOICE_NOT_AVAILABLE`.
+
 ## Admin: orders
 
 `POST /api/v1/admin/orders/:id/exception` (`ops`): record a parcel lost or damaged in our
@@ -3714,6 +3725,30 @@ Nothing moves yet. A different `finance` (or `super`) admin approves it with
 `{ entryId, amountKobo, balanceAfterKobo }` and the merchant sees an `adjustment` line.
 A debit may take the balance below zero. Errors: `403 FORBIDDEN` (not `finance`),
 `404 NOT_FOUND` (unknown merchant), `400 VALIDATION_FAILED`.
+
+**Negative floor.** When a live wallet's balance goes below its tier's
+`negativeBalanceFloorKobo` (after re-pricing or an adjustment), `finance` admins are emailed
+once ("Wallet below floor: {merchant}"); it re-arms when the balance recovers. New
+shipments are already refused below zero.
+
+## Admin: volume discounts
+
+| Endpoint | Permission | |
+|---|---|---|
+| `GET /api/v1/admin/pricing/volume-tiers` | `finance`, `ops`, `support` | `{ "tiers": [{ "minShipments": 0, "percent": 0 }, …] }` |
+| `PUT /api/v1/admin/pricing/volume-tiers` | `finance` | Body `{ "tiers": [...] }`: must start at 0 shipments, distinct thresholds, 0–50%. Takes effect now; earlier sets are kept. `422 INVALID_DISCOUNT_TIERS` |
+| `GET /api/v1/admin/merchants/:id/pricing` | `finance`, `ops`, `support` | The merchant's live discount: `{ percent, source: "tier" \| "negotiated", basis: { month, shipments }, tier, nextTier }` |
+| `PUT /api/v1/admin/merchants/:id/pricing` | `finance` | `{ "discountPercent": 12.5 }` (0–50) sets a negotiated rate replacing the tier; `null` goes back to the tier. Audited |
+
+The tier comes from last calendar month's (Lagos) shipments in that mode that ended
+`collected`, `returned` or `return_ready`. Discounts are funded only from the platform's
+revenue share and capped at it (plan E7): orders carry `discountKobo`, rider and Node
+shares are computed on the undiscounted fee, and the platform entry is reduced by the
+discount. Changes apply within 10 minutes (cached per merchant).
+
+**Documents.** `GET /api/v1/admin/merchants/:id/statements/{yyyy-mm}?mode=&format=` and
+`GET /api/v1/admin/merchants/:id/invoices/{yyyy-mm}?format=` (`finance`, `ops`, `support`)
+give the same files the merchant downloads.
 
 **Reconciliation.** Every night a worker checks each wallet's cached balance against its
 ledger and its held amount against its active holds. Any mismatch is emailed to `finance`

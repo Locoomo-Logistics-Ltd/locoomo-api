@@ -922,14 +922,14 @@ failure), so register the final URL.
 | `manifest.received` | Hub finished checking a manifest in |
 | `claim.decided` | Claim approved or rejected |
 | `wallet.funded` | A top-up was credited: `data.topUp` (§14.1) and `data.wallet` (the wallet after it) |
-| `wallet.low_balance` | Available balance fell below your threshold |
+| `wallet.low_balance` | Available balance fell below your threshold: `data.wallet`, `data.thresholdKobo`. Once per crossing |
 | `merchant.status_changed` | Your account was submitted, approved, suspended, etc. Sent to test and live endpoints |
 | `webhook.test` | Only from *Send test event*, only to that endpoint |
 
 Sent today: every `shipment.*` event above except `collection_reminder` and
 `destination_changed` for live parcels (test mode simulates both), plus `wallet.funded`,
-`merchant.status_changed` and `webhook.test`. `manifest.received`,
-`claim.decided` and `wallet.low_balance` arrive with their features. Expect new event types over time
+`wallet.low_balance`, `merchant.status_changed` and `webhook.test`. `manifest.received`
+and `claim.decided` arrive with their features. Expect new event types over time
 ([§3](#3-versioning-and-stability)). Ignore the ones you
 don't handle and still respond 2xx.
 
@@ -980,14 +980,27 @@ don't handle and still respond 2xx.
 - **Measured bigger than declared?** We charge the difference automatically. The parcel is
   never held up for money. If that takes your wallet below zero, existing parcels keep
   moving, but **new** shipments are refused (`402`) until you top up.
-- **Volume discounts.** Your discount tier for the month is set by last month's live
-  shipments that were collected or returned: 0% (0–499), 5% (500–4,999),
-  10% (5,000–49,999), 15% (50,000+). Negotiated rates are available for large volumes.
+- **Volume discounts.** Your discount for the month is set by last calendar month's
+  shipments (Lagos time, counted per mode) that were collected or came back to you:
+  0% (0–499), 5% (500–4,999), 10% (5,000–49,999), 15% (50,000+). Negotiated rates
+  replace the tier for large volumes. The discount is taken off every quote and shipment
+  (`breakdown.volumeDiscountKobo`). **`GET /pricing`** shows yours:
+
+  ```json
+  { "percent": 5, "source": "tier", "basis": { "month": "2026-10", "shipments": 812 },
+    "tier": { "minShipments": 500, "percent": 5 }, "nextTier": { "minShipments": 5000, "percent": 10 } }
+  ```
+
+  `source` is `negotiated` when your account manager set a rate (then `nextTier` is
+  `null`). Locoomo may cap the discount on very cheap routes.
 - **VAT** is included in the price and shown in the fee breakdown.
-- **Documents.** A monthly statement and tax invoice
-  (`GET /invoices/{yyyy-mm}`, PDF/CSV), and a receipt for every top-up.
-- **Low balance.** Set a threshold in the dashboard to get `wallet.low_balance` and an
-  email.
+- **Documents.** A monthly statement (`GET /statements/{yyyy-mm}`), a monthly tax invoice
+  (`GET /invoices/{yyyy-mm}`), both PDF or CSV (§14.2), and an emailed receipt for every
+  top-up.
+- **Low balance.** Set an alert line in the dashboard (*Wallet › Settings*). When your
+  available balance drops below it you get `wallet.low_balance` and an email (once; it
+  re-arms after you're back above it). `GET /wallet` shows it as
+  `lowBalanceThresholdKobo`.
 - Wallet funds are prepaid service credit, used for Locoomo services. Unused balance is
   refunded to your verified bank account when you close your account.
 
@@ -1078,6 +1091,39 @@ before one is opened (and always in test mode):
 balance back to ₦1,000,000 and returns the wallet. Holds for shipments not yet dropped off
 stay. Live mode → `403 TEST_MODE_ONLY`.
 
+### 14.2 Statements and tax invoices
+
+Scope `wallet:read` (dashboard: `wallet.manage`). Months are **Lagos calendar months**,
+written `YYYY-MM`. Add `?format=csv` for a spreadsheet; the default is `pdf`. Both come
+back as file downloads (`Content-Disposition: attachment`), not JSON.
+
+**`GET /statements/{yyyy-mm}`**: the wallet for the key's mode. Opening balance, every
+line in the month (date, type, description, your `reference`, `trackingCode`, amount,
+balance after), closing balance. The current month works too and reads "to date". The PDF
+lists up to 500 lines and points you to the CSV for the rest. CSV columns:
+
+```
+date,type,description,reference,tracking_code,amount_ngn,balance_after_ngn
+```
+
+Amounts in the CSV are plain naira with two decimals (`-1075.00`). The first and last rows
+are `opening_balance` and `closing_balance`.
+
+**`GET /invoices/{yyyy-mm}`**: the tax invoice for the delivery fees charged in a
+**finished** month, live mode only. Numbered `LCM-INV-YYYYMM-XXXXXXXX` (the same number
+every time you download it), dated the last day of the month. It bills:
+
+- *Parcel delivery to Locoomo Nodes*: the fees charged when parcels were received, with
+  the number of parcels.
+- *Re-pricing after measuring at drop-off*: the net of extra charges and refunds.
+
+Prices include VAT. When Locoomo charges VAT, the invoice shows the 7.5% included in the
+total; otherwise it says VAT is not charged. Top-ups and adjustments aren't billed (the
+top-up receipt covers those).
+
+Errors: `422 INVALID_STATEMENT_MONTH` (not `YYYY-MM`, or in the future),
+`409 INVOICE_NOT_AVAILABLE` (test mode, or the month hasn't ended).
+
 ---
 
 ## 15. Claims (lost or damaged parcels)
@@ -1128,6 +1174,8 @@ stay. Live mode → `403 TEST_MODE_ONLY`.
 | 409 | `WEBHOOK_ENDPOINT_LIMIT_REACHED` | 5 endpoints per mode |
 | 422 | `REPLAY_WINDOW_EXCEEDED` | Replays reach back 30 days at most |
 | 422 | `CLAIM_WINDOW_CLOSED` | More than 30 days |
+| 422 | `INVALID_STATEMENT_MONTH` | Use `YYYY-MM`, not in the future |
+| 409 | `INVOICE_NOT_AVAILABLE` | Invoices are live-only, for months that have ended |
 | 429 | `RATE_LIMITED` | Back off; honour `Retry-After` |
 | 429 | `DAILY_LIMIT_REACHED` | Resets at midnight Lagos time; ask to raise it |
 | 500 | `INTERNAL_ERROR` | Retry with the same `Idempotency-Key`; contact support with the `correlationId` if it persists |
@@ -1177,6 +1225,8 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Statements and tax invoices** (§14.2): `GET /statements/{yyyy-mm}` (either mode, current month to date) and `GET /invoices/{yyyy-mm}` (live, finished months), as PDF or CSV |
+| 2026-11-15 | **Volume discounts and low-balance alerts** (§14): your discount is applied to quotes and shipments, `GET /pricing` explains it, and `wallet.low_balance` fires when available balance drops below the line you set in the dashboard. `GET /wallet` adds `lowBalanceThresholdKobo` |
 | 2026-11-15 | **Shipment imports** (§7.3): up to 10,000 shipments from JSON or a CSV file, created in the background with per-row results (`GET /shipment-imports/{id}/rows`) and a CSV template |
 | 2026-11-15 | **Labels** (§9): `GET /shipments/{id}/label` and `POST /shipments/labels` (up to 100 in one PDF, A6 or four-up A4), with Code 128 and QR barcodes. Replaces the planned `POST /label-batches` |
 | 2026-11-15 | **Relaying collection codes works for live parcels** (§11.1): with `notifyReceiver` `merchant` or `both` (enabled on your account by Locoomo), the code arrives in `shipment.ready_for_collection`, and a replacement code in `shipment.updated` (`changed: ["collectionCode"]`). With `merchant`, we send the buyer nothing |
