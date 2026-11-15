@@ -13,6 +13,7 @@ import { hashPassword } from '../../src/modules/identity/domain/password-hasher'
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
 import { ApiRateLimiter } from '../../src/modules/merchants/application/api-rate-limiter';
+import { ShipmentImportService } from '../../src/modules/merchants/application/shipment-import.service';
 import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 const PASSWORD = 'Correct-Horse-Battery-1';
@@ -652,6 +653,167 @@ describe('Merchant shipments, test mode (e2e)', () => {
         status: 'exception',
         exception: { type: 'damaged' },
       });
+    });
+  });
+
+  describe('imports (M4d)', () => {
+    interface ImportView {
+      id: string;
+      status: string;
+      source: string;
+      totalRows: number;
+      created: number;
+      failed: number;
+      pending: number;
+    }
+    interface RowView {
+      index: number;
+      line: number | null;
+      status: string;
+      reference: string | null;
+      shipmentId: string | null;
+      error: { code: string; details?: { field: string }[] } | null;
+    }
+    const importer = () => app.get(ShipmentImportService);
+    const getImport = async (id: string) =>
+      data<ImportView>(
+        await api(key).get(`/shipment-imports/${id}`).expect(200),
+      );
+
+    it('creates a JSON import in the background and reports each row', async () => {
+      const existing = await create();
+      const good = shipmentBody();
+      const accepted = data<ImportView>(
+        await api(key)
+          .post('/shipment-imports', {
+            items: [
+              good,
+              shipmentBody({
+                receiver: { name: 'Ada Buyer', phone: 'not-a-phone' },
+              }),
+              shipmentBody({ reference: existing.reference }),
+            ],
+          })
+          .expect(201),
+      );
+      expect(accepted).toMatchObject({
+        source: 'json',
+        status: 'queued',
+        totalRows: 3,
+        pending: 3,
+      });
+
+      await importer().run();
+      expect(await getImport(accepted.id)).toMatchObject({
+        status: 'done',
+        created: 1,
+        failed: 2,
+        pending: 0,
+      });
+      const failed = data<{ items: RowView[] }>(
+        await api(key)
+          .get(`/shipment-imports/${accepted.id}/rows?status=failed`)
+          .expect(200),
+      );
+      expect(failed.items.map((r) => [r.index, r.error?.code])).toEqual([
+        [1, 'VALIDATION_FAILED'],
+        [2, 'DUPLICATE_REFERENCE'],
+      ]);
+      expect(failed.items[0].error?.details?.[0].field).toBe('receiver.phone');
+
+      const createdRows = data<{ items: RowView[] }>(
+        await api(key)
+          .get(`/shipment-imports/${accepted.id}/rows?status=created`)
+          .expect(200),
+      );
+      const created = data<Page>(
+        await api(key)
+          .get(`/shipments?reference=${good.reference}`)
+          .expect(200),
+      );
+      expect(createdRows.items[0].shipmentId).toBe(created.items[0].id);
+    });
+
+    it('takes a CSV upload, with metadata columns and line numbers', async () => {
+      const ref = () => `CSV-${randomUUID().slice(0, 8)}`;
+      const csv =
+        'reference,destination_node_id,origin_node_id,receiver_name,receiver_phone,receiver_email,description,size,weight_kg,handling,declared_value_ngn,meta_order_id\r\n' +
+        `${ref()},${node.home},${node.origin},"Okafor, Chioma",08031234567,c@example.com,Earbuds,small,0.4,fragile,25000,A-1\r\n` +
+        `${ref()},${node.office},${node.origin},Bola Ade,08031234568,b@example.com,"Shoes, size 42",medium,,,,A-2\r\n` +
+        `${ref()},${node.home},${node.origin},Ada,08031234569,a@example.com,Box,huge,,,,A-3\r\n`;
+      const accepted = data<ImportView>(
+        await http()
+          .post('/api/v1/merchant/shipment-imports')
+          .set('Authorization', `Bearer ${key}`)
+          .attach('file', Buffer.from(csv), 'orders.csv')
+          .expect(201),
+      );
+      expect(accepted).toMatchObject({ source: 'csv', totalRows: 3 });
+      await importer().run();
+      expect(await getImport(accepted.id)).toMatchObject({
+        status: 'done',
+        created: 2,
+        failed: 1,
+      });
+      const rows = data<{ items: RowView[] }>(
+        await api(key).get(`/shipment-imports/${accepted.id}/rows`).expect(200),
+      ).items;
+      expect(rows.map((r) => [r.line, r.status])).toEqual([
+        [2, 'created'],
+        [3, 'created'],
+        [4, 'failed'],
+      ]);
+      const first = data<Shipment>(
+        await api(key).get(`/shipments/${rows[0].shipmentId}`).expect(200),
+      );
+      expect(first).toMatchObject({
+        receiver: { name: 'Okafor, Chioma' },
+        metadata: { order_id: 'A-1' },
+      });
+    });
+
+    it('serves the template and rejects files it can’t read', async () => {
+      const template = await api(key)
+        .get('/shipment-imports/template.csv')
+        .expect(200);
+      expect(template.headers['content-type']).toContain('text/csv');
+      expect(template.text.startsWith('reference,destination_node_id')).toBe(
+        true,
+      );
+      const bad = await http()
+        .post('/api/v1/merchant/shipment-imports')
+        .set('Authorization', `Bearer ${key}`)
+        .attach('file', Buffer.from('reference,colour\nR,red\n'), 'x.csv')
+        .expect(422);
+      expect(code(bad)).toBe('INVALID_IMPORT_FILE');
+      await api(key).post('/shipment-imports', { items: [] }).expect(400);
+      await api(readOnlyKey)
+        .post('/shipment-imports', { items: [shipmentBody()] })
+        .expect(403);
+    });
+
+    it('allows three imports in flight per mode', async () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        ids.push(
+          data<ImportView>(
+            await api(key)
+              .post('/shipment-imports', { items: [shipmentBody()] })
+              .expect(201),
+          ).id,
+        );
+      }
+      expect(
+        code(
+          await api(key)
+            .post('/shipment-imports', { items: [shipmentBody()] })
+            .expect(409),
+        ),
+      ).toBe('IMPORTS_IN_PROGRESS');
+      await importer().run();
+      for (const id of ids) {
+        expect((await getImport(id)).status).toBe('done');
+      }
     });
   });
 

@@ -482,10 +482,45 @@ time you started.
   }
   ```
 
-- *(Coming with live shipments.)* `POST /shipment-imports` takes up to **10,000** rows (JSON body ≤ 1 MB, or a CSV upload
-  ≤ 5 MB) and processes them in the background. Poll
-  `GET /shipment-imports/{id}` → `{ status: "processing" | "done", created, failed, rows: [...] }`.
-  The CSV template is downloadable from the dashboard.
+- **`POST /shipment-imports`** (scope `shipments:write`) takes up to **10,000** shipments
+  and creates them in the background, each exactly as `POST /shipments` would (same
+  validation, wallet hold, limits). Send either:
+  - JSON: `{ "items": [ …same shape as create… ] }` (the 1 MB body limit applies, about
+    3,000 shipments), or
+  - a CSV file as `multipart/form-data` field `file` (up to 5 MB).
+
+  Response `201` straight away: `{ "id", "status": "queued", "source", "totalRows",
+  "created", "failed", "pending", … }`. Up to 3 imports per mode can be waiting or running
+  (`409 IMPORTS_IN_PROGRESS`); a file we can't read is `422 INVALID_IMPORT_FILE`; 0 or
+  more than 10,000 shipments is `422 IMPORT_SIZE`.
+- **`GET /shipment-imports/{id}`**: `status` `queued` → `processing` → `done` (or `failed`
+  with `failureReason`, when the account stops being able to create shipments mid-way).
+  Poll every few seconds; thousands of rows take a few minutes. Each created shipment
+  also fires `shipment.created` as usual.
+- **`GET /shipment-imports/{id}/rows?status=failed&limit=&cursor=`**: rows in file order,
+  `{ index, line, status, reference, shipmentId, error }`. `line` is the CSV line (1 is
+  the header); `error` is the same as `POST /shipments` would return, with field names
+  like `receiver.phone`. Fix the failed rows and import them again.
+- **`GET /shipment-imports`** lists your imports, newest first.
+- **CSV format** (`GET /shipment-imports/template.csv` gives the header and an example
+  row): comma-separated, UTF-8 (a BOM from Excel is fine), fields with commas or line
+  breaks in double quotes. Columns, in any order and any case:
+
+  | Column | Maps to | Required |
+  |---|---|---|
+  | `reference` | `reference` | ✓ |
+  | `destination_node_id` | `destinationNodeId` | ✓ |
+  | `origin_node_id` | `origin: { type: "node", nodeId }` | until your hub is assigned |
+  | `receiver_name`, `receiver_phone` | `receiver.name`, `receiver.phone` | ✓ |
+  | `receiver_email` | `receiver.email` | |
+  | `description`, `size` | `parcel.description`, `parcel.size` | ✓ |
+  | `weight_kg`, `length_cm`, `width_cm`, `height_cm` | `parcel.*` | |
+  | `handling` | `parcel.handling`, several separated by `;` or `\|` | |
+  | `declared_value_ngn` | `parcel.declaredValueKobo` (**naira** in the file, × 100) | |
+  | `external_barcode`, `notify_receiver` | as in create | |
+  | `meta_<key>` | `metadata.<key>` | |
+
+  Unknown columns are refused (so typos don't silently drop data).
 
 ### 7.4 The Shipment object
 
@@ -1142,6 +1177,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Shipment imports** (§7.3): up to 10,000 shipments from JSON or a CSV file, created in the background with per-row results (`GET /shipment-imports/{id}/rows`) and a CSV template |
 | 2026-11-15 | **Labels** (§9): `GET /shipments/{id}/label` and `POST /shipments/labels` (up to 100 in one PDF, A6 or four-up A4), with Code 128 and QR barcodes. Replaces the planned `POST /label-batches` |
 | 2026-11-15 | **Relaying collection codes works for live parcels** (§11.1): with `notifyReceiver` `merchant` or `both` (enabled on your account by Locoomo), the code arrives in `shipment.ready_for_collection`, and a replacement code in `shipment.updated` (`changed: ["collectionCode"]`). With `merchant`, we send the buyer nothing |
 | 2026-11-15 | **Drop off anywhere; re-priced at drop-off** (live). A live parcel can be dropped at any Node except the buyer's: that Node becomes its `origin` (`shipment.received` carries `previousOrigin`). The Node may measure it. The fee is re-priced from the real origin and measurements, and the difference is charged or refunded (`shipment.fee_adjusted`, `reason`: `measured`, `dropped_elsewhere`, `measured_and_dropped_elsewhere`). Measurements show in `parcel.measured` |

@@ -1125,6 +1125,23 @@ Decision: **labels are synchronous** (`POST /shipments/labels`, ≤ 100) instead
 planned async `POST /label-batches`. 100 labels render in well under a second, so a job
 queue added nothing; larger runs page through.
 
+### M4d3 Shipment imports: done (2026-11-15). M4d complete
+
+| Item | Where |
+|---|---|
+| `shipment_imports` (status, counts, worker lock) and `shipment_import_rows` (input, CSV line, status, shipment or error). Migration 371 | `merchants/infrastructure/entities/` |
+| CSV parser (RFC 4180, BOM, quoted commas/newlines), column mapping (`meta_*` → metadata, naira → kobo, unknown columns refused), template | `merchants/domain/shipment-import.ts` |
+| `POST /merchant/shipment-imports` (JSON `{ items }` or multipart CSV ≤ 5 MB, ≤ 10,000 rows, ≤ 3 in flight per mode), list, detail, rows (`?status=failed`), `template.csv` | `shipment-imports.controller.ts` |
+| Worker (5 s ticks, 20 s budget): claims the oldest open import (`SKIP LOCKED`, lease), creates 100 rows per claim through `MerchantShipmentService.createItem` (the bulk path), re-checks the account per chunk (fails the rest with the reason if it can't create any more), recognises its own rows after an interruption via `DUPLICATE_REFERENCE` | `shipment-import.service.ts` |
+
+Decisions:
+- **No new dependency for CSV**: a ~60-line parser with tests covers RFC 4180 and Excel's
+  BOM.
+- **No Idempotency-Key on imports** (multipart bodies); per-account unique references make
+  re-uploading the same file safe: already-created rows fail with `DUPLICATE_REFERENCE`.
+- **Row results are a separate paged endpoint** rather than inlined on the import (10,000
+  rows don't belong in one response).
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

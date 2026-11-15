@@ -120,7 +120,7 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 6 | Developers › API keys, API logs | §9 | ✅ |
 | 7 | Developers › Webhooks | §10 | ✅ |
 | 8 | Test / Live toggle | §11 | ✅ |
-| 9 | Shipments: list, create, detail with timeline, edit, cancel, return (test and live) | §12 | ✅ (labels ✅; CSV import 🛠) |
+| 9 | Shipments: list, create, detail with timeline, edit, cancel, return (test and live) | §12 | ✅ (labels and CSV import too) |
 | 10 | Test simulator on the shipment detail page | §13 | ✅ |
 | 11 | Settings › Close account | §14 | ✅ |
 | 12 | Wallet: balance, statement, holds, card top-up, bank-transfer account, test reset | §15 | ✅ |
@@ -1484,7 +1484,31 @@ fails on its own:
 }
 ```
 
-Useful for a "paste from spreadsheet" screen. The real CSV import (up to 10,000 rows) is 🛠.
+Useful for a "paste from spreadsheet" screen. For files, use the CSV import below.
+
+### 12.4a Import from CSV ✅
+
+An **"Import CSV"** button on the shipment list (`shipments.write`).
+
+1. **Download template**: `GET /merchant/shipment-imports/template.csv` (send the session
+   cookie and `Locoomo-Mode`; save the response as a file). Show the column table from
+   the API docs next to it: required columns, `declared_value_ngn` is in **naira**, `meta_*`
+   columns become metadata.
+2. **Upload**: `POST /merchant/shipment-imports` as `multipart/form-data` with the file in
+   field `file` (≤ 5 MB, up to 10,000 rows) → `201` import (`status: "queued"`).
+   - `422 INVALID_IMPORT_FILE`: show `error.message` (e.g. "Unknown columns: colour").
+   - `422 IMPORT_SIZE`: "Imports hold 1 to 10,000 shipments."
+   - `409 IMPORTS_IN_PROGRESS`: "You have 3 imports running. Wait for one to finish."
+3. **Progress**: poll `GET /merchant/shipment-imports/{id}` every 3 seconds; show a bar from
+   `created + failed` out of `totalRows`. Stop when `status` is `done` or `failed`
+   (`failureReason` explains a failed one).
+4. **Results**: "{created} created, {failed} failed". When `failed > 0`, list
+   `GET /merchant/shipment-imports/{id}/rows?status=failed` as a table: CSV line, reference,
+   error message, and each `error.details[].field` (e.g. `receiver.phone`). Offer
+   "Download failed rows" (build a CSV client-side from the original file's failed lines)
+   so the user can fix and re-import.
+
+An **"Imports"** tab lists past imports: `GET /merchant/shipment-imports` (cursor).
 
 ### 12.5 The Node picker
 
@@ -1876,7 +1900,6 @@ phase; we'll update this section.
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
 | **Returns to collect** | `GET /merchant/returns?state=ready`, `POST /merchant/return-batches { nodeId, shipmentIds }` → collection code | `returns.collect`. Show the batch code big, like a boarding pass. 10 working days free storage |
 | **Claims** | `POST /merchant/claims { shipmentId, type, description, evidence }` | Within 30 days. Types: `lost`, `damaged`, `missing_item` |
-| **CSV import** | `POST /merchant/shipment-imports`, `GET …/{id}` | Up to 10,000 rows, background job with a progress view |
 | **Go-live checklist** | `GET /merchant/go-live-checklist` | On Home: approved, 2FA, live key, live webhook, wallet funded, test shipment simulated to `collected` and `returned` |
 | **Audit log** | TBD | Who did what in the team |
 | **Home KPIs** | TBD | Shipments today, awaiting drop-off, ready for collection, returns waiting |
@@ -2801,6 +2824,10 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | PATCH | `/merchant/shipments/:id` | `shipments.write` | Mode |
 | POST | `/merchant/shipments/:id/cancel`, `/merchant/shipments/:id/return-to-sender` | `shipments.write` | Mode |
 | POST | `/merchant/test/shipments/:id/simulate` | `shipments.write` | Test mode only |
+| GET | `/merchant/shipments/:id/label` | `shipments.read` | Mode; returns a PDF |
+| POST | `/merchant/shipments/labels` | `shipments.read` | Mode; up to 100; returns a PDF |
+| POST | `/merchant/shipment-imports` | `shipments.write` | Mode; JSON `{ items }` or CSV file (multipart `file`) |
+| GET | `/merchant/shipment-imports`, `/merchant/shipment-imports/:id`, `…/:id/rows`, `…/template.csv` | `shipments.read` | Mode |
 | GET | `/merchant/wallet` | any member | Mode |
 | GET | `/merchant/wallet/entries`, `/merchant/wallet/holds` | `wallet.manage` | Mode |
 | POST | `/merchant/test/wallet/reset` | `shipments.write` | Test mode only |

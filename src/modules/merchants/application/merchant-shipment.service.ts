@@ -133,46 +133,66 @@ export class MerchantShipmentService {
     const merchant = await this.writableMerchant(caller, true);
     const results: BulkResultView[] = [];
     for (const [index, item] of items.entries()) {
-      const dto = plainToInstance(CreateShipmentDto, item);
-      const errors = await validate(dto, {
-        whitelist: true,
-        forbidNonWhitelisted: true,
+      results.push({
+        index,
+        ...(await this.createItem(caller, merchant, item, `items[${index}]`)),
       });
-      if (errors.length > 0) {
-        results.push({
-          index,
-          ok: false,
-          error: {
-            code: 'VALIDATION_FAILED',
-            message: 'Validation failed',
-            details: toValidationDetails(errors, `items[${index}]`),
-          },
-        });
-        continue;
-      }
-      try {
-        const shipment = await this.createOne(caller, merchant, dto);
-        results.push({
-          index,
-          ok: true,
-          shipment: this.presenter.view(shipment),
-        });
-      } catch (error) {
-        if (!(error instanceof AppException)) {
-          throw error;
-        }
-        results.push({
-          index,
-          ok: false,
-          error: {
-            code: error.errorCode,
-            message: error.message,
-            ...(error.details !== undefined && { details: error.details }),
-          },
-        });
-      }
     }
     return results;
+  }
+
+  // The merchant, if it may create shipments in this mode now (throws the
+  // reason otherwise). Bulk and imports check once, then per chunk.
+  creatableMerchant(caller: MerchantCaller): Promise<MerchantEntity> {
+    return this.writableMerchant(caller, true);
+  }
+
+  // One untrusted item (bulk, import row): validated like POST /shipments,
+  // then created. Business errors come back as a result, not thrown;
+  // `path` prefixes validation field names (items[3], row 4, …).
+  async createItem(
+    caller: MerchantCaller,
+    merchant: MerchantEntity,
+    item: Record<string, unknown>,
+    path: string,
+  ): Promise<
+    | { ok: true; shipment: ShipmentView }
+    | {
+        ok: false;
+        error: { code: string; message: string; details?: unknown };
+      }
+  > {
+    const dto = plainToInstance(CreateShipmentDto, item);
+    const errors = await validate(dto, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+    if (errors.length > 0) {
+      return {
+        ok: false,
+        error: {
+          code: 'VALIDATION_FAILED',
+          message: 'Validation failed',
+          details: toValidationDetails(errors, path),
+        },
+      };
+    }
+    try {
+      const shipment = await this.createOne(caller, merchant, dto);
+      return { ok: true, shipment: this.presenter.view(shipment) };
+    } catch (error) {
+      if (!(error instanceof AppException)) {
+        throw error;
+      }
+      return {
+        ok: false,
+        error: {
+          code: error.errorCode,
+          message: error.message,
+          ...(error.details !== undefined && { details: error.details }),
+        },
+      };
+    }
   }
 
   async get(caller: MerchantCaller, id: string): Promise<ShipmentView> {

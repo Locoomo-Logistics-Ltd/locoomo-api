@@ -512,3 +512,39 @@ export class ShipmentCreationPausedException extends BusinessException {
     );
   }
 }
+
+export class InvalidImportFileException extends BusinessException {
+  readonly errorCode = 'INVALID_IMPORT_FILE';
+  readonly httpStatus = 422;
+
+  constructor(problem: string) {
+    super(`The import couldn't be read: ${problem}`);
+    this.details = { problem };
+  }
+}
+
+export class ImportSizeException extends BusinessException {
+  readonly errorCode = 'IMPORT_SIZE';
+  readonly httpStatus = 422;
+
+  constructor(rows: number, max: number) {
+    super(
+      rows === 0
+        ? 'The import has no shipments in it'
+        : `An import can hold up to ${max} shipments; this one has ${rows}`,
+    );
+    this.details = { rows, max };
+  }
+}
+
+export class ImportsInProgressException extends BusinessException {
+  readonly errorCode = 'IMPORTS_IN_PROGRESS';
+  readonly httpStatus = 409;
+
+  constructor(max: number) {
+    super(
+      `You already have ${max} imports waiting or running in this mode. Wait for one to finish.`,
+    );
+    this.details = { max };
+  }
+}
