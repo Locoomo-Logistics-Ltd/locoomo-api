@@ -53,6 +53,25 @@ import { VolumeDiscountTierSetEntity } from './infrastructure/entities/volume-di
 import { AdminMerchantPricingController } from './interface/admin-merchant-pricing.controller';
 import { EarningsModule } from '../earnings/earnings.module';
 import { ShipmentImportEntity } from './infrastructure/entities/shipment-import.entity';
+import { MerchantClaimEntity } from './infrastructure/entities/merchant-claim.entity';
+import {
+  MerchantReturnBatchEntity,
+  MerchantReturnBatchItemEntity,
+} from './infrastructure/entities/merchant-return-batch.entity';
+import { ReturnBatchService } from './application/return-batch.service';
+import {
+  NodeReturnBatchesController,
+  ReturnBatchesController,
+  TestReturnBatchesController,
+} from './interface/return-batches.controller';
+import { NodeOperatorsModule } from '../node-operators/node-operators.module';
+import { MerchantClaimsService } from './application/merchant-claims.service';
+import { AdminClaimsService } from './application/admin-claims.service';
+import {
+  ClaimsController,
+  TestClaimsController,
+} from './interface/claims.controller';
+import { AdminMerchantClaimsController } from './interface/admin-merchant-claims.controller';
 import { ShipmentImportRowEntity } from './infrastructure/entities/shipment-import-row.entity';
 import { ShipmentImportsController } from './interface/shipment-imports.controller';
 import { LabelRenderer } from './infrastructure/label-renderer';
@@ -128,6 +147,9 @@ import { WebhooksController } from './interface/webhooks.controller';
       WalletTopUpEntity,
       MerchantFundingAccountEntity,
       ShipmentImportEntity,
+      MerchantClaimEntity,
+      MerchantReturnBatchEntity,
+      MerchantReturnBatchItemEntity,
       ShipmentImportRowEntity,
       VolumeDiscountTierSetEntity,
     ]),
@@ -152,6 +174,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     NodesModule,
     // Idempotency-Key replay on POST /shipments and friends.
     IdempotencyModule,
+    // NodeOperatorQueryService: which Nodes a staff member works at
+    // (return batches handed over at the counter).
+    NodeOperatorsModule,
   ],
   controllers: [
     MerchantAccountController,
@@ -170,6 +195,12 @@ import { WebhooksController } from './interface/webhooks.controller';
     AdminMerchantWalletController,
     MerchantDocumentsController,
     AdminMerchantDocumentsController,
+    ClaimsController,
+    TestClaimsController,
+    AdminMerchantClaimsController,
+    ReturnBatchesController,
+    TestReturnBatchesController,
+    NodeReturnBatchesController,
     ShipmentImportsController,
     MerchantPricingController,
     AdminMerchantPricingController,
@@ -204,6 +235,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     LabelRenderer,
     DocumentRenderer,
     MerchantDocumentsService,
+    MerchantClaimsService,
+    AdminClaimsService,
+    ReturnBatchService,
     ShipmentLabelService,
     ShipmentImportService,
     MerchantPricingService,

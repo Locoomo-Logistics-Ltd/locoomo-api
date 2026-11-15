@@ -56,6 +56,7 @@ describe('limits', () => {
       liveShipmentsPerDay: null,
       maxWalletBalanceKobo: 200_000_000_000,
       negativeBalanceFloorKobo: -100_000_000,
+      claimCapKobo: 5_000_000,
     });
   });
 });

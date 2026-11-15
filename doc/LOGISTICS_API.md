@@ -1007,6 +1007,34 @@ Every attempt, right or wrong, is logged with the staff member's name.
 
    Response `200`: an `OrderTransition` with `"status": "return_completed"`.
 
+### 5.9a Merchant return batches — `/handoffs/return-batches`
+
+A merchant collecting many returns at once brings a **batch reference** (`RB-7KQ2-M9XD`)
+and one 6-digit code instead of a code per parcel. Node operators and staff:
+
+| Call | |
+|---|---|
+| `GET /handoffs/return-batches` | Open batches expected at your Nodes (oldest first, up to 100). Show them as "Merchant pickups" |
+| `GET /handoffs/return-batches/:reference` | Load one. Accepts any case, spaces or no dashes (`rb 7kq2 m9xd`). `404` if it isn't at one of your Nodes |
+| `POST /handoffs/return-batches/:reference/collect` | `{ "code": "840814", "identityConfirmed": true, "collectorName": "Tunde Bakare" }` (rate limit 10/min) |
+
+A batch:
+
+```json
+{
+  "reference": "RB-7KQ2-M9XD", "merchantName": "Ada Stores", "status": "open",
+  "nodeId": "7a1d…", "nodeName": "Yaba Node", "codeExpiresAt": "2026-11-29T22:59:59.000Z",
+  "parcels": [ { "trackingCode": "LCM-7K3M-Q9TD", "merchantReference": "ORDER-1042", "shelfNumber": 8, "waiting": true } ]
+}
+```
+
+Fetch the parcels from the listed shelves (`waiting: false` means it was already handed
+back on its own code: skip it), check the collector's ID against the merchant, then send
+the code. Every waiting parcel becomes `return_completed` at once, its shelf space is freed
+and its own code stops working; the response is the batch, now `collected`. Wrong or
+expired code → `401 INVALID_HANDOFF_CODE` (5 wrong tries lock the code; the merchant
+issues a new one). Already collected or cancelled → `409 RETURN_BATCH_NOT_OPEN`.
+
 ### 5.10 A Node's own dispatch — `POST /node-operators/nodes/:nodeId/dispatch`
 
 Node staff sending a parcel *from their own Node* (may target private Nodes). Quote first
@@ -1272,7 +1300,8 @@ For a parcel in our care that's gone missing or been damaged:
 `OrderTransition` with `"status": "exception"`. Whatever the parcel was holding (origin or
 destination shelf space, the rider's slot) is freed and the sender is emailed. Not allowed
 before drop-off or after it's finished (`409 ILLEGAL_ORDER_TRANSITION`). An active courier
-booking isn't cancelled automatically; check *Deliveries* (§8.5).
+booking isn't cancelled automatically; check *Deliveries* (§8.5). For a merchant parcel
+a claim opens automatically (API.md, *Admin: merchant claims*).
 
 ### 8.0 Public holidays — `/admin/public-holidays` (`ops`)
 

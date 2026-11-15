@@ -3171,7 +3171,7 @@ Response `200`, `data`:
 - `review` is the reviewer's latest verdict on the section. **Editing a section clears it**
   (`null` = "changed, waiting for review"). `readyToSubmit` is false while any section is
   incomplete or still rejected.
-- `limits` (once approved) is `{ liveShipmentsPerDay, maxWalletBalanceKobo, negativeBalanceFloorKobo }`;
+- `limits` (once approved) is `{ liveShipmentsPerDay, maxWalletBalanceKobo, negativeBalanceFloorKobo, claimCapKobo }`;
   `null` values mean unlimited.
 
 ### `PATCH /api/v1/merchant/account/profile`
@@ -3537,6 +3537,46 @@ from `INVOICE_SELLER_NAME` (default "Locoomo"), `INVOICE_SELLER_ADDRESS` (lines 
 `|`) and `INVOICE_SELLER_TIN`. Errors `422 INVALID_STATEMENT_MONTH`,
 `409 INVOICE_NOT_AVAILABLE`.
 
+### Claims: `POST /api/v1/merchant/claims` · `GET …/claims` · `GET …/claims/{id}` · `POST …/claims/uploads` · `POST …/test/claims/{id}/decide`
+
+Full contract: [MERCHANT_API.md §15](MERCHANT_API.md#15-claims-lost-or-damaged-parcels).
+Create needs scope `claims:write` (sessions `shipments.write`); reads need
+`shipments:read`. Rules: `lost` only while the parcel is in our care, `damaged` /
+`missing_item` also after hand-over; within 30 days of the shipment's last status change;
+one open or approved claim per shipment. `maxPayoutKobo` = min(declared value,
+`limits.claimCapKobo`), fixed when the claim is filed. Evidence: Cloudinary public ids under
+`merchants/{id}/claims/`, checked to exist. A shipment moving to `exception` (admin, or the
+simulator) opens a claim with `source: "exception"` and sets `exception.claimId`.
+
+### Return batches: `GET /api/v1/merchant/returns` · `/return-batches` (create, list, get, `/:id/code`, `/:id/cancel`) · `POST …/test/return-batches/{id}/collect`
+
+Full contract: [MERCHANT_API.md §11.3](MERCHANT_API.md#113-collecting-your-returns).
+`/returns` needs `shipments:read`; batches need `shipments:write` (sessions
+`returns.collect`) because a batch shows its code. A batch holds 1–200 shipments
+`return_ready` at one Node, none in another open batch (partial unique index). The code is
+6 digits, stored hashed (checked) and sealed (shown to the team), valid 10 working days, 5
+wrong tries lock it; a reissue resets both. Node staff: `GET /api/v1/handoffs/return-batches`,
+`GET …/:reference`, `POST …/:reference/collect`
+([LOGISTICS_API.md §5.9a](LOGISTICS_API.md#59a-merchant-return-batches--handoffsreturn-batches)).
+Collecting ends each waiting order (`return_completed`, shelf and capacity slot freed,
+per-parcel code used), which mirrors `shipment.returned`; parcels already handed back are
+skipped.
+
+## Admin: merchant claims
+
+| Endpoint | Permission | |
+|---|---|---|
+| `GET /api/v1/admin/merchant-claims?status=&merchantId=&mode=live&limit=&cursor=` | `finance`, `ops`, `support` | Queue, newest first |
+| `GET /api/v1/admin/merchant-claims/:id` | `finance`, `ops`, `support` | Plus `evidenceLinks` (15-minute signed links) |
+| `PATCH /api/v1/admin/merchant-claims/:id` | `finance`, `ops` | `{ internalNote }` |
+| `POST /api/v1/admin/merchant-claims/:id/reject` | `finance`, `ops` | `{ merchantNote, internalNote? }` → `claim.decided` + email |
+| `POST /api/v1/admin/merchant-claims/:id/payout` | `finance` | `{ amountKobo, merchantNote?, reason }` → approval `merchant.claim_payout` |
+
+Live claims only (`403 LIVE_MODE_ONLY`). A payout runs when a second `finance` admin
+approves it ([Approvals](#approvals-two-admin-rule)): it credits the wallet (`claim_credit`,
+unique per claim), marks the claim approved and sends `claim.decided` and an email. While a
+payout approval is pending, reject and a second payout answer `409 CLAIM_PAYOUT_PENDING`.
+
 ## Admin: orders
 
 `POST /api/v1/admin/orders/:id/exception` (`ops`): record a parcel lost or damaged in our
@@ -3652,7 +3692,7 @@ Response `200`: the detail.
 | Field | Rules |
 |---|---|
 | `tier` | Optional: `individual`, `business`, `enterprise`. Defaults to the merchant's type |
-| `limits` | Optional overrides of the tier defaults: `liveShipmentsPerDay`, `maxWalletBalanceKobo` (≥ 0), `negativeBalanceFloorKobo` (≤ 0). `null` = unlimited |
+| `limits` | Optional overrides of the tier defaults: `liveShipmentsPerDay`, `maxWalletBalanceKobo` (≥ 0), `negativeBalanceFloorKobo` (≤ 0), `claimCapKobo` (≥ 0; default ₦50,000 per parcel). `null` = unlimited |
 
 Tier defaults: individual 2,000/day, ₦50m wallet, −₦50k floor; business 100,000/day, ₦2bn,
 −₦1m; enterprise unlimited. Hubs and pricing are set in later phases.

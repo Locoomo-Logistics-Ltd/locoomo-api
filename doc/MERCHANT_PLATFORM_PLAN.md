@@ -1181,6 +1181,55 @@ Decisions:
 - Set `INVOICE_SELLER_NAME`, `INVOICE_SELLER_ADDRESS` and `INVOICE_SELLER_TIN` in
   production before merchants download live invoices.
 
+### M4f1 Claims: done (2026-11-15)
+
+M4f ships as **M4f1 claims** (this) → M4f2 merchant return batches.
+
+| Item | Where |
+|---|---|
+| `merchant_claims` (one open/approved claim per shipment via a partial unique index; payout snapshot `maxPayoutKobo`), `limits.claimCapKobo` (default ₦50,000). Migration 373 | entities, `merchant-limits.ts` |
+| `POST /merchant/claims` (+ `/uploads` for Cloudinary evidence), `GET /merchant/claims[/:id]`, sandbox `POST /merchant/test/claims/:id/decide` | `claims.controller.ts`, `merchant-claims.service.ts`, `domain/claim.ts` |
+| A shipment moving to `exception` (live mirror or simulator) opens a claim (`source: exception`) and sets `exception.claimId` | `live-shipment-sync.service.ts`, `shipment-simulator.service.ts` |
+| Admin queue, notes, reject (`ops`/`finance`); payout raised by `finance` as approval `merchant.claim_payout`, executed by a second `finance` admin: `claim_credit` wallet entry (unique `claim:<id>` ref), `claim.decided` webhook, team email | `admin-claims.service.ts`, `admin-merchant-claims.controller.ts` |
+
+Decisions:
+- **Who can claim what:** `lost` only while the parcel is in our care; `damaged` /
+  `missing_item` also after hand-over (`collected`, `returned`). 30-day window from the
+  shipment's last status change (F5).
+- **Payout ceiling** = min(declared value, cap), fixed at filing; without a declared value
+  the cap is the ceiling and ops assess. Partial payouts allowed.
+- **Rejection is single-admin** (no money moves); **payout is two-admin** (E12). A pending
+  payout blocks rejection and a second payout; a rejected or expired approval frees the
+  claim again (no approval hooks needed).
+- **Test claims** are decided by the merchant (sandbox), never by admins.
+- **Not yet:** the delivery fee isn't refunded on a lost parcel (only the goods'
+  value is paid); auto-flagging parcels with no scan for 5 working days (§6.6) is still
+  to build. The MERCHANT_API no longer promises it.
+
+### M4f2 Merchant return batches: done (2026-11-15)
+
+| Item | Where |
+|---|---|
+| `merchant_return_batches` (public `RB-XXXX-XXXX` reference, 6-digit code hashed + sealed, 10 working days, 5-try lockout) and `merchant_return_batch_items` (`active` + partial unique index: one open batch per shipment). Migration 374 | entities, `domain/return-batch.ts` |
+| `GET /merchant/returns?state=ready\|incoming`; `POST/GET /merchant/return-batches`, `/:id/code`, `/:id/cancel`; sandbox `POST /merchant/test/return-batches/:id/collect` | `return-batch.service.ts`, `return-batches.controller.ts` |
+| Node app: `GET /handoffs/return-batches[/:reference]`, `POST …/:reference/collect`: hands back every waiting parcel through `ReturnCollectionService.handBackInBatch` (order `return_completed`, capacity slot freed, per-parcel code used) → mirrored `shipment.returned` | `NodeReturnBatchesController`, handoffs `return-collection.service.ts` |
+
+Decisions:
+- **Batches live in the merchants module**, not handoffs: test shipments have no orders,
+  and the Node side only needs a per-order hand-back, which handoffs exports (same pattern
+  as `ParcelRecallService`). Lock order on collect: batch → orders → shipments.
+- **Reference + code**, like tracking code + collection code: the reference finds the
+  batch (scoped to the staff member's Nodes), the code releases it. Wrong codes count
+  through a separate statement so the lockout survives the failed request.
+- **The code is shown again in the dashboard** (sealed with `DATA_ENCRYPTION_KEY`) to
+  members with `returns.collect`, so whoever goes to the Node can open it; per-parcel codes
+  keep working until the batch is collected.
+- **Partial pickups:** parcels already handed back on their own code are skipped; the batch
+  still completes.
+- **Not yet:** storage fees after 10 free working days and disposal after 30 more
+  (`shipment.disposed`, D20). They need the fee amount and the notice emails; MERCHANT_API
+  marks them as coming.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

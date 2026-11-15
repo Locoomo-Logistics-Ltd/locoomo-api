@@ -8,6 +8,9 @@ export interface MerchantLimits {
   // How far a wallet may go below zero after re-pricing (plan §8.4). A
   // negative number, or null for a custom (unlimited) floor.
   negativeBalanceFloorKobo: number | null;
+  // Most a claim pays per parcel (plan D18, F5). null = only the declared
+  // value limits it (a custom contract).
+  claimCapKobo: number | null;
 }
 
 const NAIRA = 100;
@@ -19,16 +22,19 @@ export const TIER_DEFAULT_LIMITS: Readonly<
     liveShipmentsPerDay: 2_000,
     maxWalletBalanceKobo: 50_000_000 * NAIRA,
     negativeBalanceFloorKobo: -50_000 * NAIRA,
+    claimCapKobo: 50_000 * NAIRA,
   },
   [MerchantTier.BUSINESS]: {
     liveShipmentsPerDay: 100_000,
     maxWalletBalanceKobo: 2_000_000_000 * NAIRA,
     negativeBalanceFloorKobo: -1_000_000 * NAIRA,
+    claimCapKobo: 50_000 * NAIRA,
   },
   [MerchantTier.ENTERPRISE]: {
     liveShipmentsPerDay: null,
     maxWalletBalanceKobo: null,
     negativeBalanceFloorKobo: null,
+    claimCapKobo: 50_000 * NAIRA,
   },
 };
 

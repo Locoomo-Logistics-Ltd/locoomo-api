@@ -21,6 +21,7 @@ import { OrdersService } from '../../orders/application/orders.service';
 import { MerchantShipmentService } from './merchant-shipment.service';
 import { ShipmentEventsService } from './shipment-events.service';
 import { WalletService } from './wallet.service';
+import { MerchantClaimsService } from './merchant-claims.service';
 
 const S = ShipmentStatus;
 
@@ -83,6 +84,7 @@ export class LiveShipmentSyncService
     private readonly shipments: MerchantShipmentService,
     private readonly orders: OrdersService,
     private readonly codeRelay: ReceiverCodeRelay,
+    private readonly claims: MerchantClaimsService,
   ) {}
 
   onModuleInit(): void {
@@ -212,7 +214,7 @@ export class LiveShipmentSyncService
         shipment.exceptionInfo = {
           type,
           reportedAt: change.occurredAt.toISOString(),
-          claimId: null,
+          claimId: await this.claims.openForException(manager, shipment, type),
         };
         data = { type };
         break;

@@ -42,6 +42,8 @@ something UI-related; tell backend.)
 13. [Test simulator](#13-test-simulator)
 14. [Settings › Close account](#14-settings--close-account)
 15. [Wallet](#15-wallet)
+15a. [Claims](#15a-claims)
+15b. [Returns to collect](#15b-returns-to-collect)
 16. [Coming next 🛠](#16-coming-next-)
 
 **Part C: Admin app**
@@ -124,7 +126,9 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 10 | Test simulator on the shipment detail page | §13 | ✅ |
 | 11 | Settings › Close account | §14 | ✅ |
 | 12 | Wallet: balance, statement, holds, card top-up, bank-transfer account, test reset | §15 | ✅ |
-| 13 | Manifests, returns, claims, audit log, go-live checklist | §16 | 🛠 |
+| 13 | Claims: file with evidence, track, sandbox decisions | §15a | ✅ |
+| 14 | Returns to collect: one code per batch | §15b | ✅ |
+| 15 | Manifests, audit log, go-live checklist | §16 | 🛠 |
 
 **Admin app screens**
 
@@ -592,8 +596,8 @@ Use **`me.permissions`**, not the role name, to show or hide controls:
 | Can… | Permission | owner | admin | developer | operations | finance | viewer |
 |---|---|:-:|:-:|:-:|:-:|:-:|:-:|
 | See shipments, returns, reports | `shipments.read` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Create, edit, cancel shipments; simulator; manifests, CSV, claims 🛠 | `shipments.write` | ✓ | ✓ | ✓ | ✓ | | |
-| Return-batch collection codes 🛠 | `returns.collect` | ✓ | ✓ | | ✓ | | |
+| Create, edit, cancel shipments; simulator; claims; manifests 🛠 | `shipments.write` | ✓ | ✓ | ✓ | ✓ | | |
+| Return batches and their collection codes | `returns.collect` | ✓ | ✓ | | ✓ | | |
 | API keys, API logs, webhooks | `developers.manage` | ✓ | ✓ | ✓ | | | |
 | Wallet statement and holds; top-up and invoices 🛠 (the balance itself is visible to everyone) | `wallet.manage` | ✓ | ✓ | | | ✓ | |
 | Profile, KYC, bank, terms, submit | `account.manage` | ✓ | ✓ | | | | |
@@ -1921,6 +1925,113 @@ Months are Lagos calendar months (`2026-11`). Errors:
 
 ---
 
+## 15a. Claims
+
+✅ Ready. A "Claims" page (list + detail), and a **"File a claim"** button on the shipment
+detail page. Viewing needs `shipments.read`; filing needs `shipments.write`.
+
+**What to tell merchants** (help text on the form):
+
+- We pay the parcel's **declared value, capped at ₦50,000** unless their contract says
+  otherwise. Each claim shows its ceiling (`maxPayoutKobo`).
+- Claims must be filed **within 30 days** of the shipment's last status change.
+- Approved claims are paid into the wallet (a `claim_credit` line on the statement).
+
+**When to show "File a claim"** (otherwise hide it):
+
+| Shipment status | Types to offer |
+|---|---|
+| `received`, `in_transit`, `ready_for_collection`, `returning`, `return_ready`, `exception` | Lost, Damaged, Missing item |
+| `collected`, `returned` | Damaged, Missing item |
+
+Hide it too when `statusChangedAt` is more than 30 days ago, or the shipment already has
+an `open` or `approved` claim (`GET /merchant/claims?shipmentId=…`). If the shipment is
+`exception`, Locoomo has already opened a claim: link to `exception.claimId` instead.
+
+**The form:** type (radio), "What happened?" (10–2000 chars), and up to 10 evidence files
+(photos or PDFs). Upload each file exactly like KYC files (§7), but get the signature from
+**`POST /merchant/claims/uploads`** and send the `public_id` values as `evidence`.
+
+**`POST /merchant/claims`** (send an `Idempotency-Key`)
+
+```json
+{ "shipmentId": "…", "type": "damaged", "description": "Screen cracked on arrival.", "evidence": ["merchants/…/claims/abc"] }
+```
+
+→ `201 Claim` (§20). Errors:
+
+| Code | UI |
+|---|---|
+| `409 CLAIM_NOT_ALLOWED` | "You can't claim this shipment as {type} now." Refetch the shipment |
+| `422 CLAIM_WINDOW_CLOSED` | "Claims must be filed within 30 days." |
+| `409 CLAIM_ALREADY_OPEN` | "There's already a claim for this shipment." Link to `details.claimId` |
+| `422 UPLOAD_NOT_FOUND` | "One of the files didn't upload. Try again." |
+
+**List:** **`GET /merchant/claims?status=&shipmentId=&limit=&cursor=`** →
+`CursorPage<Claim>`. Columns: date, shipment (`reference`, `trackingCode`), type, source
+("You" / "Locoomo" for `exception`), status badge (`open` "Under review", `approved`
+"Paid {payoutKobo}", `rejected` "Not approved"), max payout. **Detail:**
+**`GET /merchant/claims/:id`**, showing the description, evidence count and, once decided,
+`decisionNote` and `decidedAt`.
+
+**Test mode:** Locoomo doesn't review test claims. On a test claim that's `open`, show
+"Approve (test)" and "Reject (test)" buttons:
+**`POST /merchant/test/claims/:id/decide`** `{ "decision": "approve" | "reject",
+"amountKobo"?, "note"? }` → the Claim. Approving credits the test wallet; both fire
+`claim.decided`. `409 CLAIM_ALREADY_DECIDED`, `422 CLAIM_PAYOUT_TOO_HIGH` (over
+`maxPayoutKobo`).
+
+---
+
+## 15b. Returns to collect
+
+✅ Ready. A "Returns" page. Parcels come back to the Node they were dropped at; the
+merchant collects them there. Viewing needs `shipments.read`; batches need
+`returns.collect` (owner, admin, operations).
+
+**Two tabs.**
+
+- **Waiting** — **`GET /merchant/returns?state=ready&nodeId=&limit=&cursor=`** →
+  `CursorPage<ReturnItem>`, oldest first. Group the rows by `node` (one card per Node:
+  name, address, count). Columns: reference, tracking code, reason (`not_collected` "Buyer
+  didn't collect", `delivery_failed` "Couldn't be delivered", `merchant_request` "You
+  asked for it back"), "Waiting since" (`readyForCollectionAt`) with a warning once it's
+  close to **10 working days** (free storage ends), and a "In batch RB-…" chip when
+  `returnBatch` is set.
+- **On the way back** — the same call with `state=incoming`.
+
+**Create a batch:** on a Node card, tick returns (default: all not already in a batch, up
+to 200) → "Collect these". **`POST /merchant/return-batches`** `{ nodeId, shipmentIds }`
+(send an `Idempotency-Key`) → `201 ReturnBatch` (§20). Then open the batch page.
+
+`422 RETURN_BATCH_INVALID`: `details.problems` names each bad shipment (`not_ready`,
+`other_node`, `in_batch`, `not_found`). Refresh the list and say "Some returns changed;
+check the selection."
+
+**Batch page** (`GET /merchant/return-batches/:id`), styled like a boarding pass:
+
+- The **reference** (`RB-7KQ2-M9XD`) and the **6-digit code**, big, with the Node's name
+  and address and "Valid until {codeExpiresAt}". Text: "Bring this and an ID matching your
+  business name. Staff hand over every parcel below."
+- The parcels with their status; after collection, `collectedAt` per parcel and
+  `collectorName`.
+- "New code" → **`POST /merchant/return-batches/:id/code`** (the old one stops working; use
+  it if the code leaked or was locked after wrong tries).
+- "Cancel batch" → **`POST /merchant/return-batches/:id/cancel`** (returns go back to
+  waiting; each still has the code we emailed for it).
+- `409 RETURN_BATCH_NOT_OPEN` on either: refetch; the batch was collected or cancelled.
+
+A "Batches" list: **`GET /merchant/return-batches?status=open|collected|cancelled`**
+(no `shipments` array; use `shipmentCount`).
+
+**Node app side** (lookup by reference, hand over on the code): LOGISTICS_API.md §5.9a.
+
+**Test mode:** on an open test batch show "Simulate collection" →
+**`POST /merchant/test/return-batches/:id/collect`**: each waiting shipment becomes
+`returned` and the batch `collected`.
+
+---
+
 ## 16. Coming next 🛠
 
 Build these behind feature flags against the shapes below. Final shapes land with the backend
@@ -1929,8 +2040,6 @@ phase; we'll update this section.
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
-| **Returns to collect** | `GET /merchant/returns?state=ready`, `POST /merchant/return-batches { nodeId, shipmentIds }` → collection code | `returns.collect`. Show the batch code big, like a boarding pass. 10 working days free storage |
-| **Claims** | `POST /merchant/claims { shipmentId, type, description, evidence }` | Within 30 days. Types: `lost`, `damaged`, `missing_item` |
 | **Go-live checklist** | `GET /merchant/go-live-checklist` | On Home: approved, 2FA, live key, live webhook, wallet funded, test shipment simulated to `collected` and `returned` |
 | **Audit log** | TBD | Who did what in the team |
 | **Home KPIs** | TBD | Shipments today, awaiting drop-off, ready for collection, returns waiting |
@@ -1964,7 +2073,7 @@ otherwise.
 |---|---|---|
 | `super` | **Full access**: everything, including managing admins | All |
 | `kyc` | Merchant verification | Queue, review, approve, request changes, reject, view KYC files |
-| `finance` | Money: wallets, adjustments, claims, refunds, pricing | Wallet panel and adjustments (§18.6); 🛠 claims |
+| `finance` | Money: wallets, adjustments, claims, refunds, pricing | Wallet panel and adjustments (§18.6); claim payouts (§18.6b) |
 | `ops` | Operations: reroutes, suspensions, hubs, exceptions | Queue, suspend/reinstate, settings, public holidays, lost/damaged |
 | `support` | Support tools | Queue and detail (read-only), 🛠 Merchant 360 |
 
@@ -2127,7 +2236,7 @@ someone else decided first, refresh).
 | Field | Rules |
 |---|---|
 | `tier` | Optional: `individual`, `business`, `enterprise`. Defaults to the merchant's type |
-| `limits` | Optional overrides: `liveShipmentsPerDay`, `maxWalletBalanceKobo` (≥ 0), `negativeBalanceFloorKobo` (≤ 0). `null` = unlimited |
+| `limits` | Optional overrides: `liveShipmentsPerDay`, `maxWalletBalanceKobo` (≥ 0), `negativeBalanceFloorKobo` (≤ 0), `claimCapKobo` (≥ 0, default ₦50,000). `null` = unlimited |
 
 Show the tier defaults next to the fields: individual 2,000/day, ₦50m wallet, −₦50k floor;
 business 100,000/day, ₦2bn, −₦1m; enterprise unlimited.
@@ -2208,6 +2317,36 @@ in the dialog when it would.
   `finance` can set a negotiated rate with `PUT /admin/merchants/:id/pricing`
   `{ discountPercent }` or clear it with `null`.
 
+### 18.6b Claims ✅ (`finance`, `ops`, `support` to view; `ops` and `finance` to reject; `finance` to pay)
+
+A **Claims** queue (sidebar) with a status filter (default `open`) and a Test / Live switch
+(`?mode=`, default `live`; test claims are read-only here, merchants decide them).
+
+| Call | Returns |
+|---|---|
+| `GET /admin/merchant-claims?status=&merchantId=&mode=&limit=&cursor=` | `CursorPage<AdminClaim>` |
+| `GET /admin/merchant-claims/:id` | `AdminClaim` plus `evidenceLinks` (`{ publicId, url, expiresAt }`, 15-minute links) |
+| `PATCH /admin/merchant-claims/:id` `{ internalNote }` | Investigation notes (admins only) |
+| `POST /admin/merchant-claims/:id/reject` `{ merchantNote, internalNote? }` | The claim, `rejected`. `merchantNote` (3–1000 chars) is shown to the merchant |
+| `POST /admin/merchant-claims/:id/payout` `{ amountKobo, merchantNote?, reason }` | `{ approvalId, status, summary, expiresAt }`: a two-admin approval (§17) |
+
+**Detail page:** merchant, shipment (link, `shipmentStatus`), type, source, description,
+evidence thumbnails from `evidenceLinks`, declared value and `maxPayoutKobo`, the internal
+note (editable), and the decision once made.
+
+**Pay** (`finance`): amount in naira (default `maxPayoutKobo`; never more:
+`422 CLAIM_PAYOUT_TOO_HIGH`), "Note to merchant" and "Reason (for the approver)". It raises
+an approval; a **second** `finance` admin approves it in Approvals, and only then is the
+wallet credited and the merchant told. While `pendingPayoutApprovalId` is set, show
+"Payout waiting for approval" and disable Pay and Reject (`409 CLAIM_PAYOUT_PENDING`). If
+the approval is rejected or expires, Pay and Reject come back.
+
+**Reject** (`ops`, `finance`): "Reason shown to the merchant", required. Live claims only
+(`403 LIVE_MODE_ONLY` on test claims); `409 CLAIM_ALREADY_DECIDED` if someone got there
+first.
+
+A claim is opened automatically when ops records a parcel lost or damaged (§19).
+
 ### 18.7 Coming 🛠
 
 - **Merchant 360** (read-only support view): API key metadata, webhook health, wallet,
@@ -2244,7 +2383,8 @@ On the admin order page, a "Report lost or damaged" action for parcels in our cu
 ```
 
 `type`: `lost` or `damaged`. `note` (5–1000 chars) stays internal. The order moves to
-`exception`, whatever it was holding is freed and the sender (or merchant) is told.
+`exception`, whatever it was holding is freed and the sender (or merchant) is told. For
+a merchant parcel, a claim opens automatically in the Claims queue (§18.6b).
 `409 ILLEGAL_ORDER_TRANSITION` before drop-off or after it's finished. Confirm: "Mark this
 parcel as {type}? This can't be undone."
 
@@ -2334,6 +2474,7 @@ export interface MerchantLimits {
   liveShipmentsPerDay: number | null;      // null = unlimited
   maxWalletBalanceKobo: number | null;
   negativeBalanceFloorKobo: number | null;
+  claimCapKobo: number | null;             // most a claim pays per parcel
 }
 export interface Merchant {
   id: string;
@@ -2643,6 +2784,63 @@ export interface FundingAccount {
   accountName: string;
   createdAt: string;
 }
+// ─── Returns (§15b) ─────────────────────────────────────────────────────
+export interface ReturnNode { id: string; name: string; address: string; city: string }
+export interface ReturnItem {
+  shipmentId: string;
+  reference: string;
+  trackingCode: string;
+  status: 'return_ready' | 'returning';
+  returnReason: 'not_collected' | 'delivery_failed' | 'merchant_request' | string | null;
+  readyForCollectionAt: string | null;
+  node: ReturnNode;
+  returnBatch: { id: string; reference: string } | null;
+}
+export interface ReturnBatch {
+  id: string;
+  reference: string;                       // RB-7KQ2-M9XD
+  status: 'open' | 'collected' | 'cancelled';
+  node: ReturnNode;
+  code: string | null;                     // 6 digits, while open
+  codeExpiresAt: string | null;
+  shipmentCount: number;
+  shipments?: { id: string; reference: string; trackingCode: string; status: string; collectedAt: string | null }[];
+  collectedAt: string | null;
+  collectorName: string | null;
+  createdAt: string;
+}
+
+// ─── Claims (§15a, §18.6b) ──────────────────────────────────────────────
+export type ClaimType = 'lost' | 'damaged' | 'missing_item';
+export type ClaimStatus = 'open' | 'approved' | 'rejected';
+export interface Claim {
+  id: string;
+  shipmentId: string;
+  reference: string;
+  trackingCode: string;
+  type: ClaimType;
+  source: 'merchant' | 'exception';
+  status: ClaimStatus;
+  description: string;
+  evidence: string[];                      // upload public ids
+  declaredValueKobo: number | null;
+  maxPayoutKobo: number;
+  payoutKobo: number | null;               // set when approved
+  decisionNote: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface AdminClaim extends Claim {
+  merchantId: string;
+  merchantName: string;
+  mode: 'test' | 'live';
+  shipmentStatus: string;
+  internalNote: string | null;
+  pendingPayoutApprovalId: string | null;
+  evidenceLinks?: { publicId: string; url: string; expiresAt: string }[]; // detail only
+}
+
 export interface WalletAdjustmentRequested {
   approvalId: string;
   status: 'pending';
@@ -2791,6 +2989,9 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 422 / 409 | `CONTACT_DETAILS_REQUIRED` / `FUNDING_ACCOUNT_CONFLICT` | Bank-transfer account: §15.6 |
 | 403 | `LIVE_MODE_ONLY` | Hide live-only controls in Test mode |
 | 422 / 409 | `INVALID_STATEMENT_MONTH` / `INVOICE_NOT_AVAILABLE` | Documents: §15.8 |
+| 409 / 422 | `CLAIM_NOT_ALLOWED`, `CLAIM_ALREADY_OPEN`, `CLAIM_ALREADY_DECIDED` / `CLAIM_WINDOW_CLOSED`, `CLAIM_PAYOUT_TOO_HIGH` | Claims: §15a |
+| 409 | `CLAIM_PAYOUT_PENDING` | Admin claims: §18.6b |
+| 422 / 409 | `RETURN_BATCH_INVALID` / `RETURN_BATCH_NOT_OPEN` | Returns: §15b |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | "Live shipments aren't available yet. Switch to Test." |
 | 403 | `SHIPMENT_CREATION_PAUSED` | "New live shipments are paused on your account." |
 | 403 | `TEST_MODE_ONLY` | Hide the simulator on live shipments |
@@ -2888,6 +3089,12 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | PATCH | `/merchant/wallet/settings` | `wallet.manage` | Mode; dashboard only |
 | GET | `/merchant/pricing` | any member | Mode |
 | GET | `/merchant/statements/:month`, `/merchant/invoices/:month` | `wallet.manage` | Mode; file download. Invoices live only |
+| POST | `/merchant/claims`, `/merchant/claims/uploads` | `shipments.write` | Mode; Idempotency-Key on create |
+| GET | `/merchant/claims`, `/merchant/claims/:id` | `shipments.read` | Mode |
+| POST | `/merchant/test/claims/:id/decide` | `shipments.write` | Test only |
+| GET | `/merchant/returns` | `shipments.read` | Mode |
+| GET / POST | `/merchant/return-batches`, `/merchant/return-batches/:id`, `…/:id/code`, `…/:id/cancel` | `returns.collect` | Mode; Idempotency-Key on create |
+| POST | `/merchant/test/return-batches/:id/collect` | `shipments.write` | Test only |
 | POST | `/merchant/wallet/top-ups` | `wallet.manage` | Mode; dashboard only; `Idempotency-Key` |
 | GET | `/merchant/wallet/top-ups`, `/merchant/wallet/top-ups/:id` | `wallet.manage` | Mode |
 | GET | `/merchant/wallet/funding-account` | any member | Live (null in test) |
@@ -2911,6 +3118,9 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | POST | `/admin/orders/:id/exception` | `ops` |
 | GET | `/admin/merchants/:id/wallet`, `…/wallet/entries`, `…/wallet/holds`, `…/wallet/top-ups` | `finance`, `ops`, `support` |
 | GET | `/admin/merchants/:id/statements/:month`, `…/invoices/:month` | `finance`, `ops`, `support` |
+| GET | `/admin/merchant-claims`, `/admin/merchant-claims/:id` | `finance`, `ops`, `support` |
+| PATCH / POST | `/admin/merchant-claims/:id`, `…/:id/reject` | `finance`, `ops` |
+| POST | `/admin/merchant-claims/:id/payout` | `finance` (two-admin approval) |
 | POST | `/admin/merchants/:id/wallet/adjustments` | `finance` (runs after a second `finance` admin approves) |
 | GET | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance`, `ops`, `support` |
 | PUT | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance` |

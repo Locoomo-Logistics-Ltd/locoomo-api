@@ -44,7 +44,7 @@ interface Shipment {
     method: string | null;
   };
   return: { reason: string; readyForCollectionAt: string | null } | null;
-  exception: { type: string } | null;
+  exception: { type: string; claimId: string | null } | null;
 }
 interface Order {
   id: string;
@@ -1004,6 +1004,323 @@ describe('Live merchant shipments (e2e)', () => {
       await handoff(originOperator, orderId, 'drop-off', {
         measured: { lengthCm: 20 },
       }).expect(400);
+    });
+  });
+
+  describe('claims (M4f1)', () => {
+    let opsAdmin: string[];
+    let financeMaker: string[];
+    let financeChecker: string[];
+    const admin = (cookie: string[]) => ({
+      get: (url: string) =>
+        http().get(`/api/v1/admin${url}`).set('Cookie', cookie),
+      post: (url: string, body: object = {}) =>
+        http().post(`/api/v1/admin${url}`).set('Cookie', cookie).send(body),
+    });
+    interface Claim {
+      id: string;
+      source: string;
+      status: string;
+      maxPayoutKobo: number;
+      payoutKobo: number | null;
+      decisionNote: string | null;
+      pendingPayoutApprovalId?: string | null;
+    }
+
+    beforeAll(async () => {
+      const adminUser = (name: string, permissions: AdminPermission[]) =>
+        makeUser(name, { role: UserRole.ADMIN, adminPermissions: permissions });
+      opsAdmin = await signIn(
+        await adminUser('claims-ops', [AdminPermission.OPS]),
+      );
+      financeMaker = await signIn(
+        await adminUser('claims-finance', [AdminPermission.FINANCE]),
+      );
+      financeChecker = await signIn(
+        await adminUser('claims-checker', [AdminPermission.FINANCE]),
+      );
+    });
+
+    afterAll(async () => {
+      await dataSource.query(
+        `DELETE FROM approval_requests WHERE "requestedByUserId" IN (SELECT id FROM users WHERE email LIKE $1)`,
+        [`claims-%@${DOMAIN}`],
+      );
+    });
+
+    it('opens a claim for a parcel lost in our care and pays it after two finance admins', async () => {
+      const s = await create({
+        parcel: {
+          description: 'Phone',
+          size: 'small',
+          weightKg: 0.4,
+          declaredValueKobo: 3_000_000,
+        },
+      });
+      const orderId = (await orderOf(s.trackingCode)).id;
+      await handoff(originOperator, orderId, 'drop-off').expect(200);
+      await pickUp(orderId);
+      await admin(opsAdmin)
+        .post(`/orders/${orderId}/exception`, {
+          type: 'lost',
+          note: 'Rider reports the parcel fell off the bike',
+        })
+        .expect(200);
+
+      const after = await shipment(s.id);
+      expect(after.status).toBe('exception');
+      const claimId = after.exception!.claimId!;
+      expect(
+        data<Claim>(await live.get(`/claims/${claimId}`).expect(200)),
+      ).toMatchObject({
+        source: 'exception',
+        status: 'open',
+        maxPayoutKobo: 3_000_000,
+      });
+      expect(
+        code(
+          await live
+            .post('/claims', {
+              shipmentId: s.id,
+              type: 'lost',
+              description: 'Never arrived at the Node.',
+            })
+            .expect(409),
+        ),
+      ).toBe('CLAIM_ALREADY_OPEN');
+
+      const payout = (cookie: string[], amountKobo: number) =>
+        admin(cookie).post(`/merchant-claims/${claimId}/payout`, {
+          amountKobo,
+          merchantNote: 'Declared value refunded.',
+          reason: 'Rider confirmed the loss',
+        });
+      expect(code(await payout(opsAdmin, 3_000_000).expect(403))).toBe(
+        'FORBIDDEN',
+      );
+      expect(code(await payout(financeMaker, 3_000_001).expect(422))).toBe(
+        'CLAIM_PAYOUT_TOO_HIGH',
+      );
+      const requested = data<{ approvalId: string; summary: string }>(
+        await payout(financeMaker, 3_000_000).expect(201),
+      );
+      expect(requested.summary).toContain('lost claim');
+      expect(code(await payout(financeMaker, 3_000_000).expect(409))).toBe(
+        'CLAIM_PAYOUT_PENDING',
+      );
+      expect(
+        code(
+          await admin(opsAdmin)
+            .post(`/merchant-claims/${claimId}/reject`, { merchantNote: 'No.' })
+            .expect(409),
+        ),
+      ).toBe('CLAIM_PAYOUT_PENDING');
+      expect(
+        data<Claim>(
+          await admin(opsAdmin).get(`/merchant-claims/${claimId}`).expect(200),
+        ).pendingPayoutApprovalId,
+      ).toBe(requested.approvalId);
+
+      const before = (await wallet()).balanceKobo;
+      await admin(financeChecker)
+        .post(`/approvals/${requested.approvalId}/approve`)
+        .expect(200);
+      expect((await wallet()).balanceKobo).toBe(before + 3_000_000);
+      expect(
+        data<Claim>(await live.get(`/claims/${claimId}`).expect(200)),
+      ).toMatchObject({
+        status: 'approved',
+        payoutKobo: 3_000_000,
+        decisionNote: 'Declared value refunded.',
+      });
+    });
+
+    it('rejects a merchant claim with a note, and the merchant can file again', async () => {
+      const s = await create();
+      const orderId = (await orderOf(s.trackingCode)).id;
+      await handoff(originOperator, orderId, 'drop-off').expect(200);
+      const claim = data<Claim>(
+        await live
+          .post('/claims', {
+            shipmentId: s.id,
+            type: 'damaged',
+            description: 'Box arrived wet at the Node.',
+          })
+          .expect(201),
+      );
+      expect(claim).toMatchObject({ source: 'merchant', status: 'open' });
+
+      await http()
+        .patch(`/api/v1/admin/merchant-claims/${claim.id}`)
+        .set('Cookie', opsAdmin)
+        .send({ internalNote: 'Node photos show a dry box.' })
+        .expect(200);
+      const queue = data<{ items: Claim[] }>(
+        await admin(opsAdmin)
+          .get(`/merchant-claims?status=open&merchantId=${merchantId}`)
+          .expect(200),
+      );
+      expect(queue.items.map((c) => c.id)).toContain(claim.id);
+
+      const rejected = data<Claim>(
+        await admin(opsAdmin)
+          .post(`/merchant-claims/${claim.id}/reject`, {
+            merchantNote: 'The Node photographed it dry at drop-off.',
+          })
+          .expect(200),
+      );
+      expect(rejected).toMatchObject({
+        status: 'rejected',
+        decisionNote: 'The Node photographed it dry at drop-off.',
+      });
+      await live
+        .post('/claims', {
+          shipmentId: s.id,
+          type: 'damaged',
+          description: 'New photos from the buyer attached.',
+        })
+        .expect(201);
+    });
+  });
+
+  describe('return batches (M4f2)', () => {
+    interface Batch {
+      id: string;
+      reference: string;
+      status: string;
+      code: string | null;
+      shipments: { id: string; status: string; collectedAt: string | null }[];
+    }
+    interface NodeBatch {
+      reference: string;
+      merchantName: string;
+      status: string;
+      parcels: {
+        trackingCode: string;
+        shelfNumber: number | null;
+        waiting: boolean;
+      }[];
+    }
+    const counter = (cookie: string[]) => ({
+      get: (url: string) =>
+        http()
+          .get(`/api/v1/handoffs/return-batches${url}`)
+          .set('Cookie', cookie),
+      post: (url: string, body: object) =>
+        http()
+          .post(`/api/v1/handoffs/return-batches${url}`)
+          .set('Cookie', cookie)
+          .set('X-Locoomo-Client', 'web')
+          .send(body),
+    });
+
+    // A live parcel recalled in transit, turned round and shelved back at
+    // its origin: waiting for the merchant.
+    async function returnReady(): Promise<{ s: Shipment; orderId: string }> {
+      const s = await create();
+      const orderId = (await orderOf(s.trackingCode)).id;
+      await handoff(originOperator, orderId, 'drop-off').expect(200);
+      await pickUp(orderId);
+      await live.post(`/shipments/${s.id}/return-to-sender`).expect(200);
+      await arrive(orderId);
+      await handoff(destinationOperator, orderId, 'intake').expect(200);
+      await dataSource.transaction(async (manager) => {
+        await orders.markReturnPickedUp(orderId, manager);
+        await orders.markReturnedToOrigin(orderId, manager);
+      });
+      await handoff(originOperator, orderId, 'return-intake').expect(200);
+      expect((await shipment(s.id)).status).toBe('return_ready');
+      return { s, orderId };
+    }
+
+    it('hands a whole batch back at the Node on one code', async () => {
+      const a = await returnReady();
+      const b = await returnReady();
+      const waiting = data<{ items: { shipmentId: string }[] }>(
+        await live
+          .get(`/returns?state=ready&nodeId=${node.origin}`)
+          .expect(200),
+      );
+      expect(waiting.items.map((i) => i.shipmentId)).toEqual(
+        expect.arrayContaining([a.s.id, b.s.id]),
+      );
+
+      const batch = data<Batch>(
+        await live
+          .post('/return-batches', {
+            nodeId: node.origin,
+            shipmentIds: [a.s.id, b.s.id],
+          })
+          .expect(201),
+      );
+      expect(batch.reference).toMatch(/^RB-/);
+      expect(batch.code).toMatch(/^\d{6}$/);
+
+      // Only staff at that Node can see it.
+      await counter(destinationOperator).get(`/${batch.reference}`).expect(404);
+      const expected = data<NodeBatch[]>(
+        await counter(originOperator).get('').expect(200),
+      );
+      expect(expected.map((x) => x.reference)).toContain(batch.reference);
+      const loaded = data<NodeBatch>(
+        await counter(originOperator)
+          .get(`/${batch.reference.toLowerCase().replace(/-/g, ' ')}`)
+          .expect(200),
+      );
+      expect(loaded.parcels).toHaveLength(2);
+      expect(
+        loaded.parcels.every((p) => p.waiting && p.shelfNumber !== null),
+      ).toBe(true);
+
+      const wrong = batch.code === '000000' ? '111111' : '000000';
+      expect(
+        code(
+          await counter(originOperator)
+            .post(`/${batch.reference}/collect`, {
+              code: wrong,
+              identityConfirmed: true,
+            })
+            .expect(401),
+        ),
+      ).toBe('INVALID_HANDOFF_CODE');
+
+      const slotsBefore = await originCount();
+      const done = data<NodeBatch>(
+        await counter(originOperator)
+          .post(`/${batch.reference}/collect`, {
+            code: batch.code,
+            identityConfirmed: true,
+            collectorName: 'Tunde Bakare',
+          })
+          .expect(200),
+      );
+      expect(done.status).toBe('collected');
+      expect(await originCount()).toBe(slotsBefore - 2);
+      expect((await shipment(a.s.id)).status).toBe('returned');
+      expect((await shipment(b.s.id)).status).toBe('returned');
+      const [codes] = await dataSource.query<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM handoff_codes
+          WHERE "orderId" = ANY($1) AND type = 'sender_collection' AND "usedAt" IS NULL`,
+        [[a.orderId, b.orderId]],
+      );
+      expect(codes.count).toBe(0);
+
+      const after = data<Batch>(
+        await live.get(`/return-batches/${batch.id}`).expect(200),
+      );
+      expect(after.status).toBe('collected');
+      expect(after.code).toBeNull();
+      expect(after.shipments.every((x) => x.collectedAt !== null)).toBe(true);
+      expect(
+        code(
+          await counter(originOperator)
+            .post(`/${batch.reference}/collect`, {
+              code: batch.code,
+              identityConfirmed: true,
+            })
+            .expect(409),
+        ),
+      ).toBe('RETURN_BATCH_NOT_OPEN');
     });
   });
 

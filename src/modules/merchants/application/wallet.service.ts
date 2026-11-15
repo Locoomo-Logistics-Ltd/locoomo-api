@@ -353,6 +353,38 @@ export class WalletService {
     });
   }
 
+  // An approved claim's payout (plan D18). The unique externalRef
+  // `claim:<id>` makes a second payout for the same claim fail.
+  async creditClaim(
+    manager: EntityManager,
+    input: {
+      merchantId: string;
+      mode: ApiKeyMode;
+      claimId: string;
+      shipmentId: string;
+      amountKobo: number;
+      description: string;
+      approvalId: string | null;
+      createdByUserId: string | null;
+    },
+  ): Promise<WalletEntryEntity> {
+    const wallet = await this.walletFor(
+      manager,
+      input.merchantId,
+      input.mode,
+      true,
+    );
+    return this.post(manager, wallet, {
+      type: WalletEntryType.CLAIM_CREDIT,
+      amountKobo: input.amountKobo,
+      description: input.description,
+      shipmentId: input.shipmentId,
+      approvalId: input.approvalId,
+      createdByUserId: input.createdByUserId,
+      externalRef: `claim:${input.claimId}`,
+    });
+  }
+
   // Money from outside (a Paystack charge). Idempotent on `externalRef`:
   // returns null when that charge was already credited.
   async creditExternal(
