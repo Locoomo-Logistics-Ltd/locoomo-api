@@ -438,6 +438,14 @@ export class OrdersService {
     manager: EntityManager,
   ): Promise<OrderEntity> {
     const deadline = await this.holidays.collectionDeadline(new Date());
+    // Written before the transition so status subscribers (merchant
+    // shipment mirror) already see the deadline. Guarded like the
+    // transition itself: a stale call changes nothing, then fails below.
+    await manager.query(
+      `UPDATE orders SET "collectionDeadlineAt" = $2, "collectionRemindersSent" = 0
+        WHERE id = $1 AND status = $3`,
+      [orderId, deadline, OrderStatus.ARRIVED_AT_DESTINATION],
+    );
     const order = await this.transition(
       orderId,
       OrderStatus.ARRIVED_AT_DESTINATION,
@@ -445,11 +453,6 @@ export class OrdersService {
       manager,
       OrderEventType.READY_FOR_COLLECTION,
       { collectionDeadlineAt: deadline.toISOString() },
-    );
-    await manager.query(
-      `UPDATE orders SET "collectionDeadlineAt" = $2, "collectionRemindersSent" = 0
-        WHERE id = $1`,
-      [orderId, deadline],
     );
     const shelved = await this.placeOnShelf(
       order,
@@ -640,6 +643,12 @@ export class OrdersService {
     manager: EntityManager,
     eventPayload: Record<string, unknown> = {},
   ): Promise<OrderEntity> {
+    await this.setReturnReason(
+      orderId,
+      'delivery_failed',
+      OrderStatus.IN_TRANSIT,
+      manager,
+    );
     await this.transition(
       orderId,
       OrderStatus.IN_TRANSIT,
@@ -648,7 +657,6 @@ export class OrdersService {
       OrderEventType.RETURN_INITIATED,
       { ...eventPayload, reason: 'delivery_failed' },
     );
-    await this.setReturnReason(orderId, 'delivery_failed', manager);
     return this.transition(
       orderId,
       OrderStatus.RETURN_INITIATED,
@@ -666,6 +674,12 @@ export class OrdersService {
     manager: EntityManager,
     reason: 'not_collected' | 'merchant_request' = 'not_collected',
   ): Promise<OrderEntity> {
+    await this.setReturnReason(
+      orderId,
+      reason,
+      OrderStatus.READY_FOR_COLLECTION,
+      manager,
+    );
     const order = await this.transition(
       orderId,
       OrderStatus.READY_FOR_COLLECTION,
@@ -674,7 +688,6 @@ export class OrdersService {
       OrderEventType.RETURN_INITIATED,
       { reason },
     );
-    await this.setReturnReason(orderId, reason, manager);
     // The delivery rider's job ended at the destination; the return gets
     // its own courier (assignReturnCourier needs the slot empty).
     await manager.query(`UPDATE orders SET "riderId" = NULL WHERE id = $1`, [
@@ -766,15 +779,18 @@ export class OrdersService {
     );
   }
 
+  // Set before the status change that it explains, so status subscribers
+  // see it; guarded on the status the change starts from.
   private async setReturnReason(
     orderId: string,
     reason: string,
+    fromStatus: OrderStatus,
     manager: EntityManager,
   ): Promise<void> {
-    await manager.query(`UPDATE orders SET "returnReason" = $2 WHERE id = $1`, [
-      orderId,
-      reason,
-    ]);
+    await manager.query(
+      `UPDATE orders SET "returnReason" = $2 WHERE id = $1 AND status = $3`,
+      [orderId, reason, fromStatus],
+    );
   }
 
   // The courier handed the parcel back at the origin Node's counter.

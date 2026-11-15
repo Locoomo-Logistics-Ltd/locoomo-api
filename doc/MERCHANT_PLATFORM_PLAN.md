@@ -1048,6 +1048,37 @@ Decisions:
 3. Production DVAs: confirm Dedicated Virtual Accounts are enabled on the Locoomo Paystack
    account (`wema-bank` by default; override with `PAYSTACK_DVA_PREFERRED_BANK`).
 
+### M4c1 Live shipments on real orders: done (2026-11-15)
+
+M4c is split: **M4c1** (this) and **M4c2** (origin rebind at intake, measurement and
+re-pricing, `fee_adjusted` for live parcels).
+
+| Item | Where |
+|---|---|
+| `OrdersService.createForMerchant` (source `merchant`, no consumer or payment intent), `updateBeforeDropOff`, `updateReceiver`, `requestReturn` (`orders.returnRequestedAt`), `markUncollected(reason)`; status events carry `source` and `merchantId`. Migration 368 (also a unique index on `merchant_shipments.orderId`) | `orders/application/orders.service.ts` |
+| Fields a status change explains (`collectionDeadlineAt`, `returnReason`) are written **before** the transition, so subscribers see them | same |
+| Live create/bulk: a real order in the same transaction, LCM- code, signed `trackingUrl` (render time, `ShipmentPresenter`); edit, cancel and return-to-sender move the order too, locking order → shipment like every status change (no deadlock with a Node scan) | `merchant-shipment.service.ts` |
+| Mirror: one `OrderStatusEventBus` subscriber moves the shipment, records events, sends webhooks, charges at drop-off (quoted price), releases on cancel/refuse, copies proof of delivery, return reason and exception type | `live-shipment-sync.service.ts` |
+| `ParcelRecallService` (exported): return from shelf (collection window, merchant request, recalled-in-transit turning round at destination intake) and reissue of a receiver code after a contact change | `handoffs/application/parcel-recall.service.ts` |
+| Capacity: merchant orders take their origin slot at drop-off (forced, never refused) and release none on refusal; the audit counts `awaiting_drop_off` for consumers only | `confirm-drop-off`, `refuse-drop-off`, `capacity-audit-query` |
+| Returns: merchant sender-contact resolver (contact email, else owner); merchant sender codes last 10 working days; return email wording for recalls (buyer not emailed) | `live-shipment-sync`, `return-intake`, `return-notification` |
+| Drop-deadline expiry job (worker, 30 min, both modes): expired + hold released + order cancelled | `shipment-expiry.service.ts` |
+| Live gates: `MERCHANT_LIVE_SHIPMENTS_ENABLED` (default off), suspended merchants can't create, `creationPaused`, daily limit (Lagos day), live `notifyReceiver` must be `locoomo` until relay (M4d) | `merchant-shipment.service.ts` |
+
+Decisions:
+- **Return-to-sender while in transit doesn't cancel the courier.** Cancelling an external
+  booking needs the provider's cancel call first (`DeliveryEventsService.cancelLeg`
+  assumes it's done). The parcel finishes the trip and turns round at the destination
+  intake, never offered to the buyer. Pulling it back before pickup is a later refinement.
+- **Live charges at the quoted price** until M4c2 measures parcels and rebinds the origin.
+- **Merchant returns are handed back by emailed code** (10 working days) until return
+  batches (M4f).
+- Fixed in passing: the intake response for a recalled parcel reports `return_initiated`
+  so the counter doesn't shelve it for the buyer.
+
+**Rollout:** set `MERCHANT_LIVE_SHIPMENTS_ENABLED=true` per environment when live opens
+(staging first). Merchants need an approved account and a funded live wallet.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

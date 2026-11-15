@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { INestApplication } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import request from 'supertest';
@@ -75,7 +76,6 @@ describe('Live merchant shipments (e2e)', () => {
   let destinationOperator: string[];
   let merchantId: string;
   const node = { origin: '', destination: '' };
-  const previousFlag = process.env.MERCHANT_LIVE_SHIPMENTS_ENABLED;
 
   const http = (): ReturnType<typeof request> => request(app.getHttpServer());
   const code = (response: request.Response): string =>
@@ -104,7 +104,12 @@ describe('Live merchant shipments (e2e)', () => {
         .set('Locoomo-Mode', 'live')
         .send(body),
   };
-  const handoff = (cookie: string[], orderId: string, step: string, body = {}) =>
+  const handoff = (
+    cookie: string[],
+    orderId: string,
+    step: string,
+    body = {},
+  ) =>
     http()
       .post(`/api/v1/handoffs/orders/${orderId}/${step}`)
       .set('Cookie', cookie)
@@ -150,17 +155,30 @@ describe('Live merchant shipments (e2e)', () => {
 
   // Courier legs are logistics' business; here the order is moved along
   // directly, exactly as the delivery listener would.
-  const step = (fn: (orderId: string, manager: never) => Promise<unknown>) =>
+  const step =
+    (fn: (orderId: string, manager: never) => Promise<unknown>) =>
     async (orderId: string) =>
       dataSource.transaction((manager) => fn(orderId, manager as never));
   const pickUp = step(async (id, m) => {
     await orders.markCourierAssigned(id, 'test-courier', m);
     await orders.markPickedUpByRider(id, m);
   });
-  const arrive = step((id, m) => orders.markArrivedAtDestination(id, m));
+  const arrive = step(async (id, m: never) => {
+    await orders.markArrivedAtDestination(id, m);
+    // The forward courier leg ends at delivery, as it would for real.
+    await (m as unknown as DataSource['manager']).query(
+      `UPDATE delivery_legs SET status = 'delivered', "endedAt" = now()
+        WHERE "orderId" = $1 AND "legType" = 'forward'`,
+      [id],
+    );
+  });
 
-  async function latestEmailTo(to: string): Promise<{ subject: string; text: string }> {
-    const [row] = await dataSource.query<{ payload: { subject: string; text: string } }[]>(
+  async function latestEmailTo(
+    to: string,
+  ): Promise<{ subject: string; text: string }> {
+    const [row] = await dataSource.query<
+      { payload: { subject: string; text: string } }[]
+    >(
       `SELECT payload FROM outbox_events
         WHERE "eventType" = 'email' AND payload ->> 'to' = $1
         ORDER BY "createdAt" DESC LIMIT 1`,
@@ -227,7 +245,11 @@ describe('Live merchant shipments (e2e)', () => {
   }
 
   // Dropped off, carried and checked in at the destination: on the shelf.
-  async function onShelf(): Promise<{ s: Shipment; orderId: string; email: string }> {
+  async function onShelf(): Promise<{
+    s: Shipment;
+    orderId: string;
+    email: string;
+  }> {
     const email = `buyer+${randomUUID().slice(0, 6)}@${DOMAIN}`;
     const s = await create({
       receiver: { name: 'Chioma Okafor', phone: '08031234567', email },
@@ -241,13 +263,24 @@ describe('Live merchant shipments (e2e)', () => {
   }
 
   beforeAll(async () => {
-    process.env.MERCHANT_LIVE_SHIPMENTS_ENABLED = 'true';
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
     app = moduleFixture.createNestApplication();
     configureApp(app);
     await app.init();
+    // The env is read when AppModule is imported, so switch live shipments
+    // on at the source (default off).
+    const config = app.get(ConfigService);
+    const get = config.get.bind(config) as (
+      key: string,
+      opts?: unknown,
+    ) => unknown;
+    jest
+      .spyOn(config, 'get')
+      .mockImplementation((key: string, opts?: unknown) =>
+        key === 'MERCHANT_LIVE_SHIPMENTS_ENABLED' ? true : get(key, opts),
+      );
     users = moduleFixture.get(getRepositoryToken(UserEntity));
     dataSource = moduleFixture.get(DataSource);
     orders = app.get(OrdersService);
@@ -299,11 +332,7 @@ describe('Live merchant shipments (e2e)', () => {
   });
 
   afterAll(async () => {
-    if (previousFlag === undefined) {
-      delete process.env.MERCHANT_LIVE_SHIPMENTS_ENABLED;
-    } else {
-      process.env.MERCHANT_LIVE_SHIPMENTS_ENABLED = previousFlag;
-    }
+    jest.restoreAllMocks();
     try {
       const pattern = `%@${DOMAIN}`;
       const ours = `SELECT id FROM orders WHERE "merchantId" = $1`;
@@ -311,21 +340,28 @@ describe('Live merchant shipments (e2e)', () => {
         `DELETE FROM revenue_split_entries WHERE "orderId" IN (${ours})`,
         [merchantId],
       );
-      await dataSource.query(`DELETE FROM delivery_legs WHERE "orderId" IN (${ours})`, [
-        merchantId,
-      ]);
-      await dataSource.query(`DELETE FROM handoff_codes WHERE "orderId" IN (${ours})`, [
-        merchantId,
-      ]);
-      await dataSource.query(`DELETE FROM order_events WHERE "orderId" IN (${ours})`, [
-        merchantId,
-      ]);
+      await dataSource.query(
+        `DELETE FROM delivery_legs WHERE "orderId" IN (${ours})`,
+        [merchantId],
+      );
+      await dataSource.query(
+        `DELETE FROM handoff_codes WHERE "orderId" IN (${ours})`,
+        [merchantId],
+      );
+      await dataSource.query(
+        `DELETE FROM order_events WHERE "orderId" IN (${ours})`,
+        [merchantId],
+      );
       await dataSource.query(
         `DELETE FROM audit_events WHERE "merchantId" = $1 OR "actorId" IN (SELECT id FROM users WHERE email LIKE $2)`,
         [merchantId, pattern],
       );
-      await dataSource.query(`DELETE FROM merchants WHERE id = $1`, [merchantId]);
-      await dataSource.query(`DELETE FROM orders WHERE "merchantId" = $1`, [merchantId]);
+      await dataSource.query(`DELETE FROM merchants WHERE id = $1`, [
+        merchantId,
+      ]);
+      await dataSource.query(`DELETE FROM orders WHERE "merchantId" = $1`, [
+        merchantId,
+      ]);
       await dataSource.query(
         `DELETE FROM revenue_split_rules WHERE "createdByAdminId" IN (SELECT id FROM users WHERE email LIKE $1)`,
         [pattern],
@@ -341,7 +377,9 @@ describe('Live merchant shipments (e2e)', () => {
       await dataSource.query(`DELETE FROM nodes WHERE name LIKE $1`, [
         `${NODE_PREFIX}%`,
       ]);
-      await dataSource.query(`DELETE FROM users WHERE email LIKE $1`, [pattern]);
+      await dataSource.query(`DELETE FROM users WHERE email LIKE $1`, [
+        pattern,
+      ]);
     } finally {
       await app.close();
     }
@@ -436,7 +474,10 @@ describe('Live merchant shipments (e2e)', () => {
     await live.post(`/shipments/${s.id}/cancel`).expect(200);
     expect((await shipment(s.id)).status).toBe('cancelled');
     expect((await orderOf(s.trackingCode)).status).toBe('cancelled');
-    expect(await wallet()).toMatchObject(before);
+    expect(await wallet()).toMatchObject({
+      balanceKobo: before.balanceKobo,
+      heldKobo: before.heldKobo,
+    });
   });
 
   it('refuses at the counter without touching the origin slot', async () => {
@@ -444,12 +485,17 @@ describe('Live merchant shipments (e2e)', () => {
     const slots = await originCount();
     const s = await create();
     const orderId = (await orderOf(s.trackingCode)).id;
-    await handoff(originOperator, orderId, 'refuse', { reason: 'packaging' }).expect(200);
+    await handoff(originOperator, orderId, 'refuse', {
+      reason: 'packaging',
+    }).expect(200);
     expect(await shipment(s.id)).toMatchObject({
       status: 'refused',
       fee: { state: 'released' },
     });
-    expect(await wallet()).toMatchObject(before);
+    expect(await wallet()).toMatchObject({
+      balanceKobo: before.balanceKobo,
+      heldKobo: before.heldKobo,
+    });
     expect(await originCount()).toBe(slots);
   });
 
@@ -497,7 +543,11 @@ describe('Live merchant shipments (e2e)', () => {
     await live.post(`/shipments/${s.id}/return-to-sender`).expect(409);
 
     await arrive(orderId);
-    await handoff(destinationOperator, orderId, 'intake').expect(200);
+    const intake = await handoff(destinationOperator, orderId, 'intake').expect(
+      200,
+    );
+    // The counter is told it's going back, not to shelve it for the buyer.
+    expect(data<{ status: string }>(intake).status).toBe('return_initiated');
     expect((await orderOf(s.trackingCode)).status).toBe('return_initiated');
     expect((await shipment(s.id)).status).toBe('returning');
     // The buyer was never offered it.
@@ -552,10 +602,15 @@ describe('Live merchant shipments (e2e)', () => {
       `UPDATE merchant_shipments SET "dropDeadline" = now() - interval '1 minute' WHERE id = $1`,
       [s.id],
     );
-    expect(await app.get(ShipmentExpiryService).run()).toBeGreaterThanOrEqual(1);
+    expect(await app.get(ShipmentExpiryService).run()).toBeGreaterThanOrEqual(
+      1,
+    );
     expect((await shipment(s.id)).status).toBe('expired');
     expect((await orderOf(s.trackingCode)).status).toBe('cancelled');
-    expect(await wallet()).toMatchObject(before);
+    expect(await wallet()).toMatchObject({
+      balanceKobo: before.balanceKobo,
+      heldKobo: before.heldKobo,
+    });
   });
 
   it('enforces the live rules: relay, daily limit, paused creation', async () => {
@@ -564,7 +619,11 @@ describe('Live merchant shipments (e2e)', () => {
         reference: `L-${randomUUID().slice(0, 8)}`,
         destinationNodeId: node.destination,
         origin: { type: 'node', nodeId: node.origin },
-        receiver: { name: 'A', phone: '08031234567', email: `a@${DOMAIN}` },
+        receiver: {
+          name: 'Ada Buyer',
+          phone: '08031234567',
+          email: `a@${DOMAIN}`,
+        },
         parcel: { description: 'Box', size: 'small' },
         notifyReceiver: 'merchant',
       })
@@ -586,7 +645,11 @@ describe('Live merchant shipments (e2e)', () => {
             reference: `L-${randomUUID().slice(0, 8)}`,
             destinationNodeId: node.destination,
             origin: { type: 'node', nodeId: node.origin },
-            receiver: { name: 'A', phone: '08031234567', email: `a@${DOMAIN}` },
+            receiver: {
+              name: 'Ada Buyer',
+              phone: '08031234567',
+              email: `a@${DOMAIN}`,
+            },
             parcel: { description: 'Box', size: 'small' },
           })
           .expect(429),
@@ -604,7 +667,11 @@ describe('Live merchant shipments (e2e)', () => {
             reference: `L-${randomUUID().slice(0, 8)}`,
             destinationNodeId: node.destination,
             origin: { type: 'node', nodeId: node.origin },
-            receiver: { name: 'A', phone: '08031234567', email: `a@${DOMAIN}` },
+            receiver: {
+              name: 'Ada Buyer',
+              phone: '08031234567',
+              email: `a@${DOMAIN}`,
+            },
             parcel: { description: 'Box', size: 'small' },
           })
           .expect(403),

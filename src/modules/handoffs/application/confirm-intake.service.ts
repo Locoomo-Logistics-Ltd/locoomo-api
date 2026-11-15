@@ -62,7 +62,15 @@ export class ConfirmIntakeService {
                 'merchant_request',
                 manager,
               );
-              return order;
+              // Report what the counter must do now (status
+              // return_initiated: keep it for the return courier).
+              const [current] = await manager.query<OrderTransitionResult[]>(
+                `SELECT id, "trackingCode", status, "originNodeId",
+                        "destinationNodeId", "shelfNumber"
+                   FROM orders WHERE id = $1`,
+                [orderId],
+              );
+              return current;
             }
             const deadline = order.collectionDeadlineAt!;
             const issued = await this.handoffCodeIssuerService.issueUntil(

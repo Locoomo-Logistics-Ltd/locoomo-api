@@ -793,6 +793,12 @@ action endpoint returns:
 Show *"Put it on shelf **10**"*. The courier is booked in the background; the order moves
 to `rider_assigned` (`nextAction: hand_to_courier` or `hand_to_rider`) once someone accepts.
 
+**Merchant parcels** (businesses shipping to their buyers) use exactly the same scan and
+drop-off; nothing changes on screen. Unlike a consumer's, a merchant parcel takes its
+shelf space at drop-off rather than at booking, and is **never refused for space**: the
+Node may go over capacity (it just stops being offered to new buyers until it frees up).
+It must be dropped at the Node the merchant declared; dropping elsewhere arrives later.
+
 #### Refuse at drop-off — `POST /handoffs/orders/:id/refuse`
 
 Origin staff only, while `awaiting_drop_off`. For parcels that can't travel: hand it back to
@@ -888,6 +894,12 @@ uncollected parcel goes back to the sender automatically at the deadline. Respon
 }
 ```
 
+**Recalled parcels.** A merchant can ask for a parcel back while it's on its way. When such
+a parcel is checked in, the response comes back with **`"status": "return_initiated"`**
+instead: the receiver is *not* told, a return courier is booked, and `nextAction` becomes
+`hand_to_rider` / `hand_to_courier` for the return. Show *"This parcel is going back to the
+sender. Keep it aside for the return courier."*, not the usual shelf message.
+
 ### 5.8 Hand to the receiver — `POST /handoffs/orders/:id/collect`
 
 The receiver shows the emailed code; staff confirm they checked the name/ID. Rate limit:
@@ -950,7 +962,9 @@ Every attempt, right or wrong, is logged with the staff member's name.
    parcel back. Read them the code from `courier-handover`, which answers with
    `kind: "return_delivery"`, then poll as in [5.5](#55-handover-tofrom-an-external-courier--get-handoffsordersidcourier-handover).
 2. `return_intake` → `POST /handoffs/orders/:id/return-intake` (no body). Emails the
-   sender a collection code (valid 60 min). Response `200`:
+   sender a collection code: valid 60 minutes for a consumer, **10 working days** for a
+   merchant (who collects on their own schedule; it goes to the merchant's contact email).
+   Response `200`:
 
    ```json
    {
