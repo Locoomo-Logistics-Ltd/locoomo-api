@@ -2,14 +2,17 @@ import type { MerchantShipmentEntity } from '../infrastructure/entities/merchant
 import type { ShipmentView } from '../interface/dto/shipment.dto';
 
 // The public Shipment object (MERCHANT_API.md §7.4).
-export function shipmentView(s: MerchantShipmentEntity): ShipmentView {
+export function shipmentView(
+  s: MerchantShipmentEntity,
+  trackingUrl: string | null = null,
+): ShipmentView {
   return {
     id: s.id,
     mode: s.mode,
     reference: s.reference,
     trackingCode: s.trackingCode,
-    // Public tracking ignores test codes (E14); live links arrive in M4.
-    trackingUrl: null,
+    // Test codes have no public page (E14); ShipmentPresenter signs live ones.
+    trackingUrl: s.mode === 'live' ? trackingUrl : null,
     status: s.status,
     sequence: s.sequence,
     statusChangedAt: s.statusChangedAt.toISOString(),

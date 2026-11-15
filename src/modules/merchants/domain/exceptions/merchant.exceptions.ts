@@ -336,10 +336,10 @@ export class ReceiverRelayNotEnabledException extends BusinessException {
   readonly errorCode = 'RECEIVER_RELAY_NOT_ENABLED';
   readonly httpStatus = 422;
 
-  constructor() {
-    super(
-      'Relaying collection codes (notifyReceiver: merchant or both) must be enabled on your account first. Ask your account manager.',
-    );
+  constructor(
+    message = 'Relaying collection codes (notifyReceiver: merchant or both) must be enabled on your account first. Ask your account manager.',
+  ) {
+    super(message);
   }
 }
 
@@ -486,6 +486,29 @@ export class FundingAccountConflictException extends BusinessException {
   constructor() {
     super(
       'Your contact email is already linked to another business’s account number. Use a different contact email.',
+    );
+  }
+}
+
+export class DailyLimitReachedException extends BusinessException {
+  readonly errorCode = 'DAILY_LIMIT_REACHED';
+  readonly httpStatus = 429;
+
+  constructor(limit: number) {
+    super(
+      `You've reached today's limit of ${limit} live shipments. It resets at midnight (Lagos time); ask your account manager to raise it.`,
+    );
+    this.details = { limit };
+  }
+}
+
+export class ShipmentCreationPausedException extends BusinessException {
+  readonly errorCode = 'SHIPMENT_CREATION_PAUSED';
+  readonly httpStatus = 403;
+
+  constructor() {
+    super(
+      'New live shipments are paused on your account. Contact your account manager.',
     );
   }
 }

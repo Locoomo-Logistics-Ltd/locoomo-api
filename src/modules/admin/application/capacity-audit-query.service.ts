@@ -76,8 +76,10 @@ export class CapacityAuditQueryService {
            UNION ALL
            SELECT "originNodeId" AS "nodeId", COUNT(*) AS held
              FROM orders
-            WHERE status IN ('awaiting_drop_off', 'parcel_received_at_origin', 'rider_assigned',
-                             'returned_to_origin', 'ready_for_sender_collection')
+            WHERE (status IN ('parcel_received_at_origin', 'rider_assigned',
+                              'returned_to_origin', 'ready_for_sender_collection')
+                   -- Merchant orders take their slot at drop-off, not before.
+                   OR (status = 'awaiting_drop_off' AND source = 'consumer'))
             GROUP BY "originNodeId"
          ) parts GROUP BY "nodeId"
        ), destination AS (

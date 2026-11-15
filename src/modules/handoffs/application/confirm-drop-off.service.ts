@@ -3,6 +3,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
 import { DeliveryDispatchService } from '../../logistics/application/delivery-dispatch.service';
+import { NodesService } from '../../nodes/application/nodes.service';
 import { OrdersService } from '../../orders/application/orders.service';
 import { OrderTransitionResult } from '../domain/order-transition-result';
 import { OrderLookupService } from './order-lookup.service';
@@ -19,6 +20,7 @@ export class ConfirmDropOffService {
     private readonly idempotencyService: IdempotencyService,
     private readonly receiverNotificationService: ReceiverNotificationService,
     private readonly deliveryDispatchService: DeliveryDispatchService,
+    private readonly nodesService: NodesService,
   ) {}
 
   async confirm(
@@ -44,6 +46,16 @@ export class ConfirmDropOffService {
               orderId,
               manager,
             );
+            // Consumer orders reserved their origin slot at checkout.
+            // Merchant parcels take one now and are never refused for
+            // space at the counter (plan §5.2): the Node may go over
+            // capacity and simply stops being offered until it frees up.
+            if (order.source === 'merchant') {
+              await this.nodesService.holdReturnedParcel(
+                order.originNodeId,
+                manager,
+              );
+            }
             await this.receiverNotificationService.enqueueOnItsWay(
               order,
               manager,

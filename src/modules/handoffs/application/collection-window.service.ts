@@ -10,13 +10,10 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
 import { shouldRunBackgroundJobs } from '../../../common/process/background-jobs';
 import { Env } from '../../../config/env.validation';
-import { DeliveryDispatchService } from '../../logistics/application/delivery-dispatch.service';
-import { DeliveryLegType } from '../../logistics/application/delivery-vocabulary';
 import { OrdersService } from '../../orders/application/orders.service';
 import { PublicHolidayService } from '../../orders/application/public-holiday.service';
-import { HandoffCodeType } from '../domain/handoff-code-type.enum';
+import { ParcelRecallService } from './parcel-recall.service';
 import { ReceiverNotificationService } from './receiver-notification.service';
-import { ReturnNotificationService } from './return-notification.service';
 
 const INTERVAL_NAME = 'collection-window';
 const INTERVAL_MS = 10 * 60 * 1000;
@@ -63,9 +60,8 @@ export class CollectionWindowService
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly ordersService: OrdersService,
     private readonly holidays: PublicHolidayService,
-    private readonly deliveryDispatchService: DeliveryDispatchService,
+    private readonly parcelRecall: ParcelRecallService,
     private readonly receiverNotificationService: ReceiverNotificationService,
-    private readonly returnNotificationService: ReturnNotificationService,
     private readonly scheduler: SchedulerRegistry,
     private readonly config: ConfigService<Env, true>,
   ) {}
@@ -141,21 +137,10 @@ export class CollectionWindowService
       if (!order || order.collectionDeadlineAt >= now) {
         return false;
       }
-      await this.ordersService.markUncollected(orderId, manager);
-      await manager.query(
-        `DELETE FROM handoff_codes
-          WHERE "orderId" = $1 AND type = $2 AND "usedAt" IS NULL`,
-        [orderId, HandoffCodeType.RECEIVER_COLLECTION],
-      );
-      await this.deliveryDispatchService.dispatch(
+      await this.parcelRecall.returnFromShelf(
         orderId,
-        manager,
-        DeliveryLegType.RETURN,
-      );
-      await this.returnNotificationService.enqueueReturnStarted(
-        order,
-        manager,
         'not_collected',
+        manager,
       );
       return true;
     });

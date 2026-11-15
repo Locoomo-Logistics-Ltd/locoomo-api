@@ -120,7 +120,7 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 6 | Developers › API keys, API logs | §9 | ✅ |
 | 7 | Developers › Webhooks | §10 | ✅ |
 | 8 | Test / Live toggle | §11 | ✅ |
-| 9 | Shipments: list, create, detail with timeline, edit, cancel, return | §12 | ✅ (CSV import and labels 🛠) |
+| 9 | Shipments: list, create, detail with timeline, edit, cancel, return (test and live) | §12 | ✅ (CSV import and labels 🛠) |
 | 10 | Test simulator on the shipment detail page | §13 | ✅ |
 | 11 | Settings › Close account | §14 | ✅ |
 | 12 | Wallet: balance, statement, holds, card top-up, bank-transfer account, test reset | §15 | ✅ |
@@ -1248,10 +1248,11 @@ screens show.
   Nothing reaches real Nodes, couriers, buyers or money. Test tracking codes start with
   **`LCT-`**; live codes with `LCM-`.
 - Make test mode **obvious**: an orange "TEST MODE" strip across the top of the page.
-- **Live shipments aren't open yet.** Live creation answers `403 MERCHANT_NOT_APPROVED`
-  before approval and `403 LIVE_SHIPMENTS_NOT_AVAILABLE` until the wallet release. Live
-  reads work (and are empty). Default the toggle to **Test** and, until live opens, disable
-  Live with a tooltip "Live shipments open soon."
+- **Live shipments** ✅ are built; Locoomo opens them per environment. Live creation
+  answers `403 MERCHANT_NOT_APPROVED` before approval and
+  `403 LIVE_SHIPMENTS_NOT_AVAILABLE` where live isn't open yet; reads always work. There's
+  no "is live open?" endpoint: default the toggle to **Test**, let approved merchants
+  switch to Live, and show the error's message if creation is refused.
 
 ```ts
 api.interceptors.request.use((config) => {
@@ -1326,7 +1327,7 @@ Reads need `shipments.read`; create, edit, cancel, return and the simulator need
 |---|---|
 | `reference` | The merchant's own order/parcel id. Searchable |
 | `trackingCode` | Big, monospace, with a copy button |
-| `trackingUrl` | "Public tracking page" link. `null` in test mode (and until live opens) |
+| `trackingUrl` | Live: "Public tracking page" link (safe to share with the buyer). `null` in test mode |
 | `origin` | "Drop off at {nodeName}" |
 | `destination` | "Buyer collects at {nodeName}, {address}". If `changed`, add "(changed by Locoomo: the original Node was unavailable)" |
 | `parcel.measured` | If not null: "Measured at drop-off: {weightKg} kg, {size}" |
@@ -1466,6 +1467,9 @@ On success, go to the detail page with a toast: "Shipment created. Drop it off a
 | `422 RECEIVER_RELAY_NOT_ENABLED` | Shouldn't happen if you hide the option |
 | `422 NO_DELIVERY_OPTION` | "This parcel is too big or heavy for any of our vehicles, or we don't cover this route yet." |
 | `403 MERCHANT_NOT_APPROVED`, `403 LIVE_SHIPMENTS_NOT_AVAILABLE` | Live mode: "Live shipments aren't available yet. Switch to Test." |
+| `403 MERCHANT_SUSPENDED` | Live: "Your account is suspended, so you can't create live shipments. Existing parcels keep moving." |
+| `403 SHIPMENT_CREATION_PAUSED` | Live: "New live shipments are paused on your account. Contact your account manager." |
+| `422 RECEIVER_RELAY_NOT_ENABLED` (live) | Hide the `merchant`/`both` options in Live mode for now: Locoomo sends live codes to the buyer |
 | `429 DAILY_LIMIT_REACHED` 🛠 (live only) | "You've reached today's shipment limit. It resets at midnight." |
 
 **Bulk (optional for the dashboard).** **`POST /merchant/shipments/bulk`** with
@@ -1588,12 +1592,22 @@ Show a button only when the action is allowed in the current status:
 | **Change destination / parcel** | `PATCH … { destinationNodeId }` or `{ parcel: {...whole object} }` | Only while `created`. Re-quoted; the hold is adjusted | `409 SHIPMENT_NOT_EDITABLE` |
 | **Edit metadata** | `PATCH … { metadata }` (replaces it) | Any time | — |
 | **Cancel** | `POST /merchant/shipments/:id/cancel` | Only while `created`. Hold released | `409 SHIPMENT_NOT_CANCELLABLE` |
-| **Return to sender** | `POST /merchant/shipments/:id/return-to-sender` | `received`, `in_transit`, `ready_for_collection` (e.g. the buyer cancelled the order). No extra fee | `409 SHIPMENT_NOT_RETURNABLE` |
+| **Return to sender** | `POST /merchant/shipments/:id/return-to-sender` | `received`, `in_transit`, `ready_for_collection` (e.g. the buyer cancelled the order), once. No extra fee | `409 SHIPMENT_NOT_RETURNABLE` |
 
 All return the updated Shipment. Confirm copy:
 
 - Cancel: "Cancel this shipment? The held ₦{quotedKobo} is released."
-- Return: "Bring this parcel back to {origin.nodeName}? The buyer won't be able to collect it."
+- Return, when `ready_for_collection`: "Bring this parcel back to {origin.nodeName}? The
+  buyer's collection code stops working now."
+- Return, when `received` or `in_transit`: "Bring this parcel back to {origin.nodeName}? It's
+  already on its way, so it will reach the buyer's Node first and come straight back. The
+  buyer won't be offered it."
+
+After a return, the shipment says `returning` straight away. When it's back at the origin
+(`return_ready`), Locoomo emails a collection code to the account's contact email (owner's
+email if none), valid 10 working days. Show on the detail page: "Back at {origin.nodeName}.
+We've emailed your collection code to {contact email}." (Return batches with one code for
+many parcels are 🛠.)
 
 A cancel can race with the drop-off scan: on `409 SHIPMENT_NOT_CANCELLABLE`, refetch and offer
 "Return to sender" instead.
@@ -1832,7 +1846,7 @@ phase; we'll update this section.
 
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
-| **Live shipments** | Same as §12 with `Locoomo-Mode: live` | Opens with the wallet. Enable the Live toggle then. Live shipments get a public `trackingUrl` |
+| **Drop off at another Node; re-pricing on measurement** (live) | No new endpoints | A live parcel dropped at a different Node gets that Node as its `origin` (`shipment.updated`), and `shipment.fee_adjusted` arrives when the measured parcel costs more or less. Show `parcel.measured` and the final `fee.chargedKobo` |
 | **Low-balance alert** | Threshold setting on the Wallet page | `wallet.manage`. Emails and `wallet.low_balance` when available balance drops below it |
 | **Invoices** | `GET /merchant/invoices/{yyyy-mm}` (PDF/CSV) | Monthly statement and tax invoice |
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
@@ -2677,6 +2691,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 422 / 409 | `CONTACT_DETAILS_REQUIRED` / `FUNDING_ACCOUNT_CONFLICT` | Bank-transfer account: §15.6 |
 | 403 | `LIVE_MODE_ONLY` | Hide live-only controls in Test mode |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | "Live shipments aren't available yet. Switch to Test." |
+| 403 | `SHIPMENT_CREATION_PAUSED` | "New live shipments are paused on your account." |
 | 403 | `TEST_MODE_ONLY` | Hide the simulator on live shipments |
 | 409 | `DUPLICATE_REFERENCE` | Link to `details.existingShipmentId` |
 | 409 | `SHIPMENT_NOT_EDITABLE` / `SHIPMENT_NOT_CANCELLABLE` / `SHIPMENT_NOT_RETURNABLE` | Refetch; hide the button |

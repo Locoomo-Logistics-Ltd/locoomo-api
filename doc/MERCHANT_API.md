@@ -6,7 +6,8 @@ parcel at a Locoomo hub or Node. We move it, notify the buyer, and hold it until
 collect it with a one-time code. You follow every step by webhook.
 
 > **Status: v1. The sandbox is open** (test keys, Nodes and quotes, test shipments,
-> simulator, webhooks); live shipments follow. This document is the agreed contract for the
+> simulator, webhooks, wallet). **Live shipments** (drop-off at a Node) are built and open
+> per environment as Locoomo switches them on. This document is the agreed contract for the
 > v1 Merchant API. Endpoints are rolled out in the
 > order of the [Changelog](#18-changelog). Within v1 we only make
 > [additive changes](#3-versioning-and-stability); anything marked *Preview* may still be
@@ -434,9 +435,14 @@ What happens at creation:
 - Other errors: `422 DESTINATION_NODE_UNAVAILABLE` (closed or withdrawn; a full Node is
   accepted, see §6), `422 ORIGIN_NODE_UNAVAILABLE`, `422 RECEIVER_RELAY_NOT_ENABLED`
   (`notifyReceiver` `merchant`/`both` not enabled yet), `422 NO_DELIVERY_OPTION`.
-- **Live mode** opens with the wallet release (see the changelog). Until then live
-  creation returns `403 LIVE_SHIPMENTS_NOT_AVAILABLE` (or `403 MERCHANT_NOT_APPROVED`);
-  live reads work and are empty.
+- **Live mode** needs an approved account and a funded live wallet. Until Locoomo opens
+  live shipments, live creation returns `403 LIVE_SHIPMENTS_NOT_AVAILABLE`; reads work.
+  Live shipments get an `LCM-` tracking code and a public `trackingUrl`. Also refused in
+  live mode: `403 MERCHANT_SUSPENDED` (no new shipments while suspended; existing ones
+  continue), `403 SHIPMENT_CREATION_PAUSED` (paused by Locoomo for your account),
+  `429 DAILY_LIMIT_REACHED` (§5.5), and `notifyReceiver` `merchant`/`both`
+  (`422 RECEIVER_RELAY_NOT_ENABLED`: relaying codes for live parcels comes next; we send
+  the code to the buyer).
 
 ### 7.2 Read and list
 
@@ -554,7 +560,7 @@ time you started.
 |---|---|---|
 | `PATCH /shipments/{id}` | `receiver.*`: until `collected` (the buyer gets a fresh code; `"email": null` removes it). `destinationNodeId`, `parcel` (send the whole object): only while `created` (re-quoted; the hold is adjusted). `metadata`: replaced, any time | Updated shipment; `shipment.updated` webhook. Otherwise `409 SHIPMENT_NOT_EDITABLE` |
 | `POST /shipments/{id}/cancel` | Only while `created` (not yet dropped off) | `cancelled`, hold released. Otherwise `409 SHIPMENT_NOT_CANCELLABLE` |
-| `POST /shipments/{id}/return-to-sender` | From `received` until `ready_for_collection` (e.g. the buyer cancelled their order) | The parcel comes back to your hub/Node ([§11](#11-collection-delivery-exceptions-and-returns)). No extra fee in v1. Otherwise `409 SHIPMENT_NOT_RETURNABLE` |
+| `POST /shipments/{id}/return-to-sender` | From `received` until `ready_for_collection` (e.g. the buyer cancelled their order) | Status `returning`. On the buyer's shelf, it comes back straight away and the buyer's code stops working. Still on its way, it finishes the trip and turns round at the buyer's Node without being offered to the buyer. Either way it comes back to your hub/Node ([§11](#11-collection-delivery-exceptions-and-returns)). No extra fee in v1. Asking twice, or too late, is `409 SHIPMENT_NOT_RETURNABLE` |
 
 A cancel that races with the drop-off scan has one winner. If the parcel was scanned
 first, you get `409 SHIPMENT_NOT_CANCELLABLE`; use return-to-sender instead.
@@ -662,11 +668,18 @@ The buyer has **7 working days** (Monday–Friday, excluding Nigerian public hol
 
 ### 11.3 Collecting your returns
 
-Returns come back to the hub/Node they left from. `GET /returns?state=ready` lists them.
+Returns come back to the hub/Node they left from.
+
+**Today:** when a return is shelved there (`shipment.return_ready`), we email a
+**collection code** to your account's contact email (or the owner's email). It's valid for
+10 working days, and Node staff can resend it. Show it at the counter with your name; the
+parcel becomes `returned` (`shipment.returned`).
+
+**Coming (return batches):** `GET /returns?state=ready` lists returns waiting for you.
 Then:
 
-1. `POST /return-batches` with `{ "nodeId": "…", "shipmentIds": [...] }` returns a
-   **collection code** for that batch.
+1. `POST /return-batches` with `{ "nodeId": "…", "shipmentIds": [...] }` returns one
+   **collection code** for the whole batch.
 2. Your staff go to the Node and show the code; staff hand over the parcels.
 3. Each one becomes `returned` (`shipment.returned`).
 
@@ -859,8 +872,9 @@ failure), so register the final URL.
 | `merchant.status_changed` | Your account was submitted, approved, suspended, etc. Sent to test and live endpoints |
 | `webhook.test` | Only from *Send test event*, only to that endpoint |
 
-Sent today: every `shipment.*` event above except `collection_reminder` (live operations),
-plus `wallet.funded`, `merchant.status_changed` and `webhook.test`. `manifest.received`,
+Sent today: every `shipment.*` event above except `collection_reminder` and
+`destination_changed` for live parcels (test mode simulates both), plus `wallet.funded`,
+`merchant.status_changed` and `webhook.test`. `manifest.received`,
 `claim.decided` and `wallet.low_balance` arrive with their features. Expect new event types over time
 ([§3](#3-versioning-and-stability)). Ignore the ones you
 don't handle and still respond 2xx.
@@ -1046,6 +1060,7 @@ stay. Live mode → `403 TEST_MODE_ONLY`.
 | 409 | `INVALID_SIMULATION` | (Sandbox) that move isn't possible from the current status |
 | 403 | `TEST_MODE_ONLY` | (Sandbox) the simulator only works on test shipments |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | Live shipments aren't open yet; use test mode |
+| 403 | `SHIPMENT_CREATION_PAUSED` | Locoomo paused new live shipments on your account; contact your account manager |
 | 409 | `IDEMPOTENCY_IN_PROGRESS` | Retry shortly with the same key |
 | 413 | `PAYLOAD_TOO_LARGE` | Over 1 MB; use imports |
 | 422 | `DESTINATION_NODE_UNAVAILABLE` | That Node isn't accepting parcels; pick another from `/nodes` |
@@ -1108,6 +1123,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Live shipments are built** (§7.1), drop-off at a Node: each live shipment is a real parcel in our network with an `LCM-` code and a public `trackingUrl`. The fee is held at creation and charged when the Node receives it. Every status change reaches you as a webhook. Cancel, edit and return-to-sender work live (§7.5; a parcel already on its way turns round at the buyer's Node). Unshipped shipments expire after their drop-off deadline in both modes. Live opens per environment as Locoomo switches it on. Not yet for live parcels: dropping off at a different Node than declared, re-pricing on measurement, relaying collection codes, return batches |
 | 2026-11-14 | **Top-ups are live** (§14): card payments from the dashboard (test and live), and a dedicated bank-transfer account for the live wallet once approved. New: `GET /wallet/top-ups`, `/wallet/top-ups/{id}`, `/wallet/funding-account`, and the `wallet.funded` webhook. Card fees are deducted from what's credited; transfers are credited in full |
 | 2026-11-14 | **Wallets are live** (§14.1): `GET /wallet`, `/wallet/entries` (your statement) and `/wallet/holds`, per mode. **The test wallet is now a real ledger**: a simulated drop-off charges it, re-measures adjust it, and `POST /test/wallet/reset` tops it back up to ₦1,000,000. **Fixed:** cursor pagination could skip rows (newest-first lists) or repeat them (`updatedSince` sync) when several rows shared a timestamp; cursors issued before the fix still work. Next: top-ups, then live shipments |
 | 2026-11-14 | **Webhooks are live; the sandbox is complete.** Endpoints (API and dashboard), Standard Webhooks signing with 24-hour secret rolls, retries, auto-disable, replay, *Send test event* and the delivery log. Next: live shipments and the wallet |

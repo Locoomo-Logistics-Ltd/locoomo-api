@@ -3,6 +3,7 @@ import { CollectWithIdService } from './application/collect-with-id.service';
 import { CounterUploadsService } from './application/counter-uploads.service';
 import { OrderExceptionService } from './application/order-exception.service';
 import { RefuseDropOffService } from './application/refuse-drop-off.service';
+import { ParcelRecallService } from './application/parcel-recall.service';
 import { SenderContactService } from './application/sender-contact.service';
 import { SenderNotificationService } from './application/sender-notification.service';
 import { AdminOrdersController } from './interface/admin-orders.controller';
@@ -71,6 +72,7 @@ import { HandoffsController } from './interface/handoffs.controller';
   ],
   controllers: [HandoffsController, AdminOrdersController],
   providers: [
+    ParcelRecallService,
     BrowseAvailableOrdersService,
     AcceptOrderService,
     OrderLookupService,
@@ -101,6 +103,8 @@ import { HandoffsController } from './interface/handoffs.controller';
     SenderNotificationService,
   ],
   // Merchants (M4) register their sender-contact resolver here.
-  exports: [SenderContactService],
+  // ParcelRecallService: merchants send a shelved parcel back (return to
+  // sender) and reissue a buyer's code after a contact change.
+  exports: [SenderContactService, ParcelRecallService],
 })
 export class HandoffsModule {}

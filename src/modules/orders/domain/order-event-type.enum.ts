@@ -24,4 +24,8 @@ export enum OrderEventType {
   EXCEPTION_RAISED = 'exception_raised',
   // A wrong ID-check attempt at the counter (audit trail).
   ID_CHECK_FAILED = 'id_check_failed',
+  // Merchant changed details (route, parcel, receiver) — no status change.
+  DETAILS_UPDATED = 'details_updated',
+  // Merchant asked for it back while in transit (turns round on arrival).
+  RETURN_REQUESTED = 'return_requested',
 }
