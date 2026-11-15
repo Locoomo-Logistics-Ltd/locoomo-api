@@ -74,8 +74,16 @@ describe('Live merchant shipments (e2e)', () => {
   let owner: string[];
   let originOperator: string[];
   let destinationOperator: string[];
+  let elsewhereOperator: string[];
+  let multiNodeOperator: string[];
   let merchantId: string;
-  const node = { origin: '', destination: '' };
+  const node = {
+    origin: '',
+    destination: '',
+    elsewhere: '',
+    northA: '',
+    northB: '',
+  };
 
   const http = (): ReturnType<typeof request> => request(app.getHttpServer());
   const code = (response: request.Response): string =>
@@ -305,6 +313,20 @@ describe('Live merchant shipments (e2e)', () => {
     node.destination = await createNode(admin, 'Destination', 3);
     originOperator = await operatorFor('origin-op', node.origin);
     destinationOperator = await operatorFor('dest-op', node.destination);
+    node.elsewhere = await createNode(admin, 'Elsewhere', 9);
+    node.northA = await createNode(admin, 'NorthA', 12);
+    node.northB = await createNode(admin, 'NorthB', 14);
+    elsewhereOperator = await operatorFor('elsewhere-op', node.elsewhere);
+    multiNodeOperator = await operatorFor('multi-op', node.northA);
+    await app
+      .get<Repository<NodeMembershipEntity>>(
+        getRepositoryToken(NodeMembershipEntity),
+      )
+      .save({
+        userId: (await users.findOneByOrFail({ email: `multi-op@${DOMAIN}` }))
+          .id,
+        nodeId: node.northB,
+      });
 
     owner = await signIn(await makeUser('owner'));
     merchantId = data<{ merchant: { id: string } }>(
@@ -681,6 +703,132 @@ describe('Live merchant shipments (e2e)', () => {
       `UPDATE merchants SET "creationPaused" = false WHERE id = $1`,
       [merchantId],
     );
+  });
+
+  describe('drop-off at another Node and re-pricing (M4c2)', () => {
+    it('re-homes a parcel dropped at another Node and charges the re-priced fee', async () => {
+      const before = await wallet();
+      const declaredSlots = await originCount();
+      const s = await create();
+      const orderId = (await orderOf(s.trackingCode)).id;
+
+      const scan = data<{
+        myRole: string;
+        nextAction: string;
+        droppingOffElsewhere: boolean;
+        originNodeName: string;
+      }>(
+        await http()
+          .get(`/api/v1/handoffs/orders/by-tracking-code/${s.trackingCode}`)
+          .set('Cookie', elsewhereOperator)
+          .expect(200),
+      );
+      expect(scan).toMatchObject({
+        myRole: 'origin',
+        nextAction: 'confirm_drop_off',
+        droppingOffElsewhere: true,
+        originNodeName: `${NODE_PREFIX}Origin`,
+      });
+
+      const dropped = await handoff(elsewhereOperator, orderId, 'drop-off', {
+        measured: { weightKg: 0.5 },
+      }).expect(200);
+      expect(data<{ originNodeId: string }>(dropped).originNodeId).toBe(
+        node.elsewhere,
+      );
+
+      const after = await shipment(s.id);
+      expect(after.status).toBe('received');
+      const order = await orderOf(s.trackingCode);
+      expect(order.originNodeId).toBe(node.elsewhere);
+      expect(order.amountKobo).toBe(after.fee.chargedKobo);
+      expect(after.fee.chargedKobo).not.toBe(s.fee.quotedKobo);
+      expect(await wallet()).toMatchObject({
+        balanceKobo: before.balanceKobo - after.fee.chargedKobo!,
+        heldKobo: before.heldKobo,
+      });
+      // The slot is taken where the parcel actually is.
+      expect(await originCount()).toBe(declaredSlots);
+
+      const events = await dataSource.query<
+        { type: string; data: Record<string, unknown> | null }[]
+      >(
+        `SELECT type, data FROM merchant_shipment_events WHERE "shipmentId" = $1 ORDER BY sequence`,
+        [s.id],
+      );
+      expect(events.map((e) => e.type)).toEqual([
+        'created',
+        'received',
+        'fee_adjusted',
+      ]);
+      expect(events[1].data).toMatchObject({
+        previousOrigin: { nodeId: node.origin },
+      });
+      expect(events[2].data).toMatchObject({
+        adjustment: {
+          previousKobo: s.fee.quotedKobo,
+          newKobo: after.fee.chargedKobo,
+          reason: 'measured_and_dropped_elsewhere',
+        },
+      });
+      // The dashboard sees the same details on the timeline.
+      const timeline = data<{ type: string; data: unknown }[]>(
+        await live.get(`/shipments/${s.id}/timeline`).expect(200),
+      );
+      expect(timeline[1]).toMatchObject({
+        type: 'received',
+        data: { previousOrigin: { nodeId: node.origin } },
+      });
+      expect(timeline[2]).toMatchObject({
+        type: 'fee_adjusted',
+        data: { adjustment: { reason: 'measured_and_dropped_elsewhere' } },
+      });
+    });
+
+    it('records what the counter measured at the declared Node', async () => {
+      const s = await create();
+      const orderId = (await orderOf(s.trackingCode)).id;
+      await handoff(originOperator, orderId, 'drop-off', {
+        measured: { weightKg: 0.9, size: 'small' },
+      }).expect(200);
+      const order = await dataSource.query<{ measured: unknown }[]>(
+        `SELECT measured FROM orders WHERE id = $1`,
+        [orderId],
+      );
+      expect(order[0].measured).toEqual({ weightKg: 0.9, size: 'small' });
+      const received = data<{ parcel: { measured: unknown } }>(
+        await live.get(`/shipments/${s.id}`).expect(200),
+      );
+      expect(received.parcel.measured).toEqual({
+        weightKg: 0.9,
+        size: 'small',
+      });
+    });
+
+    it('asks which Node when the staff member works at several, and never at the destination', async () => {
+      const s = await create();
+      const orderId = (await orderOf(s.trackingCode)).id;
+      expect(
+        code(await handoff(multiNodeOperator, orderId, 'drop-off').expect(422)),
+      ).toBe('DROP_OFF_NODE_REQUIRED');
+      expect(
+        code(
+          await handoff(destinationOperator, orderId, 'drop-off').expect(422),
+        ),
+      ).toBe('DROP_OFF_AT_DESTINATION');
+      await handoff(multiNodeOperator, orderId, 'drop-off', {
+        nodeId: node.northB,
+      }).expect(200);
+      expect((await orderOf(s.trackingCode)).originNodeId).toBe(node.northB);
+    });
+
+    it('validates measurements', async () => {
+      const s = await create();
+      const orderId = (await orderOf(s.trackingCode)).id;
+      await handoff(originOperator, orderId, 'drop-off', {
+        measured: { lengthCm: 20 },
+      }).expect(400);
+    });
   });
 
   it('leaves the wallet ledger balanced', async () => {

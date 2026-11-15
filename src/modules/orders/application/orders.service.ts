@@ -66,6 +66,15 @@ export interface CreateMerchantOrderFields {
   destinationFeeKobo: number;
 }
 
+// What the counter measured at drop-off (any subset).
+export interface MeasuredParcel {
+  weightKg?: number;
+  lengthCm?: number;
+  widthCm?: number;
+  heightCm?: number;
+  size?: ParcelSize;
+}
+
 // Statuses from which a merchant may still ask for a parcel back without
 // it having reached the buyer's shelf yet (it turns round on arrival).
 const RETURN_REQUESTABLE: readonly OrderStatus[] = [
@@ -384,18 +393,92 @@ export class OrdersService {
     return order;
   }
 
+  // `intake` (merchant parcels, plan E4/D14): the Node it was actually
+  // dropped at, when that isn't the declared origin, and what the counter
+  // measured. Both are written before the transition so status
+  // subscribers (re-pricing) see them.
   async markReceivedAtOrigin(
     orderId: string,
     manager: EntityManager,
+    intake: { originNodeId?: string; measured?: MeasuredParcel | null } = {},
   ): Promise<OrderEntity> {
+    if (intake.originNodeId) {
+      const [rows] = await manager.query<[{ previous: string }[], number]>(
+        `UPDATE orders o SET "originNodeId" = $2, "updatedAt" = now()
+           FROM (SELECT "originNodeId" AS previous FROM orders WHERE id = $1) old
+          WHERE o.id = $1 AND o.status = $3 AND o.source = 'merchant'
+            AND o."originNodeId" <> $2
+          RETURNING old.previous`,
+        [orderId, intake.originNodeId, OrderStatus.AWAITING_DROP_OFF],
+      );
+      if (rows[0]) {
+        await this.appendEvent(
+          manager,
+          orderId,
+          OrderEventType.ORIGIN_REBOUND,
+          {
+            from: rows[0].previous,
+            to: intake.originNodeId,
+          },
+        );
+      }
+    }
+    if (intake.measured) {
+      await manager.query(
+        `UPDATE orders SET measured = $2 WHERE id = $1 AND status = $3`,
+        [orderId, intake.measured, OrderStatus.AWAITING_DROP_OFF],
+      );
+    }
     const order = await this.transition(
       orderId,
       OrderStatus.AWAITING_DROP_OFF,
       OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
       manager,
       OrderEventType.PARCEL_RECEIVED_AT_ORIGIN,
+      {
+        ...(intake.originNodeId && { originNodeId: intake.originNodeId }),
+        ...(intake.measured && { measured: intake.measured }),
+      },
     );
     return this.placeOnShelf(order, order.originNodeId, manager);
+  }
+
+  // A merchant parcel re-priced at drop-off (real origin, measured parcel):
+  // the order carries the final amount for the courier cap and earnings.
+  async repriceAtIntake(
+    orderId: string,
+    price: {
+      amountKobo: number;
+      destinationFeeKobo: number;
+      vehicleClass: string | null;
+    },
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE orders SET "amountKobo" = $2, "destinationFeeKobo" = $3,
+              "vehicleClass" = $4, "updatedAt" = now()
+        WHERE id = $1 AND status = $5`,
+      [
+        orderId,
+        price.amountKobo,
+        price.destinationFeeKobo,
+        price.vehicleClass,
+        OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
+      ],
+    );
+    await this.appendEvent(manager, orderId, OrderEventType.REPRICED, price);
+  }
+
+  // Re-pricing couldn't be done (e.g. the measured parcel fits no vehicle);
+  // the quoted price stands. Recorded for ops; never blocks the drop-off.
+  async recordRepriceFailure(
+    orderId: string,
+    reason: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    await this.appendEvent(manager, orderId, OrderEventType.REPRICE_FAILED, {
+      reason: reason.slice(0, 500),
+    });
   }
 
   // Narrow exports for handoffs' rider<->Node code confirmations. Both are

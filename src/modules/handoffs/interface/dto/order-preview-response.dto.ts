@@ -16,6 +16,7 @@ export interface OrderPreviewRow {
   id: string;
   trackingCode: string;
   status: string;
+  source?: string;
   originNodeId: string;
   originNodeName: string;
   destinationNodeId: string;
@@ -58,6 +59,10 @@ export class OrderPreviewResponseDto {
   receiverMasked!: string;
   // The current (or latest) courier leg — null before drop-off.
   delivery!: DeliveryView | null;
+  // A merchant parcel booked for another Node and brought here instead:
+  // dropping it off makes this Node its origin. Show "Booked for
+  // {originNodeName}; receiving it here".
+  droppingOffElsewhere!: boolean;
 
   static fromRow(
     row: OrderPreviewRow,
@@ -76,7 +81,14 @@ export class OrderPreviewResponseDto {
     dto.parcelSize = row.parcelSize;
     dto.parcel = toParcelView(row);
     dto.createdAt = row.createdAt;
-    dto.myRole = nodeRoleFor(row, myNodeIds);
+    dto.droppingOffElsewhere =
+      row.source === 'merchant' &&
+      row.status === 'awaiting_drop_off' &&
+      !myNodeIds.includes(row.originNodeId) &&
+      !myNodeIds.includes(row.destinationNodeId);
+    dto.myRole = dto.droppingOffElsewhere
+      ? 'origin'
+      : nodeRoleFor(row, myNodeIds);
     dto.nextAction = nextActionFor(row.status, dto.myRole, delivery?.handover);
     dto.shelfNumber =
       row.shelfNodeId && myNodeIds.includes(row.shelfNodeId)

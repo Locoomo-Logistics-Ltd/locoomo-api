@@ -260,6 +260,7 @@ export class MerchantShipmentService {
       at: e.createdAt.toISOString(),
       nodeName: e.nodeName,
       sequence: e.sequence,
+      data: e.data,
     }));
   }
 
@@ -658,10 +659,13 @@ export class MerchantShipmentService {
     }
   }
 
-  private async price(
+  // The merchant price for a route and parcel. `anyNode`: also price from
+  // a Node that isn't publicly listed (a parcel re-homed at drop-off).
+  async price(
     originNodeId: string,
     destinationNodeId: string,
     parcel: ShipmentParcel,
+    options: { anyNode?: boolean } = {},
   ): Promise<{
     amountKobo: number;
     breakdown: ShipmentFeeBreakdown;
@@ -679,6 +683,7 @@ export class MerchantShipmentService {
         heightCm: parcel.heightCm,
         handling: parcel.handling,
       },
+      { restrictToPublicNodes: !options.anyNode },
     );
     const { amountKobo, breakdown } = merchantQuoteAmounts(quote.feeBreakdown, {
       discountRate: 0,

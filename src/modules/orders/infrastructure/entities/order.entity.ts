@@ -138,6 +138,11 @@ export class OrderEntity {
   @Column({ type: 'timestamptz', nullable: true })
   returnRequestedAt!: Date | null;
 
+  // What the origin counter measured at drop-off (merchant parcels are
+  // re-priced on it, D14). Any of weightKg, lengthCm, widthCm, heightCm, size.
+  @Column({ type: 'jsonb', nullable: true })
+  measured!: Record<string, unknown> | null;
+
   // Whether this parcel currently counts against its destination Node's
   // capacity (nodes.destinationHeldCount). Managed only by handoffs'
   // DestinationCapacitySubscriber.

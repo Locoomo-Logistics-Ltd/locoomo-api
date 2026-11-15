@@ -13,6 +13,8 @@ import {
   ShipmentStatus,
 } from '../domain/shipment';
 import { MerchantShipmentEntity } from '../infrastructure/entities/merchant-shipment.entity';
+import { OrdersService } from '../../orders/application/orders.service';
+import { MerchantShipmentService } from './merchant-shipment.service';
 import { ShipmentEventsService } from './shipment-events.service';
 import { WalletService } from './wallet.service';
 
@@ -43,6 +45,17 @@ interface OrderFacts {
   collectorName: string | null;
   refusal: { reason?: string } | null;
   exception: { type?: ExceptionType } | null;
+  originNodeId: string;
+  measured: MeasuredParcel | null;
+}
+
+// What the origin counter measured (orders.measured).
+interface MeasuredParcel {
+  weightKg?: number;
+  lengthCm?: number;
+  widthCm?: number;
+  heightCm?: number;
+  size?: string;
 }
 
 // Keeps live shipments in step with their orders (plan E5): every order
@@ -62,6 +75,8 @@ export class LiveShipmentSyncService
     private readonly events: ShipmentEventsService,
     private readonly wallet: WalletService,
     private readonly senderContacts: SenderContactService,
+    private readonly shipments: MerchantShipmentService,
+    private readonly orders: OrdersService,
   ) {}
 
   onModuleInit(): void {
@@ -120,29 +135,21 @@ export class LiveShipmentSyncService
     }
     const [facts] = await manager.query<OrderFacts[]>(
       `SELECT "returnReason", "collectionDeadlineAt", "collectedAt",
-              "collectionMethod", "collectorName", refusal, exception
+              "collectionMethod", "collectorName", refusal, exception,
+              "originNodeId", measured
          FROM orders WHERE id = $1`,
       [change.orderId],
     );
+    if (target === S.RECEIVED) {
+      await this.receive(manager, shipment, facts, change);
+      return;
+    }
     shipment.status = target;
     shipment.statusChangedAt = change.occurredAt;
     let nodeName: string | null = null;
     let data: Record<string, unknown> | null = null;
 
     switch (target) {
-      case S.RECEIVED:
-        // Charged at the quoted price. Re-pricing on the measured parcel
-        // and the real drop-off Node comes with origin rebind (M4c2).
-        shipment.feeState = 'charged';
-        shipment.chargedKobo = shipment.quotedKobo;
-        await this.wallet.captureHold(
-          manager,
-          shipment.id,
-          shipment.quotedKobo,
-          `Shipment ${shipment.trackingCode}`,
-        );
-        nodeName = shipment.origin.nodeName;
-        break;
       case S.IN_TRANSIT:
         nodeName = shipment.origin.nodeName;
         break;
@@ -197,5 +204,146 @@ export class LiveShipmentSyncService
         break;
     }
     await this.events.apply(manager, shipment, target, { nodeName, data });
+  }
+
+  // Dropped off (plan E2, E4, D14): charge the held quote, then re-price
+  // from where it was really dropped and what the counter measured, and
+  // charge or refund the difference. Re-pricing never blocks the drop-off:
+  // if it can't be done, the quote stands and ops see why on the order.
+  private async receive(
+    manager: EntityManager,
+    shipment: MerchantShipmentEntity,
+    facts: OrderFacts,
+    change: OrderStatusChanged,
+  ): Promise<void> {
+    const previousOrigin = shipment.origin;
+    const reHomed = facts.originNodeId !== previousOrigin.nodeId;
+    if (reHomed) {
+      const [node] = await manager.query<
+        { name: string; address: string; city: string; state: string }[]
+      >(`SELECT name, address, city, state FROM nodes WHERE id = $1`, [
+        facts.originNodeId,
+      ]);
+      shipment.origin = {
+        nodeId: facts.originNodeId,
+        nodeName: node?.name ?? null,
+        address: node?.address ?? null,
+        city: node?.city ?? null,
+        state: node?.state ?? null,
+      };
+    }
+    const measured = facts.measured;
+    if (measured) {
+      shipment.measured = {
+        weightKg: measured.weightKg ?? shipment.parcel.weightKg,
+        size: measured.size ?? shipment.parcel.size,
+      };
+    }
+    shipment.status = S.RECEIVED;
+    shipment.statusChangedAt = change.occurredAt;
+    shipment.feeState = 'charged';
+    shipment.chargedKobo = shipment.quotedKobo;
+    await this.wallet.captureHold(
+      manager,
+      shipment.id,
+      shipment.quotedKobo,
+      `Shipment ${shipment.trackingCode}`,
+    );
+    await this.events.apply(manager, shipment, S.RECEIVED, {
+      nodeName: shipment.origin.nodeName,
+      data: reHomed
+        ? {
+            previousOrigin: {
+              nodeId: previousOrigin.nodeId,
+              nodeName: previousOrigin.nodeName,
+            },
+          }
+        : null,
+    });
+    if (!reHomed && !measured) {
+      return;
+    }
+
+    const parcel = { ...shipment.parcel };
+    if (measured?.weightKg !== undefined) {
+      parcel.weightKg = measured.weightKg;
+    }
+    if (
+      measured?.lengthCm !== undefined &&
+      measured.widthCm !== undefined &&
+      measured.heightCm !== undefined
+    ) {
+      parcel.lengthCm = measured.lengthCm;
+      parcel.widthCm = measured.widthCm;
+      parcel.heightCm = measured.heightCm;
+    }
+    if (measured?.size) {
+      parcel.size = measured.size;
+    }
+    let repriced: Awaited<ReturnType<MerchantShipmentService['price']>>;
+    try {
+      repriced = await this.shipments.price(
+        facts.originNodeId,
+        shipment.destination.nodeId!,
+        parcel,
+        { anyNode: true },
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Shipment ${shipment.id}: re-pricing at drop-off failed, quote stands: ${reason}`,
+      );
+      await this.orders.recordRepriceFailure(change.orderId, reason, manager);
+      return;
+    }
+    const previousKobo = shipment.quotedKobo;
+    if (
+      repriced.amountKobo === previousKobo &&
+      repriced.vehicleClass === shipment.vehicleClass
+    ) {
+      return;
+    }
+    // The order carries the final price before the courier is booked
+    // (cost cap) and for the revenue split at collection.
+    await this.orders.repriceAtIntake(
+      change.orderId,
+      {
+        amountKobo: repriced.amountKobo,
+        destinationFeeKobo: repriced.destinationFeeKobo,
+        vehicleClass: repriced.vehicleClass,
+      },
+      manager,
+    );
+    shipment.vehicleClass = repriced.vehicleClass;
+    if (repriced.amountKobo === previousKobo) {
+      await manager.save(shipment);
+      return;
+    }
+    const differenceKobo = repriced.amountKobo - previousKobo;
+    await this.wallet.adjustShipmentCharge(manager, {
+      merchantId: shipment.merchantId,
+      mode: shipment.mode,
+      shipmentId: shipment.id,
+      differenceKobo,
+      description: `Shipment ${shipment.trackingCode}: re-priced at drop-off`,
+    });
+    shipment.chargedKobo = repriced.amountKobo;
+    shipment.feeBreakdown = repriced.breakdown;
+    await this.events.apply(manager, shipment, 'fee_adjusted', {
+      nodeName: shipment.origin.nodeName,
+      data: {
+        adjustment: {
+          previousKobo,
+          newKobo: repriced.amountKobo,
+          differenceKobo,
+          reason:
+            reHomed && measured
+              ? 'measured_and_dropped_elsewhere'
+              : reHomed
+                ? 'dropped_elsewhere'
+                : 'measured',
+        },
+      },
+    });
   }
 }

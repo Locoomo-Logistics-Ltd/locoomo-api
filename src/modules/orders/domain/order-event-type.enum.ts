@@ -28,4 +28,10 @@ export enum OrderEventType {
   DETAILS_UPDATED = 'details_updated',
   // Merchant asked for it back while in transit (turns round on arrival).
   RETURN_REQUESTED = 'return_requested',
+  // Merchant parcel dropped at another Node than declared (plan E4).
+  ORIGIN_REBOUND = 'origin_rebound',
+  // Merchant parcel re-priced at drop-off (real origin, measured parcel).
+  REPRICED = 'repriced',
+  // Re-pricing at drop-off failed; the quoted price stands (ops review).
+  REPRICE_FAILED = 'reprice_failed',
 }

@@ -436,6 +436,9 @@ export class TimelineEntryView {
   at!: string;
   nodeName!: string | null;
   sequence!: number;
+  /** Event details, as in the webhook's `data` extras: `reason`,
+   * `adjustment`, `previousOrigin`, `changed`, … (never collection codes). */
+  data!: Record<string, unknown> | null;
 }
 
 export class BulkResultError {
