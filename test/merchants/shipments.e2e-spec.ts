@@ -655,6 +655,73 @@ describe('Merchant shipments, test mode (e2e)', () => {
     });
   });
 
+  describe('labels (M4d)', () => {
+    const binary = (req: request.Test) =>
+      req.buffer(true).parse((res, done) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => done(null, Buffer.concat(chunks)));
+      });
+    const pages = (pdf: Buffer): number =>
+      (pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) ?? []).length;
+
+    it('renders one label as a PDF', async () => {
+      const s = await create();
+      const response = await binary(
+        api(key).get(`/shipments/${s.id}/label`),
+      ).expect(200);
+      expect(response.headers['content-type']).toBe('application/pdf');
+      expect(response.headers['content-disposition']).toContain(
+        `label-${s.trackingCode}.pdf`,
+      );
+      const pdf = response.body as Buffer;
+      expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+      expect(pages(pdf)).toBe(1);
+    });
+
+    it('batches labels in order, four to an A4 page', async () => {
+      const shipments: Shipment[] = [];
+      for (let i = 0; i < 5; i++) {
+        shipments.push(await create());
+      }
+      const response = await binary(
+        api(key).post('/shipments/labels', {
+          shipmentIds: shipments.map((s) => s.id),
+          format: 'a4',
+        }),
+      ).expect(200);
+      expect(pages(response.body as Buffer)).toBe(2);
+      const a6 = await binary(
+        api(key).post('/shipments/labels', {
+          shipmentIds: shipments.slice(0, 3).map((s) => s.id),
+        }),
+      ).expect(200);
+      expect(pages(a6.body as Buffer)).toBe(3);
+    });
+
+    it('refuses other merchants’ shipments, bad formats and empty batches', async () => {
+      const mine = await create();
+      expect(
+        code(
+          await api(otherMerchantKey)
+            .get(`/shipments/${mine.id}/label`)
+            .expect(404),
+        ),
+      ).toBe('NOT_FOUND');
+      await api(key)
+        .get(`/shipments/${mine.id}/label?format=letter`)
+        .expect(400);
+      await api(key).post('/shipments/labels', { shipmentIds: [] }).expect(400);
+      expect(
+        code(
+          await api(key)
+            .post('/shipments/labels', { shipmentIds: [mine.id, randomUUID()] })
+            .expect(404),
+        ),
+      ).toBe('NOT_FOUND');
+    });
+  });
+
   describe('modes and the test wallet', () => {
     it('lets the dashboard work in test mode and refuses live until approval', async () => {
       const viaDashboard = data<Shipment>(

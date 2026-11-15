@@ -1113,6 +1113,18 @@ Decisions:
   the receiver, one carrying the new code), so the code never rides on an unrelated event.
 - Reminders aren't relayed yet (`shipment.collection_reminder` stays simulator-only).
 
+### M4d2 Labels: done (2026-11-15)
+
+| Item | Where |
+|---|---|
+| Label content (first name + phone last 4 only, tracking code as scan value, route, merchant, reference, size, handling, test marker) | `merchants/domain/label.ts` |
+| PDF rendering: A6 one-up or A4 four-up with cut guides; Code 128 (`bwip-js`) and QR (`qrcode`), `pdfkit` | `merchants/infrastructure/label-renderer.ts` |
+| `GET /merchant/shipments/:id/label?format=a6\|a4`, `POST /merchant/shipments/labels` (1–100, in order); raw PDF (`@SkipResponseEnvelope`), errors still enveloped | `shipment-label.service.ts`, `shipments.controller.ts` |
+
+Decision: **labels are synchronous** (`POST /shipments/labels`, ≤ 100) instead of the
+planned async `POST /label-batches`. 100 labels render in well under a second, so a job
+queue added nothing; larger runs page through.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

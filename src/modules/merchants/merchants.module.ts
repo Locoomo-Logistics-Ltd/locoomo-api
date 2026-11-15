@@ -44,6 +44,8 @@ import { TrackingModule } from '../tracking/tracking.module';
 import { LiveShipmentSyncService } from './application/live-shipment-sync.service';
 import { ShipmentExpiryService } from './application/shipment-expiry.service';
 import { ShipmentPresenter } from './application/shipment-presenter';
+import { ShipmentLabelService } from './application/shipment-label.service';
+import { LabelRenderer } from './infrastructure/label-renderer';
 import { ApiKeyEntity } from './infrastructure/entities/api-key.entity';
 import { MerchantApiRequestEntity } from './infrastructure/entities/merchant-api-request.entity';
 import { MerchantBankAccountEntity } from './infrastructure/entities/merchant-bank-account.entity';
@@ -173,6 +175,8 @@ import { WebhooksController } from './interface/webhooks.controller';
     ShipmentPresenter,
     LiveShipmentSyncService,
     ShipmentExpiryService,
+    LabelRenderer,
+    ShipmentLabelService,
   ],
 })
 export class MerchantsModule {}

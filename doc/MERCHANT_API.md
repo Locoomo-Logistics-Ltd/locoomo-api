@@ -604,10 +604,17 @@ created ──► received ──► in_transit ──► ready_for_collection �
 
 ## 9. Labels and parcel identification
 
-- *(Coming with live shipments.)* `GET /shipments/{id}/label?format=a6` (or `a4`) returns a PDF with the tracking code as a
-  **Code 128 barcode and a QR code**, the destination Node, and the receiver's first name.
-  Print it and stick it on the parcel. `POST /label-batches` builds one PDF for many
-  shipments (in the background).
+- **`GET /shipments/{id}/label?format=a6|a4`** (scope `shipments:read`) returns a PDF
+  label (`Content-Type: application/pdf`, not the JSON envelope): the tracking code in
+  large type, as a **Code 128 barcode and a QR code**, the destination Node and address,
+  the receiver's first name and the last 4 digits of their phone, your business name,
+  the drop-off Node, your reference, size and handling flags. `a6` (105 × 148 mm, the
+  default) is one label per page; `a4` puts it in the top-left quarter. Test labels say
+  *TEST LABEL · NOT FOR SHIPPING*. Print it and stick it on the parcel.
+- **`POST /shipments/labels`** with `{ "shipmentIds": ["…"], "format": "a4" }` (1–100 ids,
+  printed in that order) returns one PDF: `a6` one label per page, `a4` four per page
+  (cut along the dashed lines). An id that isn't yours (or is in the other mode) is
+  `404 NOT_FOUND`.
 - **Already have your own barcode on the parcel?** Send it as `externalBarcode` when you
   create the shipment. Our hub scanners accept your barcode, your `reference`, or our
   tracking code, so cross-border parcels don't need relabelling.
@@ -1135,6 +1142,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Labels** (§9): `GET /shipments/{id}/label` and `POST /shipments/labels` (up to 100 in one PDF, A6 or four-up A4), with Code 128 and QR barcodes. Replaces the planned `POST /label-batches` |
 | 2026-11-15 | **Relaying collection codes works for live parcels** (§11.1): with `notifyReceiver` `merchant` or `both` (enabled on your account by Locoomo), the code arrives in `shipment.ready_for_collection`, and a replacement code in `shipment.updated` (`changed: ["collectionCode"]`). With `merchant`, we send the buyer nothing |
 | 2026-11-15 | **Drop off anywhere; re-priced at drop-off** (live). A live parcel can be dropped at any Node except the buyer's: that Node becomes its `origin` (`shipment.received` carries `previousOrigin`). The Node may measure it. The fee is re-priced from the real origin and measurements, and the difference is charged or refunded (`shipment.fee_adjusted`, `reason`: `measured`, `dropped_elsewhere`, `measured_and_dropped_elsewhere`). Measurements show in `parcel.measured` |
 | 2026-11-15 | **Live shipments are built** (§7.1), drop-off at a Node: each live shipment is a real parcel in our network with an `LCM-` code and a public `trackingUrl`. The fee is held at creation and charged when the Node receives it. Every status change reaches you as a webhook. Cancel, edit and return-to-sender work live (§7.5; a parcel already on its way turns round at the buyer's Node). Unshipped shipments expire after their drop-off deadline in both modes. Live opens per environment as Locoomo switches it on. Not yet for live parcels: relaying collection codes, return batches |

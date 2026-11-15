@@ -120,7 +120,7 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 6 | Developers › API keys, API logs | §9 | ✅ |
 | 7 | Developers › Webhooks | §10 | ✅ |
 | 8 | Test / Live toggle | §11 | ✅ |
-| 9 | Shipments: list, create, detail with timeline, edit, cancel, return (test and live) | §12 | ✅ (CSV import and labels 🛠) |
+| 9 | Shipments: list, create, detail with timeline, edit, cancel, return (test and live) | §12 | ✅ (labels ✅; CSV import 🛠) |
 | 10 | Test simulator on the shipment detail page | §13 | ✅ |
 | 11 | Settings › Close account | §14 | ✅ |
 | 12 | Wallet: balance, statement, holds, card top-up, bank-transfer account, test reset | §15 | ✅ |
@@ -1585,6 +1585,24 @@ Used twice in the create form. **`GET /merchant/nodes`** → `{ items: Node[], n
   `collection_reminder` ("Buyer reminded to collect"). Render a vertical timeline with "at
   {nodeName}" where present. Unknown types: show the raw value.
 
+**Labels** ✅. A **"Print label"** button on the detail page opens
+`GET /merchant/shipments/{id}/label?format=a6` in a new tab (it's a PDF, not JSON: fetch it
+with the session cookie and `Locoomo-Mode`, then show it from a blob URL). Offer A6 (label
+printers) and A4 (office printers). On the list, let users tick shipments and **"Print
+labels"**: `POST /merchant/shipments/labels` `{ shipmentIds, format }` (up to 100,
+printed in the order sent; A4 prints four per page with cut lines).
+
+```ts
+async function openLabel(id: string, format: 'a6' | 'a4' = 'a6') {
+  const res = await fetch(`${API}/merchant/shipments/${id}/label?format=${format}`, {
+    credentials: 'include',
+    headers: { 'Locoomo-Mode': store.mode },
+  });
+  if (!res.ok) throw (await res.json()).error; // errors are still the JSON envelope
+  window.open(URL.createObjectURL(await res.blob()), '_blank');
+}
+```
+
 **Detail page layout:** status badge and tracking code at the top; the action buttons
 (§12.8); cards for receiver, parcel, route (origin → destination), fee, collection/return;
 the timeline; and in test mode the simulator panel (§13).
@@ -1858,7 +1876,6 @@ phase; we'll update this section.
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
 | **Returns to collect** | `GET /merchant/returns?state=ready`, `POST /merchant/return-batches { nodeId, shipmentIds }` → collection code | `returns.collect`. Show the batch code big, like a boarding pass. 10 working days free storage |
 | **Claims** | `POST /merchant/claims { shipmentId, type, description, evidence }` | Within 30 days. Types: `lost`, `damaged`, `missing_item` |
-| **Labels** | `GET /merchant/shipments/{id}/label?format=a6\|a4` (PDF), `POST /merchant/label-batches` | "Print label" on the detail page |
 | **CSV import** | `POST /merchant/shipment-imports`, `GET …/{id}` | Up to 10,000 rows, background job with a progress view |
 | **Go-live checklist** | `GET /merchant/go-live-checklist` | On Home: approved, 2FA, live key, live webhook, wallet funded, test shipment simulated to `collected` and `returned` |
 | **Audit log** | TBD | Who did what in the team |

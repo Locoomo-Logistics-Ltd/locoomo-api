@@ -11,12 +11,14 @@ import {
   Query,
   UseGuards,
   UseInterceptors,
+  StreamableFile,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiHeader,
   ApiOkResponse,
+  ApiProduces,
   ApiTags,
 } from '@nestjs/swagger';
 import { RequireVerifiedEmail } from '../../../common/auth/decorators/account-requirements.decorator';
@@ -25,13 +27,17 @@ import type { CursorPage } from '../../../common/pagination/cursor';
 import type { MerchantCaller } from '../application/merchant-state';
 import { MerchantShipmentService } from '../application/merchant-shipment.service';
 import { ShipmentSimulatorService } from '../application/shipment-simulator.service';
+import { ShipmentLabelService } from '../application/shipment-label.service';
+import { SkipResponseEnvelope } from '../../../common/decorators/skip-response-envelope.decorator';
 import { ApiKeyScope } from '../domain/api-key';
 import { MerchantPermission } from '../domain/merchant-permissions';
 import {
   BulkCreateResultView,
   BulkCreateShipmentsDto,
   CreateShipmentDto,
+  LabelFormatQueryDto,
   ListShipmentsQueryDto,
+  ShipmentLabelsDto,
   ShipmentListView,
   ShipmentView,
   SimulateShipmentDto,
@@ -64,7 +70,10 @@ const WRITE = (): MethodDecorator & ClassDecorator =>
 @UseGuards(MerchantGuard)
 @RequireVerifiedEmail()
 export class ShipmentsController {
-  constructor(private readonly shipments: MerchantShipmentService) {}
+  constructor(
+    private readonly shipments: MerchantShipmentService,
+    private readonly labels: ShipmentLabelService,
+  ) {}
 
   /** Create a shipment. The quoted fee is held on your wallet. */
   @Post()
@@ -112,6 +121,50 @@ export class ShipmentsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<ShipmentView> {
     return this.shipments.get(caller, id);
+  }
+
+  /** Shipping label as a PDF (A6, or A4 with the label in the first quarter). */
+  @Get(':id/label')
+  @READ()
+  @SkipResponseEnvelope()
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description: 'PDF',
+    schema: { type: 'string', format: 'binary' },
+  })
+  async label(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: LabelFormatQueryDto,
+  ): Promise<StreamableFile> {
+    return this.pdf(await this.labels.labels(caller, [id], query.format));
+  }
+
+  /** Up to 100 labels in one PDF, in the order given (A4: four per page). */
+  @Post('labels')
+  @HttpCode(HttpStatus.OK)
+  @READ()
+  @SkipResponseEnvelope()
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description: 'PDF',
+    schema: { type: 'string', format: 'binary' },
+  })
+  async labelBatch(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+    @Body() dto: ShipmentLabelsDto,
+  ): Promise<StreamableFile> {
+    return this.pdf(
+      await this.labels.labels(caller, dto.shipmentIds, dto.format),
+    );
+  }
+
+  private pdf(rendered: { pdf: Buffer; filename: string }): StreamableFile {
+    return new StreamableFile(rendered.pdf, {
+      type: 'application/pdf',
+      disposition: `inline; filename="${rendered.filename}"`,
+      length: rendered.pdf.length,
+    });
   }
 
   /** Event history, oldest first. */
