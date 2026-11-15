@@ -14,6 +14,7 @@ import {
 import { ReturnCollectionService } from '../application/return-collection.service';
 import { ReturnIntakeService } from '../application/return-intake.service';
 import { CourierHandoverQueryService } from '../application/courier-handover-query.service';
+import { ConfirmDropOffDto } from './dto/confirm-drop-off.dto';
 import { CourierHandoverResponseDto } from './dto/courier-handover-response.dto';
 import { DeliveryQueryService } from '../../logistics/application/delivery-query.service';
 import { Throttle, seconds } from '@nestjs/throttler';
@@ -201,8 +202,12 @@ export class HandoffsController {
   async dropOff(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ConfirmDropOffDto,
   ): Promise<OrderTransitionResponseDto> {
-    const order = await this.confirmDropOffService.confirm(id, user.id);
+    const order = await this.confirmDropOffService.confirm(id, user.id, {
+      nodeId: dto.nodeId,
+      measured: dto.measured,
+    });
     return OrderTransitionResponseDto.fromResult(order);
   }
 

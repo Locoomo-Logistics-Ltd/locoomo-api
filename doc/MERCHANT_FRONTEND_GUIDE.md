@@ -1328,9 +1328,9 @@ Reads need `shipments.read`; create, edit, cancel, return and the simulator need
 | `reference` | The merchant's own order/parcel id. Searchable |
 | `trackingCode` | Big, monospace, with a copy button |
 | `trackingUrl` | Live: "Public tracking page" link (safe to share with the buyer). `null` in test mode |
-| `origin` | "Drop off at {nodeName}" |
+| `origin` | While `created`: "Drop off at {nodeName}" (any other Node except the buyer's also accepts it). After drop-off: "Dropped off at {nodeName}". If it was dropped somewhere else, `origin` is updated and the timeline's `received` entry has `data.previousOrigin` (§12.7); show "Booked for {previousOrigin.nodeName}, dropped at {nodeName}" |
 | `destination` | "Buyer collects at {nodeName}, {address}". If `changed`, add "(changed by Locoomo: the original Node was unavailable)" |
-| `parcel.measured` | If not null: "Measured at drop-off: {weightKg} kg, {size}" |
+| `parcel.measured` | If not null: "Measured at drop-off: {weightKg} kg, {size}". The fee was re-priced on it: if `fee.chargedKobo` differs from `fee.quotedKobo`, show both ("Quoted ₦…, charged ₦… after measuring") |
 | `fee` | Quoted vs charged. `state`: `held` "Held", `charged` "Charged", `released` "Released (not charged)" |
 | `dropDeadline` | While `created`: "Drop off by {date}, or it expires" |
 | `collection.deadline` | While `ready_for_collection`: "Buyer has until {date} to collect" |
@@ -1566,12 +1566,20 @@ Used twice in the create form. **`GET /merchant/nodes`** → `{ items: Node[], n
 
   ```json
   [
-    { "type": "created", "at": "2026-11-12T09:14:00.000Z", "nodeName": null, "sequence": 1 },
-    { "type": "received", "at": "2026-11-14T11:02:00.000Z", "nodeName": "Ikeja Node — Allen Avenue", "sequence": 2 },
-    { "type": "in_transit", "at": "2026-11-14T15:40:00.000Z", "nodeName": "Ikeja Node — Allen Avenue", "sequence": 3 },
-    { "type": "ready_for_collection", "at": "2026-11-15T10:05:00.000Z", "nodeName": "Yaba Node — Herbert Macaulay", "sequence": 4 }
+    { "type": "created", "at": "2026-11-12T09:14:00.000Z", "nodeName": null, "sequence": 1, "data": null },
+    { "type": "received", "at": "2026-11-14T11:02:00.000Z", "nodeName": "Ikeja Node — Allen Avenue", "sequence": 2,
+      "data": { "previousOrigin": { "nodeId": "…", "nodeName": "Yaba Node — Sabo" } } },
+    { "type": "fee_adjusted", "at": "2026-11-14T11:02:00.000Z", "nodeName": "Ikeja Node — Allen Avenue", "sequence": 3,
+      "data": { "adjustment": { "previousKobo": 180000, "newKobo": 210000, "differenceKobo": 30000, "reason": "dropped_elsewhere" } } },
+    { "type": "in_transit", "at": "2026-11-14T15:40:00.000Z", "nodeName": "Ikeja Node — Allen Avenue", "sequence": 4, "data": null },
+    { "type": "ready_for_collection", "at": "2026-11-15T10:05:00.000Z", "nodeName": "Yaba Node — Herbert Macaulay", "sequence": 5, "data": null }
   ]
   ```
+
+  `data` carries details worth showing: `received` → `previousOrigin` ("Booked for
+  {nodeName}, dropped here"); `fee_adjusted` → `adjustment` ("Price changed from ₦{previous}
+  to ₦{new}: measured / dropped at another Node"); `returning` → `reason`; `updated` →
+  `changed`.
 
   `type` is a status name or one of `updated` ("Details changed"), `fee_adjusted` ("Price
   adjusted after measuring"), `destination_changed` ("Collection Node changed by Locoomo"),
@@ -1846,7 +1854,6 @@ phase; we'll update this section.
 
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
-| **Drop off at another Node; re-pricing on measurement** (live) | No new endpoints | A live parcel dropped at a different Node gets that Node as its `origin` (`shipment.updated`), and `shipment.fee_adjusted` arrives when the measured parcel costs more or less. Show `parcel.measured` and the final `fee.chargedKobo` |
 | **Low-balance alert** | Threshold setting on the Wallet page | `wallet.manage`. Emails and `wallet.low_balance` when available balance drops below it |
 | **Invoices** | `GET /merchant/invoices/{yyyy-mm}` (PDF/CSV) | Monthly statement and tax invoice |
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
@@ -2485,6 +2492,7 @@ export interface TimelineEntry {
   at: string;
   nodeName: string | null;
   sequence: number;
+  data: Record<string, unknown> | null;   // event details (adjustment, previousOrigin, reason, …)
 }
 export interface BulkResult {
   results: (

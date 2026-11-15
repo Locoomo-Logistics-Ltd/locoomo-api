@@ -42,10 +42,9 @@ export class RefuseDropOffService {
     input: { reason: RefusalReason; note?: string; photoPublicId?: string },
     context: AuditRequestContext,
   ): Promise<OrderTransitionResult> {
-    await this.orderLookupService.assertOriginNodeOwnership(
-      orderId,
-      staffUserId,
-    );
+    // The declared origin, or (merchant parcels) whichever Node it was
+    // brought to: it can be refused wherever it's presented.
+    await this.orderLookupService.resolveDropOffNode(orderId, staffUserId);
     if (input.photoPublicId) {
       await this.uploads.assertOwnUpload(staffUserId, input.photoPublicId);
     }

@@ -1079,6 +1079,25 @@ Decisions:
 **Rollout:** set `MERCHANT_LIVE_SHIPMENTS_ENABLED=true` per environment when live opens
 (staging first). Merchants need an approved account and a funded live wallet.
 
+### M4c2 Drop-off anywhere, measured, re-priced: done (2026-11-15)
+
+| Item | Where |
+|---|---|
+| Scan finds a merchant parcel awaiting drop-off at **any** Node (`droppingOffElsewhere`, role origin, `confirm_drop_off`); consumer parcels keep their declared origin | `order-lookup.service.ts`, `order-preview-response.dto.ts` |
+| `POST /handoffs/orders/:id/drop-off` takes optional `{ nodeId?, measured? }`; `resolveDropOffNode` picks the receiving Node (`422 DROP_OFF_NODE_REQUIRED` for multi-Node staff, `422 DROP_OFF_AT_DESTINATION`); refusal is allowed wherever it's presented | `confirm-drop-off`, `refuse-drop-off`, `dto/confirm-drop-off.dto.ts` |
+| `markReceivedAtOrigin(…, { originNodeId?, measured? })` rebinds (merchant only, `origin_rebound` event) and stores `orders.measured` before the transition; `repriceAtIntake`, `recordRepriceFailure`. Migration 369 | `orders.service.ts` |
+| Mirror at drop-off: re-homes the shipment `origin` (`received.data.previousOrigin`), records `parcel.measured`, charges the quote, re-prices from the real origin + measurements (private Nodes allowed), charges/refunds the difference (`fee_adjusted`, reason `measured` / `dropped_elsewhere` / both) and writes the final price to the order before the courier is booked | `live-shipment-sync.service.ts` |
+| Timeline entries carry `data` (additive) so the dashboard sees adjustments and re-homing | `merchant-shipment.service.ts`, `shipment.dto.ts` |
+
+Decisions:
+- **Re-pricing happens in the drop-off transaction.** Quoting is local (cached road
+  distances), so the order has its final price and vehicle class before dispatch picks a
+  courier. Any quoting failure leaves the quote in place and records `reprice_failed` on
+  the order; it never blocks a parcel at the counter.
+- **Never at the buyer's own Node**: a parcel dropped where it should be collected would
+  skip transport; refused with a clear message instead.
+- The origin slot is taken where the parcel physically is (the new origin).
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

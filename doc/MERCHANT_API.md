@@ -407,7 +407,7 @@ Scope `shipments:write`. Send `Idempotency-Key`.
 |---|---|
 | `reference` | Required. Your id for this parcel, 1–64 chars, unique per account and mode |
 | `destinationNodeId` | Required. From `/nodes` |
-| `origin` | `{ "type": "hub" }` (your assigned hub; the default once you have one) or `{ "type": "node", "nodeId": "…" }` for drop-off at a specific Node. **Required as `node` until a hub is assigned to your account** (`422 ORIGIN_REQUIRED`). If the parcel is actually dropped elsewhere, we re-price from where it really arrived |
+| `origin` | `{ "type": "hub" }` (your assigned hub; the default once you have one) or `{ "type": "node", "nodeId": "…" }` for drop-off at a specific Node. **Required as `node` until a hub is assigned to your account** (`422 ORIGIN_REQUIRED`). You may still drop it at any other Node (not the buyer's): it's accepted there, becomes the `origin`, and the fee is re-priced from where it really arrived (`shipment.received` carries `previousOrigin`, then `shipment.fee_adjusted` if the price changed) |
 | `receiver.name` | Required, 2–100 chars |
 | `receiver.phone` | Required, valid phone |
 | `receiver.email` | Optional. We recommend it: email is always sent, SMS where available |
@@ -458,12 +458,17 @@ time you started.
 
 ```json
 [
-  { "type": "created", "at": "2026-11-12T09:14:00.000Z", "nodeName": null, "sequence": 1 },
-  { "type": "received", "at": "2026-11-14T11:02:00.000Z", "nodeName": "Ikeja Hub", "sequence": 2 },
-  { "type": "in_transit", "at": "2026-11-14T15:40:00.000Z", "nodeName": "Ikeja Hub", "sequence": 3 },
-  { "type": "ready_for_collection", "at": "2026-11-15T10:05:00.000Z", "nodeName": "Yaba Node — Herbert Macaulay", "sequence": 4 }
+  { "type": "created", "at": "2026-11-12T09:14:00.000Z", "nodeName": null, "sequence": 1, "data": null },
+  { "type": "received", "at": "2026-11-14T11:02:00.000Z", "nodeName": "Ikeja Hub", "sequence": 2, "data": null },
+  { "type": "fee_adjusted", "at": "2026-11-14T11:02:00.000Z", "nodeName": "Ikeja Hub", "sequence": 3,
+    "data": { "adjustment": { "previousKobo": 180000, "newKobo": 210000, "differenceKobo": 30000, "reason": "measured" } } },
+  { "type": "in_transit", "at": "2026-11-14T15:40:00.000Z", "nodeName": "Ikeja Hub", "sequence": 4, "data": null },
+  { "type": "ready_for_collection", "at": "2026-11-15T10:05:00.000Z", "nodeName": "Yaba Node — Herbert Macaulay", "sequence": 5, "data": null }
 ]
 ```
+
+`data` holds the same details as the matching webhook's extras (§12.2): `reason`,
+`adjustment`, `previousOrigin`, `changed`, … It never contains collection codes.
 
 ### 7.3 Bulk create
 
@@ -737,8 +742,11 @@ webhook-signature: v1,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4=
 
 Extras in `data` for some events: `collectionCode` (`ready_for_collection`, only when you
 relay codes, §11.1), `adjustment` (`fee_adjusted`: `previousKobo`, `newKobo`,
-`differenceKobo`, `reason`), `previousDestination` (`destination_changed`), `changed`
-(`updated`: which parts changed). `merchant.status_changed` carries
+`differenceKobo`, `reason`: `measured`, `dropped_elsewhere` or
+`measured_and_dropped_elsewhere`), `previousOrigin` (`received`, when the parcel was
+dropped at a different Node than you declared: `{ nodeId, nodeName }`; the shipment's
+`origin` is now where it really is), `previousDestination` (`destination_changed`),
+`changed` (`updated`: which parts changed). `merchant.status_changed` carries
 `data.merchant: { id, status, previousStatus }`.
 
 Respond with any **2xx within 10 seconds**. Do the heavy work after responding: queue it.
@@ -1123,7 +1131,8 @@ error or response.
 
 | Date | Change |
 |---|---|
-| 2026-11-15 | **Live shipments are built** (§7.1), drop-off at a Node: each live shipment is a real parcel in our network with an `LCM-` code and a public `trackingUrl`. The fee is held at creation and charged when the Node receives it. Every status change reaches you as a webhook. Cancel, edit and return-to-sender work live (§7.5; a parcel already on its way turns round at the buyer's Node). Unshipped shipments expire after their drop-off deadline in both modes. Live opens per environment as Locoomo switches it on. Not yet for live parcels: dropping off at a different Node than declared, re-pricing on measurement, relaying collection codes, return batches |
+| 2026-11-15 | **Drop off anywhere; re-priced at drop-off** (live). A live parcel can be dropped at any Node except the buyer's: that Node becomes its `origin` (`shipment.received` carries `previousOrigin`). The Node may measure it. The fee is re-priced from the real origin and measurements, and the difference is charged or refunded (`shipment.fee_adjusted`, `reason`: `measured`, `dropped_elsewhere`, `measured_and_dropped_elsewhere`). Measurements show in `parcel.measured` |
+| 2026-11-15 | **Live shipments are built** (§7.1), drop-off at a Node: each live shipment is a real parcel in our network with an `LCM-` code and a public `trackingUrl`. The fee is held at creation and charged when the Node receives it. Every status change reaches you as a webhook. Cancel, edit and return-to-sender work live (§7.5; a parcel already on its way turns round at the buyer's Node). Unshipped shipments expire after their drop-off deadline in both modes. Live opens per environment as Locoomo switches it on. Not yet for live parcels: relaying collection codes, return batches |
 | 2026-11-14 | **Top-ups are live** (§14): card payments from the dashboard (test and live), and a dedicated bank-transfer account for the live wallet once approved. New: `GET /wallet/top-ups`, `/wallet/top-ups/{id}`, `/wallet/funding-account`, and the `wallet.funded` webhook. Card fees are deducted from what's credited; transfers are credited in full |
 | 2026-11-14 | **Wallets are live** (§14.1): `GET /wallet`, `/wallet/entries` (your statement) and `/wallet/holds`, per mode. **The test wallet is now a real ledger**: a simulated drop-off charges it, re-measures adjust it, and `POST /test/wallet/reset` tops it back up to ₦1,000,000. **Fixed:** cursor pagination could skip rows (newest-first lists) or repeat them (`updatedSince` sync) when several rows shared a timestamp; cursors issued before the fix still work. Next: top-ups, then live shipments |
 | 2026-11-14 | **Webhooks are live; the sandbox is complete.** Endpoints (API and dashboard), Standard Webhooks signing with 24-hour secret rolls, retries, auto-disable, replay, *Send test event* and the delivery log. Next: live shipments and the wallet |

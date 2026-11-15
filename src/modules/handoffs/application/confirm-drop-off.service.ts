@@ -4,7 +4,10 @@ import { DataSource } from 'typeorm';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
 import { DeliveryDispatchService } from '../../logistics/application/delivery-dispatch.service';
 import { NodesService } from '../../nodes/application/nodes.service';
-import { OrdersService } from '../../orders/application/orders.service';
+import {
+  MeasuredParcel,
+  OrdersService,
+} from '../../orders/application/orders.service';
 import { OrderTransitionResult } from '../domain/order-transition-result';
 import { OrderLookupService } from './order-lookup.service';
 import { ReceiverNotificationService } from './receiver-notification.service';
@@ -26,14 +29,20 @@ export class ConfirmDropOffService {
   async confirm(
     orderId: string,
     operatorUserId: string,
+    input: { nodeId?: string; measured?: MeasuredParcel } = {},
   ): Promise<OrderTransitionResult> {
-    // Ownership check first, outside the transaction — a wrong-Node request
-    // should 404 before it ever touches the idempotency table or attempts a
-    // transition.
-    await this.orderLookupService.assertOriginNodeOwnership(
+    // Which Node is receiving it, outside the transaction: a wrong-Node
+    // request 404s before touching the idempotency table. A merchant
+    // parcel brought to another Node is re-homed there (plan E4).
+    const intakeNode = await this.orderLookupService.resolveDropOffNode(
       orderId,
       operatorUserId,
+      input.nodeId,
     );
+    const measured =
+      input.measured && Object.keys(input.measured).length > 0
+        ? input.measured
+        : null;
 
     const { result, alreadyProcessed } = await this.dataSource.transaction(
       (manager) =>
@@ -45,6 +54,10 @@ export class ConfirmDropOffService {
             const order = await this.ordersService.markReceivedAtOrigin(
               orderId,
               manager,
+              {
+                ...(intakeNode.rebind && { originNodeId: intakeNode.nodeId }),
+                measured,
+              },
             );
             // Consumer orders reserved their origin slot at checkout.
             // Merchant parcels take one now and are never refused for

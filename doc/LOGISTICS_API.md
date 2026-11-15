@@ -776,8 +776,18 @@ Show `parcel.handling` as warning chips (Fragile, Keep upright, …) on every co
 
 ### 5.4 Drop-off — `POST /handoffs/orders/:id/drop-off`
 
-No body. Safe to repeat. Response `200` — an `OrderTransition`, the short shape every
-action endpoint returns:
+The body is optional (send nothing, or `{}`). Safe to repeat.
+
+```json
+{ "nodeId": "…", "measured": { "weightKg": 2.4, "lengthCm": 40, "widthCm": 30, "heightCm": 20, "size": "medium" } }
+```
+
+| Field | When |
+|---|---|
+| `nodeId` | Only for a merchant parcel booked for another Node (`droppingOffElsewhere` on the scan) when the staff member works at several Nodes: which of theirs is receiving it |
+| `measured` | Optional, any subset. `weightKg` 0.1–1000; `lengthCm`/`widthCm`/`heightCm` 1–500, all three or none; `size` `small`·`medium`·`large`·`extra_large`. Ask staff to weigh merchant parcels when they can: the merchant is charged on what they measure |
+
+Response `200` — an `OrderTransition`, the short shape every action endpoint returns:
 
 ```json
 {
@@ -793,11 +803,22 @@ action endpoint returns:
 Show *"Put it on shelf **10**"*. The courier is booked in the background; the order moves
 to `rider_assigned` (`nextAction: hand_to_courier` or `hand_to_rider`) once someone accepts.
 
-**Merchant parcels** (businesses shipping to their buyers) use exactly the same scan and
-drop-off; nothing changes on screen. Unlike a consumer's, a merchant parcel takes its
-shelf space at drop-off rather than at booking, and is **never refused for space**: the
-Node may go over capacity (it just stops being offered to new buyers until it frees up).
-It must be dropped at the Node the merchant declared; dropping elsewhere arrives later.
+**Merchant parcels** (businesses shipping to their buyers) use the same scan and drop-off.
+Unlike a consumer's, a merchant parcel takes its shelf space at drop-off rather than at
+booking, and is **never refused for space**: the Node may go over capacity (it just stops
+being offered to new buyers until it frees up).
+
+**Brought to the wrong Node?** A merchant parcel not yet dropped off can be received at
+**any** Node. The scan then answers `droppingOffElsewhere: true`, `myRole: "origin"` and
+`nextAction: "confirm_drop_off"`, with `originNodeName` still showing the Node it was
+booked for. Show *"Booked for {originNodeName}. You're receiving it here."* and drop it off
+as usual: your Node becomes its origin and the merchant is re-priced. Consumer parcels still
+only work at their own origin.
+
+| Error | Show |
+|---|---|
+| `422 DROP_OFF_NODE_REQUIRED` | You work at several Nodes: ask which one is receiving it and resend with `nodeId` |
+| `422 DROP_OFF_AT_DESTINATION` | "This parcel is for a buyer at this Node, so it can't be dropped off here. Ask the sender to use another Node." |
 
 #### Refuse at drop-off — `POST /handoffs/orders/:id/refuse`
 
