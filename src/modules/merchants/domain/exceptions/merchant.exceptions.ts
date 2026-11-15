@@ -559,3 +559,23 @@ export class InvalidDiscountTiersException extends BusinessException {
     );
   }
 }
+
+export class InvalidStatementMonthException extends BusinessException {
+  readonly errorCode = 'INVALID_STATEMENT_MONTH';
+  readonly httpStatus = 422;
+
+  constructor(month: string) {
+    super(
+      `"${month}" isn't a month we can produce: use YYYY-MM, not in the future`,
+    );
+  }
+}
+
+export class InvoiceNotAvailableException extends BusinessException {
+  readonly errorCode = 'INVOICE_NOT_AVAILABLE';
+  readonly httpStatus = 409;
+
+  constructor(message: string) {
+    super(message);
+  }
+}

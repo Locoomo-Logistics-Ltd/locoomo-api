@@ -994,8 +994,9 @@ don't handle and still respond 2xx.
   `source` is `negotiated` when your account manager set a rate (then `nextTier` is
   `null`). Locoomo may cap the discount on very cheap routes.
 - **VAT** is included in the price and shown in the fee breakdown.
-- **Documents.** A monthly statement and tax invoice
-  (`GET /invoices/{yyyy-mm}`, PDF/CSV), and a receipt for every top-up.
+- **Documents.** A monthly statement (`GET /statements/{yyyy-mm}`), a monthly tax invoice
+  (`GET /invoices/{yyyy-mm}`), both PDF or CSV (§14.2), and an emailed receipt for every
+  top-up.
 - **Low balance.** Set an alert line in the dashboard (*Wallet › Settings*). When your
   available balance drops below it you get `wallet.low_balance` and an email (once; it
   re-arms after you're back above it). `GET /wallet` shows it as
@@ -1090,6 +1091,39 @@ before one is opened (and always in test mode):
 balance back to ₦1,000,000 and returns the wallet. Holds for shipments not yet dropped off
 stay. Live mode → `403 TEST_MODE_ONLY`.
 
+### 14.2 Statements and tax invoices
+
+Scope `wallet:read` (dashboard: `wallet.manage`). Months are **Lagos calendar months**,
+written `YYYY-MM`. Add `?format=csv` for a spreadsheet; the default is `pdf`. Both come
+back as file downloads (`Content-Disposition: attachment`), not JSON.
+
+**`GET /statements/{yyyy-mm}`**: the wallet for the key's mode. Opening balance, every
+line in the month (date, type, description, your `reference`, `trackingCode`, amount,
+balance after), closing balance. The current month works too and reads "to date". The PDF
+lists up to 500 lines and points you to the CSV for the rest. CSV columns:
+
+```
+date,type,description,reference,tracking_code,amount_ngn,balance_after_ngn
+```
+
+Amounts in the CSV are plain naira with two decimals (`-1075.00`). The first and last rows
+are `opening_balance` and `closing_balance`.
+
+**`GET /invoices/{yyyy-mm}`**: the tax invoice for the delivery fees charged in a
+**finished** month, live mode only. Numbered `LCM-INV-YYYYMM-XXXXXXXX` (the same number
+every time you download it), dated the last day of the month. It bills:
+
+- *Parcel delivery to Locoomo Nodes*: the fees charged when parcels were received, with
+  the number of parcels.
+- *Re-pricing after measuring at drop-off*: the net of extra charges and refunds.
+
+Prices include VAT. When Locoomo charges VAT, the invoice shows the 7.5% included in the
+total; otherwise it says VAT is not charged. Top-ups and adjustments aren't billed (the
+top-up receipt covers those).
+
+Errors: `422 INVALID_STATEMENT_MONTH` (not `YYYY-MM`, or in the future),
+`409 INVOICE_NOT_AVAILABLE` (test mode, or the month hasn't ended).
+
 ---
 
 ## 15. Claims (lost or damaged parcels)
@@ -1140,6 +1174,8 @@ stay. Live mode → `403 TEST_MODE_ONLY`.
 | 409 | `WEBHOOK_ENDPOINT_LIMIT_REACHED` | 5 endpoints per mode |
 | 422 | `REPLAY_WINDOW_EXCEEDED` | Replays reach back 30 days at most |
 | 422 | `CLAIM_WINDOW_CLOSED` | More than 30 days |
+| 422 | `INVALID_STATEMENT_MONTH` | Use `YYYY-MM`, not in the future |
+| 409 | `INVOICE_NOT_AVAILABLE` | Invoices are live-only, for months that have ended |
 | 429 | `RATE_LIMITED` | Back off; honour `Retry-After` |
 | 429 | `DAILY_LIMIT_REACHED` | Resets at midnight Lagos time; ask to raise it |
 | 500 | `INTERNAL_ERROR` | Retry with the same `Idempotency-Key`; contact support with the `correlationId` if it persists |
@@ -1189,6 +1225,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Statements and tax invoices** (§14.2): `GET /statements/{yyyy-mm}` (either mode, current month to date) and `GET /invoices/{yyyy-mm}` (live, finished months), as PDF or CSV |
 | 2026-11-15 | **Volume discounts and low-balance alerts** (§14): your discount is applied to quotes and shipments, `GET /pricing` explains it, and `wallet.low_balance` fires when available balance drops below the line you set in the dashboard. `GET /wallet` adds `lowBalanceThresholdKobo` |
 | 2026-11-15 | **Shipment imports** (§7.3): up to 10,000 shipments from JSON or a CSV file, created in the background with per-row results (`GET /shipment-imports/{id}/rows`) and a CSV template |
 | 2026-11-15 | **Labels** (§9): `GET /shipments/{id}/label` and `POST /shipments/labels` (up to 100 in one PDF, A6 or four-up A4), with Code 128 and QR barcodes. Replaces the planned `POST /label-batches` |

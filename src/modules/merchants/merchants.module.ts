@@ -56,6 +56,12 @@ import { ShipmentImportEntity } from './infrastructure/entities/shipment-import.
 import { ShipmentImportRowEntity } from './infrastructure/entities/shipment-import-row.entity';
 import { ShipmentImportsController } from './interface/shipment-imports.controller';
 import { LabelRenderer } from './infrastructure/label-renderer';
+import { DocumentRenderer } from './infrastructure/document-renderer';
+import { MerchantDocumentsService } from './application/merchant-documents.service';
+import {
+  AdminMerchantDocumentsController,
+  MerchantDocumentsController,
+} from './interface/merchant-documents.controller';
 import { ApiKeyEntity } from './infrastructure/entities/api-key.entity';
 import { MerchantApiRequestEntity } from './infrastructure/entities/merchant-api-request.entity';
 import { MerchantBankAccountEntity } from './infrastructure/entities/merchant-bank-account.entity';
@@ -162,6 +168,8 @@ import { WebhooksController } from './interface/webhooks.controller';
     WalletController,
     TestWalletController,
     AdminMerchantWalletController,
+    MerchantDocumentsController,
+    AdminMerchantDocumentsController,
     ShipmentImportsController,
     MerchantPricingController,
     AdminMerchantPricingController,
@@ -194,6 +202,8 @@ import { WebhooksController } from './interface/webhooks.controller';
     LiveShipmentSyncService,
     ShipmentExpiryService,
     LabelRenderer,
+    DocumentRenderer,
+    MerchantDocumentsService,
     ShipmentLabelService,
     ShipmentImportService,
     MerchantPricingService,

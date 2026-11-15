@@ -3526,6 +3526,17 @@ reference, from the webhook, the status check or the worker's 15-minute sweep (w
 fails declined cards and marks card payments abandoned after a day; a late success still
 credits).
 
+### Statements and invoices: `GET /api/v1/merchant/statements/{yyyy-mm}` · `…/invoices/{yyyy-mm}`
+
+`?format=pdf|csv` (default `pdf`); scope `wallet:read` / `wallet.manage`. File downloads,
+no envelope. Statement: either mode, any month up to the current one (Lagos), opening and
+closing balance computed from the ledger. Invoice: live mode, finished months, number
+`LCM-INV-YYYYMM-<first 8 hex of the merchant id>`, bills `shipment_charge` and
+`shipment_adjustment` lines; VAT is itemised as included when `VAT_ENABLED`. Seller block
+from `INVOICE_SELLER_NAME` (default "Locoomo"), `INVOICE_SELLER_ADDRESS` (lines split on
+`|`) and `INVOICE_SELLER_TIN`. Errors `422 INVALID_STATEMENT_MONTH`,
+`409 INVOICE_NOT_AVAILABLE`.
+
 ## Admin: orders
 
 `POST /api/v1/admin/orders/:id/exception` (`ops`): record a parcel lost or damaged in our
@@ -3734,6 +3745,10 @@ The tier comes from last calendar month's (Lagos) shipments in that mode that en
 revenue share and capped at it (plan E7): orders carry `discountKobo`, rider and Node
 shares are computed on the undiscounted fee, and the platform entry is reduced by the
 discount. Changes apply within 10 minutes (cached per merchant).
+
+**Documents.** `GET /api/v1/admin/merchants/:id/statements/{yyyy-mm}?mode=&format=` and
+`GET /api/v1/admin/merchants/:id/invoices/{yyyy-mm}?format=` (`finance`, `ops`, `support`)
+give the same files the merchant downloads.
 
 **Reconciliation.** Every night a worker checks each wallet's cached balance against its
 ledger and its held amount against its active holds. Any mismatch is emailed to `finance`

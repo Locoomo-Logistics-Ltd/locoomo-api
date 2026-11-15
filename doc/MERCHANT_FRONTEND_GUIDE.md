@@ -1719,8 +1719,8 @@ Owner only (`ownership`). A "Danger zone" card at the bottom of Settings.
 
 ## 15. Wallet
 
-✅ All of it is ready: balance, statement, holds, card top-ups, the bank-transfer account and
-the test reset.
+✅ All of it is ready: balance, statement, holds, card top-ups, the bank-transfer account,
+monthly statements and tax invoices, and the test reset.
 
 **How the money works**, for help text:
 
@@ -1900,6 +1900,25 @@ the live wallet automatically, usually within minutes, with no fee deducted.
 transfer"), amount paid, fee, credited, status badge, reference (copy button). Every
 successful top-up also emails a receipt to the owner, admins and finance members.
 
+### 15.8 Monthly statements and tax invoices
+
+A "Documents" tab on the Wallet page (`wallet.manage`): a month picker (from the month the
+merchant was approved to now) and two download buttons per month. Both endpoints return a
+**file**, not the JSON envelope, so fetch them as a blob (with the session cookie and
+`Locoomo-Mode`) and save it with the name from `Content-Disposition`.
+
+| Button | Call | Notes |
+|---|---|---|
+| "Statement (PDF)" / "CSV" | `GET /merchant/statements/{yyyy-mm}?format=pdf\|csv` | Either mode. The current month says "to date". The PDF stops at 500 lines; for more, offer the CSV |
+| "Tax invoice (PDF)" / "CSV" | `GET /merchant/invoices/{yyyy-mm}?format=pdf\|csv` | **Live only, finished months only**: hide in Test mode and for the current month |
+
+Months are Lagos calendar months (`2026-11`). Errors:
+
+| Code | UI |
+|---|---|
+| `422 INVALID_STATEMENT_MONTH` | Shouldn't happen from the picker; "Choose a month up to this one." |
+| `409 INVOICE_NOT_AVAILABLE` | "Invoices are available in live mode once the month has ended." |
+
 ---
 
 ## 16. Coming next 🛠
@@ -1909,7 +1928,6 @@ phase; we'll update this section.
 
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
-| **Invoices** | `GET /merchant/invoices/{yyyy-mm}` (PDF/CSV) | Monthly statement and tax invoice |
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
 | **Returns to collect** | `GET /merchant/returns?state=ready`, `POST /merchant/return-batches { nodeId, shipmentIds }` → collection code | `returns.collect`. Show the batch code big, like a boarding pass. 10 working days free storage |
 | **Claims** | `POST /merchant/claims { shipmentId, type, description, evidence }` | Within 30 days. Types: `lost`, `damaged`, `missing_item` |
@@ -2154,6 +2172,8 @@ A "Wallet" tab on the merchant page, with a Test / Live switch (`?mode=`, defaul
 | `GET /admin/merchants/:id/wallet/entries?mode=&type=&from=&to=&limit=&cursor=` | `CursorPage<WalletEntry>` (§15.2) |
 | `GET /admin/merchants/:id/wallet/holds?mode=&status=&limit=&cursor=` | `CursorPage<WalletHold>` (§15.3) |
 | `GET /admin/merchants/:id/wallet/top-ups?mode=&limit=&cursor=` | `CursorPage<TopUp>` (§15.7) |
+| `GET /admin/merchants/:id/statements/{yyyy-mm}?mode=&format=pdf\|csv` | Statement file (§15.8) |
+| `GET /admin/merchants/:id/invoices/{yyyy-mm}?format=pdf\|csv` | Live tax invoice file (§15.8), finished months |
 
 **Adjust balance** (`finance` only; hide the button otherwise). A dialog:
 
@@ -2770,6 +2790,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 422 | `TOP_UPS_UNAVAILABLE` | Test top-up where unsupported: point to Reset (§15.4) |
 | 422 / 409 | `CONTACT_DETAILS_REQUIRED` / `FUNDING_ACCOUNT_CONFLICT` | Bank-transfer account: §15.6 |
 | 403 | `LIVE_MODE_ONLY` | Hide live-only controls in Test mode |
+| 422 / 409 | `INVALID_STATEMENT_MONTH` / `INVOICE_NOT_AVAILABLE` | Documents: §15.8 |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | "Live shipments aren't available yet. Switch to Test." |
 | 403 | `SHIPMENT_CREATION_PAUSED` | "New live shipments are paused on your account." |
 | 403 | `TEST_MODE_ONLY` | Hide the simulator on live shipments |
@@ -2866,6 +2887,7 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | POST | `/merchant/test/wallet/reset` | `shipments.write` | Test mode only |
 | PATCH | `/merchant/wallet/settings` | `wallet.manage` | Mode; dashboard only |
 | GET | `/merchant/pricing` | any member | Mode |
+| GET | `/merchant/statements/:month`, `/merchant/invoices/:month` | `wallet.manage` | Mode; file download. Invoices live only |
 | POST | `/merchant/wallet/top-ups` | `wallet.manage` | Mode; dashboard only; `Idempotency-Key` |
 | GET | `/merchant/wallet/top-ups`, `/merchant/wallet/top-ups/:id` | `wallet.manage` | Mode |
 | GET | `/merchant/wallet/funding-account` | any member | Live (null in test) |
@@ -2888,6 +2910,7 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | DELETE | `/admin/public-holidays/:date` | `ops` |
 | POST | `/admin/orders/:id/exception` | `ops` |
 | GET | `/admin/merchants/:id/wallet`, `…/wallet/entries`, `…/wallet/holds`, `…/wallet/top-ups` | `finance`, `ops`, `support` |
+| GET | `/admin/merchants/:id/statements/:month`, `…/invoices/:month` | `finance`, `ops`, `support` |
 | POST | `/admin/merchants/:id/wallet/adjustments` | `finance` (runs after a second `finance` admin approves) |
 | GET | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance`, `ops`, `support` |
 | PUT | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance` |

@@ -57,6 +57,13 @@ export const envSchema = z
     // Bank for merchant Dedicated Virtual Accounts. Default: `test-bank`
     // with a test key, `wema-bank` with a live key.
     PAYSTACK_DVA_PREFERRED_BANK: optionalString(),
+    // Seller details printed on merchant tax invoices (M4e2). Set the
+    // registered company name, address and TIN in production; when unset
+    // the invoice shows only INVOICE_SELLER_NAME (default "Locoomo").
+    // Separate address lines with "|".
+    INVOICE_SELLER_NAME: optionalString(),
+    INVOICE_SELLER_ADDRESS: optionalString(),
+    INVOICE_SELLER_TIN: optionalString(),
     // Google Sign-In (identity/application/google-auth.service.ts) — the
     // OAuth client ID registered for this app, used as the `audience` when
     // verifying a Google ID token. Public value, not a secret; no client

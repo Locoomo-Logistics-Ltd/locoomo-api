@@ -14,6 +14,8 @@ import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
 import { ApiRateLimiter } from '../../src/modules/merchants/application/api-rate-limiter';
 import { WalletReconciliationService } from '../../src/modules/merchants/application/wallet-reconciliation.service';
+import { WalletService } from '../../src/modules/merchants/application/wallet.service';
+import { lagosMonth } from '../../src/modules/merchants/domain/statement';
 import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
 
 const PASSWORD = 'Correct-Horse-Battery-1';
@@ -723,6 +725,160 @@ describe('Merchant wallet (e2e)', () => {
           [merchantId],
         );
       }
+    });
+  });
+
+  // After reconciliation: the seeded live lines net to zero, so the ledger
+  // still sums to the balance either way.
+  describe('statements and tax invoices (M4e2)', () => {
+    const binary = (req: request.Test) =>
+      req.buffer(true).parse((res, done) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => done(null, Buffer.concat(chunks)));
+      });
+    const now = new Date();
+    const thisMonth = lagosMonth(now);
+    const [year, month] = thisMonth.split('-').map(Number);
+    const lastMonth =
+      month === 1
+        ? `${year - 1}-12`
+        : `${year}-${String(month - 1).padStart(2, '0')}`;
+    const session = (url: string, mode: 'test' | 'live') =>
+      http()
+        .get(`/api/v1/merchant${url}`)
+        .set('Cookie', ownerCookies)
+        .set('Locoomo-Mode', mode);
+
+    beforeAll(async () => {
+      const liveWallet = await dataSource.transaction((manager) =>
+        app.get(WalletService).walletFor(manager, merchantId, 'live', true),
+      );
+      const at = new Date(`${lastMonth}-10T12:00:00+01:00`);
+      const lines: [string, number, string][] = [
+        ['top_up', 105_000, 'Card top-up'],
+        ['shipment_charge', -107_500, 'Shipment LCM-TEST'],
+        ['shipment_adjustment', 2_500, 'Re-priced after measuring'],
+      ];
+      let balance = 0;
+      for (const [index, [type, amount, description]] of lines.entries()) {
+        balance += amount;
+        await dataSource.query(
+          `INSERT INTO wallet_entries ("walletId", "merchantId", mode, type, "amountKobo", "balanceAfterKobo", description, "createdAt")
+           VALUES ($1, $2, 'live', $3, $4, $5, $6, $7)`,
+          [
+            liveWallet.id,
+            merchantId,
+            type,
+            amount,
+            balance,
+            description,
+            new Date(at.getTime() + index * 60_000),
+          ],
+        );
+      }
+    });
+
+    it('gives a test-mode statement as CSV, closing on the balance', async () => {
+      const response = await api(key)
+        .get(`/statements/${thisMonth}?format=csv`)
+        .expect(200);
+      expect(response.headers['content-type']).toContain('text/csv');
+      expect(response.headers['content-disposition']).toBe(
+        `attachment; filename="locoomo-statement-${thisMonth}-test.csv"`,
+      );
+      const rows = response.text.trim().split('\r\n');
+      expect(rows[0]).toBe(
+        'date,type,description,reference,tracking_code,amount_ngn,balance_after_ngn',
+      );
+      expect(rows[1]).toMatch(/^,opening_balance,Opening balance,,,,/);
+      const { balanceKobo } = await wallet();
+      const naira = `${Math.floor(balanceKobo / 100)}.${String(balanceKobo % 100).padStart(2, '0')}`;
+      expect(rows[rows.length - 1]).toBe(
+        `,closing_balance,Closing balance,,,,${naira}`,
+      );
+      expect(rows.length).toBeGreaterThan(3);
+    });
+
+    it('gives the statement as a PDF', async () => {
+      const response = await binary(
+        api(key).get(`/statements/${thisMonth}`),
+      ).expect(200);
+      expect(response.headers['content-type']).toBe('application/pdf');
+      expect((response.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+    });
+
+    it('refuses bad and future months, and keys without wallet:read', async () => {
+      expect(code(await api(key).get('/statements/2026-13').expect(422))).toBe(
+        'INVALID_STATEMENT_MONTH',
+      );
+      expect(
+        code(
+          await api(key)
+            .get(`/statements/${year + 1}-01`)
+            .expect(422),
+        ),
+      ).toBe('INVALID_STATEMENT_MONTH');
+      expect(
+        code(
+          await api(shipmentsOnlyKey)
+            .get(`/statements/${thisMonth}`)
+            .expect(403),
+        ),
+      ).toBe('INSUFFICIENT_SCOPE');
+    });
+
+    it('issues invoices for finished live months only', async () => {
+      expect(
+        code(await api(key).get(`/invoices/${lastMonth}`).expect(409)),
+      ).toBe('INVOICE_NOT_AVAILABLE');
+      expect(
+        code(await session(`/invoices/${thisMonth}`, 'live').expect(409)),
+      ).toBe('INVOICE_NOT_AVAILABLE');
+
+      const csv = await session(
+        `/invoices/${lastMonth}?format=csv`,
+        'live',
+      ).expect(200);
+      const number = `LCM-INV-${lastMonth.replace('-', '')}-${merchantId.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
+      expect(csv.text.trim().split('\r\n')).toEqual([
+        'invoice_number,period,description,quantity,amount_ngn',
+        `${number},${lastMonth},Parcel delivery to Locoomo Nodes,1,1075.00`,
+        `${number},${lastMonth},Re-pricing after measuring at drop-off,1,-25.00`,
+        `${number},${lastMonth},Total,,1050.00`,
+      ]);
+
+      const pdf = await binary(
+        session(`/invoices/${lastMonth}`, 'live'),
+      ).expect(200);
+      expect(pdf.headers['content-disposition']).toBe(
+        `attachment; filename="${number}.pdf"`,
+      );
+      expect((pdf.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+    });
+
+    it('lists the live month with its opening and closing balance', async () => {
+      const csv = await session(
+        `/statements/${lastMonth}?format=csv`,
+        'live',
+      ).expect(200);
+      const rows = csv.text.trim().split('\r\n');
+      expect(rows).toHaveLength(6);
+      expect(rows[2]).toMatch(/,top_up,Card top-up,,,1050\.00,1050\.00$/);
+      expect(rows[5]).toBe(',closing_balance,Closing balance,,,,0.00');
+    });
+
+    it('lets finance, ops and support download them for any merchant', async () => {
+      const admin = `/api/v1/admin/merchants/${merchantId}`;
+      const statement = await http()
+        .get(`${admin}/statements/${lastMonth}?mode=live&format=csv`)
+        .set('Cookie', ops)
+        .expect(200);
+      expect(statement.text).toContain('closing_balance');
+      const invoice = await binary(
+        http().get(`${admin}/invoices/${lastMonth}`).set('Cookie', finance),
+      ).expect(200);
+      expect((invoice.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
     });
   });
 });
