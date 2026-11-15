@@ -545,6 +545,163 @@ describe('Merchant wallet (e2e)', () => {
     });
   });
 
+  describe('alerts and pricing (M4e)', () => {
+    const lowBalanceEvents = async (): Promise<number> => {
+      const [{ count }] = await dataSource.query<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM webhook_events
+          WHERE "merchantId" = $1 AND type = 'wallet.low_balance' AND mode = 'test'`,
+        [merchantId],
+      );
+      return count;
+    };
+    const setThreshold = (value: number | null) =>
+      http()
+        .patch('/api/v1/merchant/wallet/settings')
+        .set('Cookie', ownerCookies)
+        .set('X-Locoomo-Client', 'web')
+        .set('Locoomo-Mode', 'test')
+        .send({ lowBalanceThresholdKobo: value });
+
+    it('alerts once when available drops below the merchant’s line, and re-arms', async () => {
+      await api(key).post('/test/wallet/reset').expect(200);
+      const { availableKobo } = await wallet();
+      const before = await lowBalanceEvents();
+
+      // Just under what's available: the next shipment crosses it.
+      const set = data<{ lowBalanceThresholdKobo: number }>(
+        await setThreshold(availableKobo - 1).expect(200),
+      );
+      expect(set.lowBalanceThresholdKobo).toBe(availableKobo - 1);
+      expect(await lowBalanceEvents()).toBe(before);
+
+      const first = await create();
+      expect(await lowBalanceEvents()).toBe(before + 1);
+      const second = await create();
+      expect(await lowBalanceEvents()).toBe(before + 1);
+
+      const [event] = await dataSource.query<{ body: string }[]>(
+        `SELECT body FROM webhook_events WHERE "merchantId" = $1 AND type = 'wallet.low_balance'
+          ORDER BY "createdAt" DESC LIMIT 1`,
+        [merchantId],
+      );
+      expect(JSON.parse(event.body)).toMatchObject({
+        data: { thresholdKobo: availableKobo - 1 },
+      });
+
+      // Back above the line (cancelled holds), then below again: alerts again.
+      await api(key).post(`/shipments/${first.id}/cancel`).expect(200);
+      await api(key).post(`/shipments/${second.id}/cancel`).expect(200);
+      const third = await create();
+      expect(await lowBalanceEvents()).toBe(before + 2);
+      await api(key).post(`/shipments/${third.id}/cancel`).expect(200);
+
+      await setThreshold(null).expect(200);
+      expect((await wallet()) as unknown).toMatchObject({
+        lowBalanceThresholdKobo: null,
+      });
+    });
+
+    it('tells finance when a live wallet goes below its floor', async () => {
+      await dataSource.query(
+        `UPDATE merchants SET tier = 'business', "limitOverrides" = '{"negativeBalanceFloorKobo": -100}'::jsonb WHERE id = $1`,
+        [merchantId],
+      );
+      const requested = data<{ approvalId: string }>(
+        await http()
+          .post(`/api/v1/admin/merchants/${merchantId}/wallet/adjustments`)
+          .set('Cookie', finance)
+          .send({
+            mode: 'live',
+            amountKobo: -100_000_000,
+            reason: 'Floor test',
+          })
+          .expect(201),
+      );
+      await http()
+        .post(`/api/v1/admin/approvals/${requested.approvalId}/approve`)
+        .set('Cookie', financeChecker)
+        .send({})
+        .expect(200);
+      const alerts = async (): Promise<number> => {
+        const [{ count }] = await dataSource.query<{ count: number }[]>(
+          `SELECT count(*)::int AS count FROM outbox_events
+            WHERE "eventType" = 'email' AND payload ->> 'subject' = $1`,
+          ['Wallet below floor: Wallet Stores'],
+        );
+        return count;
+      };
+      const sent = await alerts();
+      expect(sent).toBeGreaterThan(0);
+      // Still below: no second round of emails.
+      const again = data<{ approvalId: string }>(
+        await http()
+          .post(`/api/v1/admin/merchants/${merchantId}/wallet/adjustments`)
+          .set('Cookie', finance)
+          .send({ mode: 'live', amountKobo: -100, reason: 'Floor test again' })
+          .expect(201),
+      );
+      await http()
+        .post(`/api/v1/admin/approvals/${again.approvalId}/approve`)
+        .set('Cookie', financeChecker)
+        .send({})
+        .expect(200);
+      expect(await alerts()).toBe(sent);
+      await dataSource.query(
+        `UPDATE merchants SET "limitOverrides" = NULL WHERE id = $1`,
+        [merchantId],
+      );
+    });
+
+    it('lets finance set tiers and a negotiated discount', async () => {
+      const initial = data<{
+        tiers: { minShipments: number; percent: number }[];
+      }>(
+        await http()
+          .get('/api/v1/admin/pricing/volume-tiers')
+          .set('Cookie', ops)
+          .expect(200),
+      );
+      expect(initial.tiers[0]).toEqual({ minShipments: 0, percent: 0 });
+      expect(
+        code(
+          await http()
+            .put('/api/v1/admin/pricing/volume-tiers')
+            .set('Cookie', finance)
+            .send({ tiers: [{ minShipments: 10, percent: 5 }] })
+            .expect(422),
+        ),
+      ).toBe('INVALID_DISCOUNT_TIERS');
+      await http()
+        .put('/api/v1/admin/pricing/volume-tiers')
+        .set('Cookie', ops)
+        .send({ tiers: initial.tiers })
+        .expect(403);
+
+      expect(
+        data<{ percent: number; source: string }>(
+          await api(key).get('/pricing').expect(200),
+        ),
+      ).toMatchObject({ percent: 0, source: 'tier' });
+      const set = data<{ percent: number; source: string }>(
+        await http()
+          .put(`/api/v1/admin/merchants/${merchantId}/pricing`)
+          .set('Cookie', finance)
+          .send({ discountPercent: 7.5 })
+          .expect(200),
+      );
+      expect(set).toMatchObject({ percent: 7.5, source: 'negotiated' });
+      expect(
+        data<{ percent: number }>(await api(key).get('/pricing').expect(200))
+          .percent,
+      ).toBe(7.5);
+      await http()
+        .put(`/api/v1/admin/merchants/${merchantId}/pricing`)
+        .set('Cookie', finance)
+        .send({ discountPercent: null })
+        .expect(200);
+    });
+  });
+
   describe('reconciliation', () => {
     it('finds no drift after real activity, and reports a tampered wallet', async () => {
       const reconciliation = app.get(WalletReconciliationService);

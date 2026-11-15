@@ -65,6 +65,8 @@ export interface CreateMerchantOrderFields {
   vehicleClass: string | null;
   amountKobo: number;
   destinationFeeKobo: number;
+  // Volume discount already off amountKobo (plan E7).
+  discountKobo: number;
 }
 
 // What the counter measured at drop-off (any subset).
@@ -135,6 +137,7 @@ export class OrdersService {
         | 'vehicleClass'
         | 'amountKobo'
         | 'destinationFeeKobo'
+        | 'discountKobo'
       >
     >,
     manager: EntityManager,
@@ -451,19 +454,21 @@ export class OrdersService {
     price: {
       amountKobo: number;
       destinationFeeKobo: number;
+      discountKobo: number;
       vehicleClass: string | null;
     },
     manager: EntityManager,
   ): Promise<void> {
     await manager.query(
       `UPDATE orders SET "amountKobo" = $2, "destinationFeeKobo" = $3,
-              "vehicleClass" = $4, "updatedAt" = now()
-        WHERE id = $1 AND status = $5`,
+              "vehicleClass" = $4, "discountKobo" = $5, "updatedAt" = now()
+        WHERE id = $1 AND status = $6`,
       [
         orderId,
         price.amountKobo,
         price.destinationFeeKobo,
         price.vehicleClass,
+        price.discountKobo,
         OrderStatus.PARCEL_RECEIVED_AT_ORIGIN,
       ],
     );
@@ -1038,6 +1043,7 @@ export class OrdersService {
             destinationFeeKobo: fields.destinationFeeKobo,
             notifyReceiver:
               'notifyReceiver' in fields ? fields.notifyReceiver : 'locoomo',
+            discountKobo: 'discountKobo' in fields ? fields.discountKobo : 0,
             status: OrderStatus.AWAITING_DROP_OFF,
             trackingCode: generateTrackingCode(),
           }),

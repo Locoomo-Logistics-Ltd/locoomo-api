@@ -1879,6 +1879,20 @@ the live wallet automatically, usually within minutes, with no fee deducted.
 | `403 MERCHANT_NOT_APPROVED` | "Your account number is available once you're approved." |
 | `403 LIVE_MODE_ONLY` | Not reachable if you hide the card in Test mode |
 
+### 15.6a Low-balance alert and discount
+
+- **Alert line** (`wallet.manage`): a "Warn me when available balance is below ₦…" field
+  on the Wallet page. **`PATCH /merchant/wallet/settings`** `{ "lowBalanceThresholdKobo":
+  500000 }` (or `null` to turn it off) → the `Wallet`, now with `lowBalanceThresholdKobo`.
+  The team gets one email when available drops below it (and again only after it's been
+  back above). Show the current line from `GET /merchant/wallet`.
+- **Your discount** (any member): **`GET /merchant/pricing`** →
+  `{ percent, source, basis: { month, shipments }, tier, nextTier }`. Show a card:
+  "Volume discount: **{percent}%** this month ({basis.shipments} shipments in {month})."
+  With `nextTier`: "Ship {nextTier.minShipments − basis.shipments} more this month to get
+  {nextTier.percent}% next month." With `source: "negotiated"`: "Your negotiated rate."
+  Quotes and shipments already include it (`breakdown.volumeDiscountKobo`, negative).
+
 ### 15.7 Top-up history
 
 **`GET /merchant/wallet/top-ups?limit=&cursor=`** (`wallet.manage`) →
@@ -1895,7 +1909,6 @@ phase; we'll update this section.
 
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
-| **Low-balance alert** | Threshold setting on the Wallet page | `wallet.manage`. Emails and `wallet.low_balance` when available balance drops below it |
 | **Invoices** | `GET /merchant/invoices/{yyyy-mm}` (PDF/CSV) | Monthly statement and tax invoice |
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
 | **Returns to collect** | `GET /merchant/returns?state=ready`, `POST /merchant/return-batches { nodeId, shipmentIds }` → collection code | `returns.collect`. Show the batch code big, like a boarding pass. 10 working days free storage |
@@ -2162,6 +2175,18 @@ Approvals." It appears in the Approvals queue (§17.3). When a **different** `fi
 approves it, the money moves and the approval's `result` is
 `{ entryId, amountKobo, balanceAfterKobo }`. A debit may take the balance below zero; warn
 in the dialog when it would.
+
+### 18.6a Pricing ✅
+
+- **Volume tiers** (Settings › Pricing): `GET /admin/pricing/volume-tiers` shows the table;
+  `finance` can edit and save the whole set with `PUT /admin/pricing/volume-tiers`
+  `{ tiers: [{ minShipments, percent }] }` (first row 0 shipments; 0–50%;
+  `422 INVALID_DISCOUNT_TIERS` → "Tiers must start at 0 and have distinct thresholds").
+  Confirm: "New tiers apply to all merchants from now on."
+- **Merchant discount** (a "Pricing" card on the merchant page):
+  `GET /admin/merchants/:id/pricing` shows the live discount and how it was reached;
+  `finance` can set a negotiated rate with `PUT /admin/merchants/:id/pricing`
+  `{ discountPercent }` or clear it with `null`.
 
 ### 18.7 Coming 🛠
 
@@ -2548,7 +2573,15 @@ export interface Wallet {
   balanceKobo: number;                     // may be negative
   heldKobo: number;
   availableKobo: number;                   // balance − held
+  lowBalanceThresholdKobo: number | null;  // alert line, null = off
   updatedAt: string;
+}
+export interface MerchantDiscount {
+  percent: number;                         // 0–50, this month
+  source: 'tier' | 'negotiated';
+  basis: { month: string; shipments: number };   // last month, YYYY-MM
+  tier: { minShipments: number; percent: number };
+  nextTier: { minShipments: number; percent: number } | null;
 }
 export type WalletEntryType =
   | 'top_up' | 'shipment_charge' | 'shipment_adjustment' | 'adjustment'
@@ -2831,6 +2864,8 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | GET | `/merchant/wallet` | any member | Mode |
 | GET | `/merchant/wallet/entries`, `/merchant/wallet/holds` | `wallet.manage` | Mode |
 | POST | `/merchant/test/wallet/reset` | `shipments.write` | Test mode only |
+| PATCH | `/merchant/wallet/settings` | `wallet.manage` | Mode; dashboard only |
+| GET | `/merchant/pricing` | any member | Mode |
 | POST | `/merchant/wallet/top-ups` | `wallet.manage` | Mode; dashboard only; `Idempotency-Key` |
 | GET | `/merchant/wallet/top-ups`, `/merchant/wallet/top-ups/:id` | `wallet.manage` | Mode |
 | GET | `/merchant/wallet/funding-account` | any member | Live (null in test) |
@@ -2854,6 +2889,8 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | POST | `/admin/orders/:id/exception` | `ops` |
 | GET | `/admin/merchants/:id/wallet`, `…/wallet/entries`, `…/wallet/holds`, `…/wallet/top-ups` | `finance`, `ops`, `support` |
 | POST | `/admin/merchants/:id/wallet/adjustments` | `finance` (runs after a second `finance` admin approves) |
+| GET | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance`, `ops`, `support` |
+| PUT | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance` |
 
 ---
 

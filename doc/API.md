@@ -3715,6 +3715,26 @@ Nothing moves yet. A different `finance` (or `super`) admin approves it with
 A debit may take the balance below zero. Errors: `403 FORBIDDEN` (not `finance`),
 `404 NOT_FOUND` (unknown merchant), `400 VALIDATION_FAILED`.
 
+**Negative floor.** When a live wallet's balance goes below its tier's
+`negativeBalanceFloorKobo` (after re-pricing or an adjustment), `finance` admins are emailed
+once ("Wallet below floor: {merchant}"); it re-arms when the balance recovers. New
+shipments are already refused below zero.
+
+## Admin: volume discounts
+
+| Endpoint | Permission | |
+|---|---|---|
+| `GET /api/v1/admin/pricing/volume-tiers` | `finance`, `ops`, `support` | `{ "tiers": [{ "minShipments": 0, "percent": 0 }, …] }` |
+| `PUT /api/v1/admin/pricing/volume-tiers` | `finance` | Body `{ "tiers": [...] }`: must start at 0 shipments, distinct thresholds, 0–50%. Takes effect now; earlier sets are kept. `422 INVALID_DISCOUNT_TIERS` |
+| `GET /api/v1/admin/merchants/:id/pricing` | `finance`, `ops`, `support` | The merchant's live discount: `{ percent, source: "tier" \| "negotiated", basis: { month, shipments }, tier, nextTier }` |
+| `PUT /api/v1/admin/merchants/:id/pricing` | `finance` | `{ "discountPercent": 12.5 }` (0–50) sets a negotiated rate replacing the tier; `null` goes back to the tier. Audited |
+
+The tier comes from last calendar month's (Lagos) shipments in that mode that ended
+`collected`, `returned` or `return_ready`. Discounts are funded only from the platform's
+revenue share and capped at it (plan E7): orders carry `discountKobo`, rider and Node
+shares are computed on the undiscounted fee, and the platform entry is reduced by the
+discount. Changes apply within 10 minutes (cached per merchant).
+
 **Reconciliation.** Every night a worker checks each wallet's cached balance against its
 ledger and its held amount against its active holds. Any mismatch is emailed to `finance`
 admins and logged; nothing is corrected automatically.

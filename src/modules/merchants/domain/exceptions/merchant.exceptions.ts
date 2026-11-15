@@ -548,3 +548,14 @@ export class ImportsInProgressException extends BusinessException {
     this.details = { max };
   }
 }
+
+export class InvalidDiscountTiersException extends BusinessException {
+  readonly errorCode = 'INVALID_DISCOUNT_TIERS';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super(
+      'Tiers must start at 0 shipments, have distinct thresholds and discounts between 0 and 50%',
+    );
+  }
+}

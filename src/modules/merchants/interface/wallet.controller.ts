@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   ParseUUIDPipe,
   Post,
   Query,
@@ -24,6 +25,10 @@ import { IdempotencyInterceptor } from '../../../common/idempotency/idempotency.
 import type { CursorPage } from '../../../common/pagination/cursor';
 import { CursorQueryDto } from '../../../common/pagination/cursor-query.dto';
 import type { MerchantCaller } from '../application/merchant-state';
+import {
+  MerchantDiscount,
+  MerchantPricingService,
+} from '../application/merchant-pricing.service';
 import {
   FundingAccountView as FundingAccount,
   TopUpView as TopUp,
@@ -49,6 +54,8 @@ import { MerchantPermission } from '../domain/merchant-permissions';
 import {
   ListWalletEntriesQueryDto,
   ListWalletHoldsQueryDto,
+  WalletSettingsDto,
+  MerchantDiscountView,
   WalletEntryListView,
   WalletHoldListView,
   WalletView,
@@ -149,6 +156,20 @@ export class WalletController {
     return this.topUps.get(caller, id);
   }
 
+  /** The low-balance alert line (dashboard only). */
+  @Patch('settings')
+  @MerchantSessionApi(MerchantPermission.WALLET_MANAGE)
+  @ApiOkResponse({ type: WalletView })
+  settings(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+    @Body() dto: WalletSettingsDto,
+  ): Promise<Wallet> {
+    return this.wallet.setLowBalanceThreshold(
+      caller.merchantId,
+      caller.mode,
+      dto.lowBalanceThresholdKobo,
+    );
+  }
   /** The live wallet's bank-transfer account number, or null. */
   @Get('funding-account')
   @MerchantApi(ApiKeyScope.WALLET_READ, MerchantPermission.SHIPMENTS_READ)
@@ -200,5 +221,24 @@ export class TestWalletController {
       this.wallet.resetTestWallet(manager, caller.merchantId, caller.userId),
     );
     return walletView(wallet);
+  }
+}
+
+// The merchant's volume discount this month (MERCHANT_API.md §14).
+@ApiTags('Wallet')
+@ApiBearerAuth('apiKey')
+@Controller('merchant/pricing')
+@UseGuards(MerchantGuard)
+@RequireVerifiedEmail()
+export class MerchantPricingController {
+  constructor(private readonly pricing: MerchantPricingService) {}
+
+  @Get()
+  @MerchantApi(ApiKeyScope.SHIPMENTS_READ, MerchantPermission.SHIPMENTS_READ)
+  @ApiOkResponse({ type: MerchantDiscountView })
+  get(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+  ): Promise<MerchantDiscount> {
+    return this.pricing.discountFor(caller.merchantId, caller.mode);
   }
 }

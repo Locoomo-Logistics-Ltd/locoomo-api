@@ -45,6 +45,7 @@ export class CollectionCompletionService {
         riderId: order.riderId,
         originNodeId: order.originNodeId,
         destinationNodeId: order.destinationNodeId,
+        discountKobo: order.discountKobo,
       },
       manager,
     );

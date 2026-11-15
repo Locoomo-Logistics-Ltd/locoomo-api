@@ -1142,6 +1142,26 @@ Decisions:
 - **Row results are a separate paged endpoint** rather than inlined on the import (10,000
   rows don't belong in one response).
 
+### M4e1 Volume discounts, wallet alerts: done (2026-11-15)
+
+M4e ships as **M4e1** (this) → M4e2 statements and tax invoices.
+
+| Item | Where |
+|---|---|
+| `volume_discount_tier_sets` (versioned, seeded with F1 defaults), `merchants.discountPercentOverride`, `orders.discountKobo`, wallet `lowBalanceThresholdKobo` / `lowBalanceAlertedAt` / `floorAlertedAt`. Migration 372 | entities |
+| Discount = negotiated override, else the tier for last Lagos month's shipments ended collected/returned/return_ready (per mode, cached 10 min); applied in quotes, creation, edits and drop-off re-pricing; capped at the platform share of delivery revenue | `merchant-pricing.service.ts`, `domain/volume-discount.ts`, `merchant-quote.ts` |
+| **E7**: revenue split computes rider/Node on `amountKobo + discountKobo`, platform pays the discount; courier cost cap uses the undiscounted fee | `record-revenue-split.service.ts`, `collection-completion`, `delivery-dispatch` |
+| `GET /merchant/pricing`; admin tiers (`GET`/`PUT /admin/pricing/volume-tiers`) and negotiated discount (`GET`/`PUT /admin/merchants/:id/pricing`), audited | controllers |
+| Wallet alerts on every wallet save: low balance (`wallet.low_balance` + team email, once per crossing; `PATCH /merchant/wallet/settings`), negative floor (finance admins emailed, live) | `wallet-alerts.service.ts` |
+
+Decisions:
+- **Tier basis counts per mode** (test shipments earn a test tier), so integrators see the
+  discount behave in the sandbox.
+- **Tier changes take effect immediately**, not from the next month: commercial changes
+  are rare and deliberate; history is kept as versioned sets.
+- **VAT stays a flag** (`VAT_ENABLED`, F3 open): prices are VAT-inclusive; the breakdown
+  shows the included VAT when it's on. Invoices (M4e2) will itemise it.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

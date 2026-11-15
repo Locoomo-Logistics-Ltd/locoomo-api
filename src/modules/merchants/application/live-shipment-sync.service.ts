@@ -303,7 +303,7 @@ export class LiveShipmentSyncService
         facts.originNodeId,
         shipment.destination.nodeId!,
         parcel,
-        { anyNode: true },
+        { anyNode: true, merchantId: shipment.merchantId, mode: shipment.mode },
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -327,6 +327,7 @@ export class LiveShipmentSyncService
       {
         amountKobo: repriced.amountKobo,
         destinationFeeKobo: repriced.destinationFeeKobo,
+        discountKobo: repriced.discountKobo,
         vehicleClass: repriced.vehicleClass,
       },
       manager,

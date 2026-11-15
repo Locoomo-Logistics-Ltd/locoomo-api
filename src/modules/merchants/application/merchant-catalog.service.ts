@@ -12,6 +12,7 @@ import {
 } from '../../nodes/application/nodes.service';
 import { DeliveryQuoteService } from '../../payments/application/delivery-quote.service';
 import { OriginRequiredException } from '../domain/exceptions/merchant.exceptions';
+import { MerchantPricingService } from './merchant-pricing.service';
 import {
   estimatedReadyInWorkingDays,
   merchantQuoteAmounts,
@@ -46,6 +47,7 @@ export class MerchantCatalogService {
     private readonly nodes: NodesService,
     private readonly quotes: DeliveryQuoteService,
     private readonly config: ConfigService<Env, true>,
+    private readonly pricing: MerchantPricingService,
   ) {}
 
   async listNodes(
@@ -80,7 +82,10 @@ export class MerchantCatalogService {
 
   async quote(
     query: QuoteQueryDto,
-    options: { hidePrices: boolean },
+    options: {
+      hidePrices: boolean;
+      merchant: { merchantId: string; mode: 'test' | 'live' } | null;
+    },
   ): Promise<QuoteView> {
     // Hubs (the default origin) arrive with M5.
     if (!query.originNodeId) {
@@ -100,10 +105,21 @@ export class MerchantCatalogService {
         handling: query.handling,
       },
     );
+    const discount = options.merchant
+      ? await this.pricing.discountFor(
+          options.merchant.merchantId,
+          options.merchant.mode,
+        )
+      : null;
     const { amountKobo, breakdown } = merchantQuoteAmounts(quote.feeBreakdown, {
-      // Volume discounts arrive with the wallet (M4).
-      discountRate: 0,
+      discountRate: (discount?.percent ?? 0) / 100,
       vatEnabled: this.config.get('VAT_ENABLED', { infer: true }),
+      maxDiscountKobo: discount
+        ? await this.pricing.discountCap(
+            quote.feeBreakdown.totalKobo,
+            quote.feeBreakdown.destinationFeeKobo,
+          )
+        : 0,
     });
     return {
       currency: 'NGN',

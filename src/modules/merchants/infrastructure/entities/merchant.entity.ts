@@ -6,6 +6,7 @@ import {
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { numericTransformer } from '../../../../common/database/numeric-transformer';
 import type { MerchantLimits } from '../../domain/merchant-limits';
 import {
   ExpectedMonthlyVolume,
@@ -76,6 +77,17 @@ export class MerchantEntity {
   // Per-merchant overrides on top of the tier defaults (merchant-limits.ts).
   @Column({ type: 'jsonb', nullable: true })
   limitOverrides!: Partial<MerchantLimits> | null;
+
+  // A negotiated volume discount (percent) replacing the monthly tier;
+  // null = use the tier (plan §8.3).
+  @Column({
+    type: 'numeric',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  discountPercentOverride!: number | null;
 
   // D19: merchant may receive receivers' collection codes by webhook and
   // relay them itself. Admin-enabled on request.
