@@ -3548,6 +3548,20 @@ one open or approved claim per shipment. `maxPayoutKobo` = min(declared value,
 `merchants/{id}/claims/`, checked to exist. A shipment moving to `exception` (admin, or the
 simulator) opens a claim with `source: "exception"` and sets `exception.claimId`.
 
+### Return batches: `GET /api/v1/merchant/returns` · `/return-batches` (create, list, get, `/:id/code`, `/:id/cancel`) · `POST …/test/return-batches/{id}/collect`
+
+Full contract: [MERCHANT_API.md §11.3](MERCHANT_API.md#113-collecting-your-returns).
+`/returns` needs `shipments:read`; batches need `shipments:write` (sessions
+`returns.collect`) because a batch shows its code. A batch holds 1–200 shipments
+`return_ready` at one Node, none in another open batch (partial unique index). The code is
+6 digits, stored hashed (checked) and sealed (shown to the team), valid 10 working days, 5
+wrong tries lock it; a reissue resets both. Node staff: `GET /api/v1/handoffs/return-batches`,
+`GET …/:reference`, `POST …/:reference/collect`
+([LOGISTICS_API.md §5.9a](LOGISTICS_API.md#59a-merchant-return-batches--handoffsreturn-batches)).
+Collecting ends each waiting order (`return_completed`, shelf and capacity slot freed,
+per-parcel code used), which mirrors `shipment.returned`; parcels already handed back are
+skipped.
+
 ## Admin: merchant claims
 
 | Endpoint | Permission | |

@@ -54,6 +54,17 @@ import { AdminMerchantPricingController } from './interface/admin-merchant-prici
 import { EarningsModule } from '../earnings/earnings.module';
 import { ShipmentImportEntity } from './infrastructure/entities/shipment-import.entity';
 import { MerchantClaimEntity } from './infrastructure/entities/merchant-claim.entity';
+import {
+  MerchantReturnBatchEntity,
+  MerchantReturnBatchItemEntity,
+} from './infrastructure/entities/merchant-return-batch.entity';
+import { ReturnBatchService } from './application/return-batch.service';
+import {
+  NodeReturnBatchesController,
+  ReturnBatchesController,
+  TestReturnBatchesController,
+} from './interface/return-batches.controller';
+import { NodeOperatorsModule } from '../node-operators/node-operators.module';
 import { MerchantClaimsService } from './application/merchant-claims.service';
 import { AdminClaimsService } from './application/admin-claims.service';
 import {
@@ -137,6 +148,8 @@ import { WebhooksController } from './interface/webhooks.controller';
       MerchantFundingAccountEntity,
       ShipmentImportEntity,
       MerchantClaimEntity,
+      MerchantReturnBatchEntity,
+      MerchantReturnBatchItemEntity,
       ShipmentImportRowEntity,
       VolumeDiscountTierSetEntity,
     ]),
@@ -161,6 +174,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     NodesModule,
     // Idempotency-Key replay on POST /shipments and friends.
     IdempotencyModule,
+    // NodeOperatorQueryService: which Nodes a staff member works at
+    // (return batches handed over at the counter).
+    NodeOperatorsModule,
   ],
   controllers: [
     MerchantAccountController,
@@ -182,6 +198,9 @@ import { WebhooksController } from './interface/webhooks.controller';
     ClaimsController,
     TestClaimsController,
     AdminMerchantClaimsController,
+    ReturnBatchesController,
+    TestReturnBatchesController,
+    NodeReturnBatchesController,
     ShipmentImportsController,
     MerchantPricingController,
     AdminMerchantPricingController,
@@ -218,6 +237,7 @@ import { WebhooksController } from './interface/webhooks.controller';
     MerchantDocumentsService,
     MerchantClaimsService,
     AdminClaimsService,
+    ReturnBatchService,
     ShipmentLabelService,
     ShipmentImportService,
     MerchantPricingService,

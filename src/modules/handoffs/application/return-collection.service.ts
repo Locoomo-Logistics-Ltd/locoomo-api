@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { IdempotencyService } from '../../../common/idempotency/idempotency.service';
 import { NodesService } from '../../nodes/application/nodes.service';
 import { OrdersService } from '../../orders/application/orders.service';
@@ -74,5 +74,35 @@ export class ReturnCollectionService {
       return row;
     }
     return result as OrderTransitionResult;
+  }
+
+  // A merchant return batch (M4f2): the batch code was already checked by
+  // the merchants module, so hand this parcel back without its own code.
+  // Its outstanding per-parcel code stops working. Returns false when the
+  // parcel isn't waiting for its sender any more (collected separately).
+  async handBackInBatch(
+    manager: EntityManager,
+    orderId: string,
+    payload: { identityConfirmed: boolean; returnBatchId: string },
+  ): Promise<boolean> {
+    const [row] = await manager.query<{ status: string }[]>(
+      `SELECT status FROM orders WHERE id = $1 FOR UPDATE`,
+      [orderId],
+    );
+    if (row?.status !== 'ready_for_sender_collection') {
+      return false;
+    }
+    const order = await this.ordersService.markCollectedBySender(
+      orderId,
+      manager,
+      payload,
+    );
+    await this.nodesService.releaseCapacitySlot(order.originNodeId, manager);
+    await manager.query(
+      `UPDATE handoff_codes SET "usedAt" = now()
+        WHERE "orderId" = $1 AND type = $2 AND "usedAt" IS NULL`,
+      [orderId, HandoffCodeType.SENDER_COLLECTION],
+    );
+    return true;
   }
 }

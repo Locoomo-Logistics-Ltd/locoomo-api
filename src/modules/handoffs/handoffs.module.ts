@@ -108,6 +108,12 @@ import { HandoffsController } from './interface/handoffs.controller';
   // ParcelRecallService: merchants send a shelved parcel back (return to
   // sender) and reissue a buyer's code after a contact change.
   // ReceiverCodeRelay: merchants receive the codes of parcels they relay.
-  exports: [SenderContactService, ParcelRecallService, ReceiverCodeRelay],
+  exports: [
+    SenderContactService,
+    ParcelRecallService,
+    ReceiverCodeRelay,
+    // handBackInBatch: merchant return batches (merchants module).
+    ReturnCollectionService,
+  ],
 })
 export class HandoffsModule {}

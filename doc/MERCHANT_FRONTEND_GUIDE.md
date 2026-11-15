@@ -43,6 +43,7 @@ something UI-related; tell backend.)
 14. [Settings › Close account](#14-settings--close-account)
 15. [Wallet](#15-wallet)
 15a. [Claims](#15a-claims)
+15b. [Returns to collect](#15b-returns-to-collect)
 16. [Coming next 🛠](#16-coming-next-)
 
 **Part C: Admin app**
@@ -126,7 +127,8 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 11 | Settings › Close account | §14 | ✅ |
 | 12 | Wallet: balance, statement, holds, card top-up, bank-transfer account, test reset | §15 | ✅ |
 | 13 | Claims: file with evidence, track, sandbox decisions | §15a | ✅ |
-| 14 | Manifests, returns, audit log, go-live checklist | §16 | 🛠 |
+| 14 | Returns to collect: one code per batch | §15b | ✅ |
+| 15 | Manifests, audit log, go-live checklist | §16 | 🛠 |
 
 **Admin app screens**
 
@@ -595,7 +597,7 @@ Use **`me.permissions`**, not the role name, to show or hide controls:
 |---|---|:-:|:-:|:-:|:-:|:-:|:-:|
 | See shipments, returns, reports | `shipments.read` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Create, edit, cancel shipments; simulator; claims; manifests 🛠 | `shipments.write` | ✓ | ✓ | ✓ | ✓ | | |
-| Return-batch collection codes 🛠 | `returns.collect` | ✓ | ✓ | | ✓ | | |
+| Return batches and their collection codes | `returns.collect` | ✓ | ✓ | | ✓ | | |
 | API keys, API logs, webhooks | `developers.manage` | ✓ | ✓ | ✓ | | | |
 | Wallet statement and holds; top-up and invoices 🛠 (the balance itself is visible to everyone) | `wallet.manage` | ✓ | ✓ | | | ✓ | |
 | Profile, KYC, bank, terms, submit | `account.manage` | ✓ | ✓ | | | | |
@@ -1981,6 +1983,55 @@ an `open` or `approved` claim (`GET /merchant/claims?shipmentId=…`). If the sh
 
 ---
 
+## 15b. Returns to collect
+
+✅ Ready. A "Returns" page. Parcels come back to the Node they were dropped at; the
+merchant collects them there. Viewing needs `shipments.read`; batches need
+`returns.collect` (owner, admin, operations).
+
+**Two tabs.**
+
+- **Waiting** — **`GET /merchant/returns?state=ready&nodeId=&limit=&cursor=`** →
+  `CursorPage<ReturnItem>`, oldest first. Group the rows by `node` (one card per Node:
+  name, address, count). Columns: reference, tracking code, reason (`not_collected` "Buyer
+  didn't collect", `delivery_failed` "Couldn't be delivered", `merchant_request` "You
+  asked for it back"), "Waiting since" (`readyForCollectionAt`) with a warning once it's
+  close to **10 working days** (free storage ends), and a "In batch RB-…" chip when
+  `returnBatch` is set.
+- **On the way back** — the same call with `state=incoming`.
+
+**Create a batch:** on a Node card, tick returns (default: all not already in a batch, up
+to 200) → "Collect these". **`POST /merchant/return-batches`** `{ nodeId, shipmentIds }`
+(send an `Idempotency-Key`) → `201 ReturnBatch` (§20). Then open the batch page.
+
+`422 RETURN_BATCH_INVALID`: `details.problems` names each bad shipment (`not_ready`,
+`other_node`, `in_batch`, `not_found`). Refresh the list and say "Some returns changed;
+check the selection."
+
+**Batch page** (`GET /merchant/return-batches/:id`), styled like a boarding pass:
+
+- The **reference** (`RB-7KQ2-M9XD`) and the **6-digit code**, big, with the Node's name
+  and address and "Valid until {codeExpiresAt}". Text: "Bring this and an ID matching your
+  business name. Staff hand over every parcel below."
+- The parcels with their status; after collection, `collectedAt` per parcel and
+  `collectorName`.
+- "New code" → **`POST /merchant/return-batches/:id/code`** (the old one stops working; use
+  it if the code leaked or was locked after wrong tries).
+- "Cancel batch" → **`POST /merchant/return-batches/:id/cancel`** (returns go back to
+  waiting; each still has the code we emailed for it).
+- `409 RETURN_BATCH_NOT_OPEN` on either: refetch; the batch was collected or cancelled.
+
+A "Batches" list: **`GET /merchant/return-batches?status=open|collected|cancelled`**
+(no `shipments` array; use `shipmentCount`).
+
+**Node app side** (lookup by reference, hand over on the code): LOGISTICS_API.md §5.9a.
+
+**Test mode:** on an open test batch show "Simulate collection" →
+**`POST /merchant/test/return-batches/:id/collect`**: each waiting shipment becomes
+`returned` and the batch `collected`.
+
+---
+
 ## 16. Coming next 🛠
 
 Build these behind feature flags against the shapes below. Final shapes land with the backend
@@ -1989,7 +2040,6 @@ phase; we'll update this section.
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
 | **Manifests** | `POST /merchant/manifests`, `POST …/{id}/shipments`, `POST …/{id}/close`, `GET …/{id}/document` | Group shipments for a hub drop; PDF/QR for the driver; "received / missing / unexpected" report |
-| **Returns to collect** | `GET /merchant/returns?state=ready`, `POST /merchant/return-batches { nodeId, shipmentIds }` → collection code | `returns.collect`. Show the batch code big, like a boarding pass. 10 working days free storage |
 | **Go-live checklist** | `GET /merchant/go-live-checklist` | On Home: approved, 2FA, live key, live webhook, wallet funded, test shipment simulated to `collected` and `returned` |
 | **Audit log** | TBD | Who did what in the team |
 | **Home KPIs** | TBD | Shipments today, awaiting drop-off, ready for collection, returns waiting |
@@ -2734,6 +2784,32 @@ export interface FundingAccount {
   accountName: string;
   createdAt: string;
 }
+// ─── Returns (§15b) ─────────────────────────────────────────────────────
+export interface ReturnNode { id: string; name: string; address: string; city: string }
+export interface ReturnItem {
+  shipmentId: string;
+  reference: string;
+  trackingCode: string;
+  status: 'return_ready' | 'returning';
+  returnReason: 'not_collected' | 'delivery_failed' | 'merchant_request' | string | null;
+  readyForCollectionAt: string | null;
+  node: ReturnNode;
+  returnBatch: { id: string; reference: string } | null;
+}
+export interface ReturnBatch {
+  id: string;
+  reference: string;                       // RB-7KQ2-M9XD
+  status: 'open' | 'collected' | 'cancelled';
+  node: ReturnNode;
+  code: string | null;                     // 6 digits, while open
+  codeExpiresAt: string | null;
+  shipmentCount: number;
+  shipments?: { id: string; reference: string; trackingCode: string; status: string; collectedAt: string | null }[];
+  collectedAt: string | null;
+  collectorName: string | null;
+  createdAt: string;
+}
+
 // ─── Claims (§15a, §18.6b) ──────────────────────────────────────────────
 export type ClaimType = 'lost' | 'damaged' | 'missing_item';
 export type ClaimStatus = 'open' | 'approved' | 'rejected';
@@ -2915,6 +2991,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 422 / 409 | `INVALID_STATEMENT_MONTH` / `INVOICE_NOT_AVAILABLE` | Documents: §15.8 |
 | 409 / 422 | `CLAIM_NOT_ALLOWED`, `CLAIM_ALREADY_OPEN`, `CLAIM_ALREADY_DECIDED` / `CLAIM_WINDOW_CLOSED`, `CLAIM_PAYOUT_TOO_HIGH` | Claims: §15a |
 | 409 | `CLAIM_PAYOUT_PENDING` | Admin claims: §18.6b |
+| 422 / 409 | `RETURN_BATCH_INVALID` / `RETURN_BATCH_NOT_OPEN` | Returns: §15b |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | "Live shipments aren't available yet. Switch to Test." |
 | 403 | `SHIPMENT_CREATION_PAUSED` | "New live shipments are paused on your account." |
 | 403 | `TEST_MODE_ONLY` | Hide the simulator on live shipments |
@@ -3015,6 +3092,9 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | POST | `/merchant/claims`, `/merchant/claims/uploads` | `shipments.write` | Mode; Idempotency-Key on create |
 | GET | `/merchant/claims`, `/merchant/claims/:id` | `shipments.read` | Mode |
 | POST | `/merchant/test/claims/:id/decide` | `shipments.write` | Test only |
+| GET | `/merchant/returns` | `shipments.read` | Mode |
+| GET / POST | `/merchant/return-batches`, `/merchant/return-batches/:id`, `…/:id/code`, `…/:id/cancel` | `returns.collect` | Mode; Idempotency-Key on create |
+| POST | `/merchant/test/return-batches/:id/collect` | `shipments.write` | Test only |
 | POST | `/merchant/wallet/top-ups` | `wallet.manage` | Mode; dashboard only; `Idempotency-Key` |
 | GET | `/merchant/wallet/top-ups`, `/merchant/wallet/top-ups/:id` | `wallet.manage` | Mode |
 | GET | `/merchant/wallet/funding-account` | any member | Live (null in test) |

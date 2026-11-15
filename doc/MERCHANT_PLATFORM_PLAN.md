@@ -1206,6 +1206,30 @@ Decisions:
   value is paid); auto-flagging parcels with no scan for 5 working days (§6.6) is still
   to build. The MERCHANT_API no longer promises it.
 
+### M4f2 Merchant return batches: done (2026-11-15)
+
+| Item | Where |
+|---|---|
+| `merchant_return_batches` (public `RB-XXXX-XXXX` reference, 6-digit code hashed + sealed, 10 working days, 5-try lockout) and `merchant_return_batch_items` (`active` + partial unique index: one open batch per shipment). Migration 374 | entities, `domain/return-batch.ts` |
+| `GET /merchant/returns?state=ready\|incoming`; `POST/GET /merchant/return-batches`, `/:id/code`, `/:id/cancel`; sandbox `POST /merchant/test/return-batches/:id/collect` | `return-batch.service.ts`, `return-batches.controller.ts` |
+| Node app: `GET /handoffs/return-batches[/:reference]`, `POST …/:reference/collect`: hands back every waiting parcel through `ReturnCollectionService.handBackInBatch` (order `return_completed`, capacity slot freed, per-parcel code used) → mirrored `shipment.returned` | `NodeReturnBatchesController`, handoffs `return-collection.service.ts` |
+
+Decisions:
+- **Batches live in the merchants module**, not handoffs: test shipments have no orders,
+  and the Node side only needs a per-order hand-back, which handoffs exports (same pattern
+  as `ParcelRecallService`). Lock order on collect: batch → orders → shipments.
+- **Reference + code**, like tracking code + collection code: the reference finds the
+  batch (scoped to the staff member's Nodes), the code releases it. Wrong codes count
+  through a separate statement so the lockout survives the failed request.
+- **The code is shown again in the dashboard** (sealed with `DATA_ENCRYPTION_KEY`) to
+  members with `returns.collect`, so whoever goes to the Node can open it; per-parcel codes
+  keep working until the batch is collected.
+- **Partial pickups:** parcels already handed back on their own code are skipped; the batch
+  still completes.
+- **Not yet:** storage fees after 10 free working days and disposal after 30 more
+  (`shipment.disposed`, D20). They need the fee amount and the notice emails; MERCHANT_API
+  marks them as coming.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

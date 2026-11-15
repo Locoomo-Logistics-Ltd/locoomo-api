@@ -645,3 +645,41 @@ export class ClaimPayoutTooHighException extends BusinessException {
     this.details = { maxPayoutKobo };
   }
 }
+
+export class ReturnBatchInvalidException extends BusinessException {
+  readonly errorCode = 'RETURN_BATCH_INVALID';
+  readonly httpStatus = 422;
+
+  constructor(
+    problems: {
+      shipmentId: string;
+      problem: 'not_found' | 'not_ready' | 'other_node' | 'in_batch';
+    }[],
+  ) {
+    super(
+      'Some shipments can’t go in this batch: each must be waiting (return_ready) at that Node and not in another open batch',
+    );
+    this.details = { problems };
+  }
+}
+
+export class ReturnBatchNotOpenException extends BusinessException {
+  readonly errorCode = 'RETURN_BATCH_NOT_OPEN';
+  readonly httpStatus = 409;
+
+  constructor(status: string) {
+    super(`This return batch is ${status}`);
+    this.details = { status };
+  }
+}
+
+// Same code and status as a single parcel's wrong code, so the Node app
+// handles both alike.
+export class InvalidReturnBatchCodeException extends BusinessException {
+  readonly errorCode = 'INVALID_HANDOFF_CODE';
+  readonly httpStatus = 401;
+
+  constructor() {
+    super('Invalid or expired handoff code');
+  }
+}

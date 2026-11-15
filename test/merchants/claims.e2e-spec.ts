@@ -49,7 +49,7 @@ function cookiesFrom(response: request.Response): string[] {
   return (raw ?? []).map((cookie) => cookie.split(';')[0]);
 }
 
-describe('Merchant claims, sandbox (e2e)', () => {
+describe('Merchant claims and return batches, sandbox (e2e)', () => {
   let app: INestApplication<App>;
   let users: Repository<UserEntity>;
   let dataSource: DataSource;
@@ -494,5 +494,138 @@ describe('Merchant claims, sandbox (e2e)', () => {
         description: 'Here are better photos this time.',
       })
       .expect(201);
+  });
+
+  describe('return batches (M4f2)', () => {
+    interface Batch {
+      id: string;
+      reference: string;
+      status: string;
+      code: string | null;
+      codeExpiresAt: string | null;
+      shipmentCount: number;
+      shipments?: { id: string; status: string; collectedAt: string | null }[];
+    }
+    interface ReturnItem {
+      shipmentId: string;
+      node: { id: string };
+      returnBatch: { id: string } | null;
+    }
+    const problems = (response: request.Response) =>
+      (
+        (response.body as ErrorBody).error.details as {
+          problems: { shipmentId: string; problem: string }[];
+        }
+      ).problems;
+    const returnReady = async () => {
+      const s = await create();
+      await simulate(s.id, 'return_ready');
+      return s;
+    };
+    const ready = async () =>
+      data<{ items: ReturnItem[] }>(
+        await api(key).get('/returns?state=ready&limit=200').expect(200),
+      ).items;
+
+    it('batches returns waiting at one Node and hands them back', async () => {
+      const a = await returnReady();
+      const b = await returnReady();
+      const notBack = await create();
+      expect((await ready()).find((i) => i.shipmentId === a.id)).toMatchObject({
+        node: { id: node.origin },
+        returnBatch: null,
+      });
+
+      const refused = await api(key)
+        .post('/return-batches', {
+          nodeId: node.origin,
+          shipmentIds: [a.id, notBack.id],
+        })
+        .expect(422);
+      expect(code(refused)).toBe('RETURN_BATCH_INVALID');
+      expect(problems(refused)).toEqual([
+        { shipmentId: notBack.id, problem: 'not_ready' },
+      ]);
+      expect(
+        problems(
+          await api(key)
+            .post('/return-batches', { nodeId: node.home, shipmentIds: [a.id] })
+            .expect(422),
+        ),
+      ).toEqual([{ shipmentId: a.id, problem: 'other_node' }]);
+
+      const batch = data<Batch>(
+        await api(key)
+          .post('/return-batches', {
+            nodeId: node.origin,
+            shipmentIds: [a.id, b.id],
+          })
+          .expect(201),
+      );
+      expect(batch).toMatchObject({ status: 'open', shipmentCount: 2 });
+      expect(batch.code).toMatch(/^\d{6}$/);
+      expect(
+        (await ready()).find((i) => i.shipmentId === a.id)?.returnBatch,
+      ).toEqual({ id: batch.id, reference: batch.reference });
+      expect(
+        problems(
+          await api(key)
+            .post('/return-batches', {
+              nodeId: node.origin,
+              shipmentIds: [a.id],
+            })
+            .expect(422),
+        ),
+      ).toEqual([{ shipmentId: a.id, problem: 'in_batch' }]);
+
+      const reissued = data<Batch>(
+        await api(key).post(`/return-batches/${batch.id}/code`).expect(200),
+      );
+      expect(reissued.code).toMatch(/^\d{6}$/);
+      expect(
+        code(
+          await api(readOnlyKey).get(`/return-batches/${batch.id}`).expect(403),
+        ),
+      ).toBe('INSUFFICIENT_SCOPE');
+
+      const collected = data<Batch>(
+        await api(key)
+          .post(`/test/return-batches/${batch.id}/collect`)
+          .expect(200),
+      );
+      expect(collected.status).toBe('collected');
+      expect(collected.code).toBeNull();
+      expect(collected.shipments?.map((x) => x.status)).toEqual([
+        'returned',
+        'returned',
+      ]);
+      expect(
+        code(
+          await api(key)
+            .post(`/test/return-batches/${batch.id}/collect`)
+            .expect(409),
+        ),
+      ).toBe('RETURN_BATCH_NOT_OPEN');
+    });
+
+    it('cancels a batch, freeing its returns for another', async () => {
+      const c = await returnReady();
+      const first = data<Batch>(
+        await api(key)
+          .post('/return-batches', { nodeId: node.origin, shipmentIds: [c.id] })
+          .expect(201),
+      );
+      const cancelled = data<Batch>(
+        await api(key).post(`/return-batches/${first.id}/cancel`).expect(200),
+      );
+      expect(cancelled).toMatchObject({ status: 'cancelled', code: null });
+      await api(key)
+        .post('/return-batches', { nodeId: node.origin, shipmentIds: [c.id] })
+        .expect(201);
+      const list = data<{ items: Batch[] }>(
+        await api(key).get('/return-batches?status=cancelled').expect(200),
+      );
+      expect(list.items.map((x) => x.id)).toContain(first.id);
+    });
   });
 });

@@ -725,17 +725,47 @@ Returns come back to the hub/Node they left from.
 10 working days, and Node staff can resend it. Show it at the counter with your name; the
 parcel becomes `returned` (`shipment.returned`).
 
-**Coming (return batches):** `GET /returns?state=ready` lists returns waiting for you.
-Then:
+**Collecting many at once: return batches.**
 
-1. `POST /return-batches` with `{ "nodeId": "…", "shipmentIds": [...] }` returns one
-   **collection code** for the whole batch.
-2. Your staff go to the Node and show the code; staff hand over the parcels.
-3. Each one becomes `returned` (`shipment.returned`).
+1. **`GET /returns?state=ready&nodeId=&limit=&cursor=`** (scope `shipments:read`) lists
+   returns waiting at a Node, oldest first (`state=incoming`: still on the way back):
 
-**Uncollected returns:** you have **10 working days** free after `return_ready`. After that
-a small daily storage fee is charged to your wallet, and after 30 more days (with email
-notices) the parcel may be disposed of under the merchant terms (`shipment.disposed`).
+   ```json
+   { "shipmentId": "3f0c…", "reference": "ORDER-1042", "trackingCode": "LCM-2611-7KQ2",
+     "status": "return_ready", "returnReason": "not_collected",
+     "readyForCollectionAt": "2026-11-15T10:05:00.000Z",
+     "node": { "id": "7a1d…", "name": "Yaba Node", "address": "12 Herbert Macaulay Way", "city": "Lagos" },
+     "returnBatch": null }
+   ```
+
+2. **`POST /return-batches`** `{ "nodeId": "7a1d…", "shipmentIds": ["3f0c…", …] }`
+   (1–200 shipments, all `return_ready` at that Node; scope `shipments:write`,
+   `Idempotency-Key` supported) → `201` with the batch:
+
+   ```json
+   { "id": "b51e…", "reference": "RB-7KQ2-M9XD", "status": "open",
+     "node": { "id": "7a1d…", "name": "Yaba Node", "address": "…", "city": "Lagos" },
+     "code": "840814", "codeExpiresAt": "2026-11-29T22:59:59.000Z", "shipmentCount": 2,
+     "shipments": [ { "id": "3f0c…", "reference": "ORDER-1042", "trackingCode": "LCM-2611-7KQ2", "status": "return_ready", "collectedAt": null } ],
+     "collectedAt": null, "collectorName": null, "createdAt": "2026-11-15T10:05:00.000Z" }
+   ```
+
+   `422 RETURN_BATCH_INVALID` lists what's wrong in `details.problems`
+   (`[{ "shipmentId", "problem": "not_found" | "not_ready" | "other_node" | "in_batch" }]`).
+3. Your staff go to the Node with the **reference and code** and their ID. Staff hand over
+   every parcel in the batch; each becomes `returned` (`shipment.returned`) and the batch
+   `collected`. Parcels' individual codes stop working. The code lasts 10 working days.
+
+Also: **`GET /return-batches?status=`**, **`GET /return-batches/{id}`** (the code shows
+while the batch is open), **`POST /return-batches/{id}/code`** (a new code; the old one
+stops working) and **`POST /return-batches/{id}/cancel`** (the returns go back to waiting
+on their own codes). These need scope `shipments:write`, since a batch carries its code.
+`409 RETURN_BATCH_NOT_OPEN` once a batch is collected or cancelled.
+
+**Uncollected returns:** you have **10 working days** free after `return_ready`.
+*Coming:* after that, a small daily storage fee charged to your wallet, and after 30 more
+days (with email notices) disposal under the merchant terms (`shipment.disposed`). Neither
+is charged or done yet.
 
 ---
 
@@ -963,6 +993,8 @@ don't handle and still respond 2xx.
   weight. An impossible move returns `409 INVALID_SIMULATION`; a live shipment
   `403 TEST_MODE_ONLY`.
 - Test top-ups use Paystack's test cards.
+- Test return batches are handed over with `POST /test/return-batches/{id}/collect`:
+  each waiting shipment becomes `returned` (with its webhook) and the batch `collected`.
 - Test claims ([§15](#15-claims-lost-or-damaged-parcels)) are decided by you:
   `POST /test/claims/{id}/decide` with `{ "decision": "approve" | "reject", "amountKobo"?,
   "note"? }` (scope `claims:write`). Approving credits the test wallet and both send
@@ -1237,6 +1269,8 @@ Prohibited items (listed in the merchant terms) are refused at drop-off.
 | 409 | `CLAIM_ALREADY_OPEN` | One open or approved claim per shipment; `details.claimId` |
 | 409 | `CLAIM_ALREADY_DECIDED` | Test claims: already approved or rejected |
 | 422 | `CLAIM_PAYOUT_TOO_HIGH` | Test claims: more than `maxPayoutKobo` |
+| 422 | `RETURN_BATCH_INVALID` | See `details.problems` (§11.3) |
+| 409 | `RETURN_BATCH_NOT_OPEN` | The batch was already collected or cancelled |
 | 422 | `INVALID_STATEMENT_MONTH` | Use `YYYY-MM`, not in the future |
 | 409 | `INVOICE_NOT_AVAILABLE` | Invoices are live-only, for months that have ended |
 | 429 | `RATE_LIMITED` | Back off; honour `Retry-After` |
@@ -1288,6 +1322,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Return batches** (§11.3): `GET /returns`, `POST /return-batches` (one code for up to 200 returns at a Node), get, list, new code, cancel; `POST /test/return-batches/{id}/collect` in the sandbox. Storage fees for uncollected returns are not charged yet |
 | 2026-11-15 | **Claims** (§15): `POST /claims` with optional evidence uploads (`POST /claims/uploads`), `GET /claims`, `claim.decided`, payouts as `claim_credit` wallet entries. A parcel we record lost or damaged opens a claim for you (`exception.claimId`). In test mode, decide your own claims with `POST /test/claims/{id}/decide` |
 | 2026-11-15 | **Statements and tax invoices** (§14.2): `GET /statements/{yyyy-mm}` (either mode, current month to date) and `GET /invoices/{yyyy-mm}` (live, finished months), as PDF or CSV |
 | 2026-11-15 | **Volume discounts and low-balance alerts** (§14): your discount is applied to quotes and shipments, `GET /pricing` explains it, and `wallet.low_balance` fires when available balance drops below the line you set in the dashboard. `GET /wallet` adds `lowBalanceThresholdKobo` |
