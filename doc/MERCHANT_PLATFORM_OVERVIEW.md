@@ -27,8 +27,8 @@ merchant dashboard.
 | Hubs, manifests and bags (marketplace-scale inbound), full-Node reroutes | ✅ Built |
 | Storage fees and disposal for returns nobody collects | ✅ Built * |
 | Staff views: all orders, merchant 360, platform health alerts | ✅ Built * |
-| Merchant reports and data exports | 🔜 Next |
-| Data retention, personal-data requests, operations runbook | 🔜 Planned |
+| Merchant reports and data exports | ✅ Built * |
+| Data retention, personal-data requests, operations runbook | 🔜 Next |
 | Pick links, developer toolkit, go-live checklist | 🔜 Planned |
 
 "Built" means the system (backend) and its documentation are finished, tested and running
@@ -100,6 +100,9 @@ production system yet, and live shipments stay switched off there until we decid
   goes below its allowed overdraft.
 - **Monthly statements and tax invoices** (PDF or spreadsheet), downloadable by the
   merchant and by our staff.
+- **Reports and exports.** A dashboard summary for any period (volumes, how many buyers
+  collect, typical delivery and pickup times, spend, busiest destinations) and
+  spreadsheet downloads of shipments and wallet history, up to three months at a time.
 - **Safety checks for finance.** Every wallet is checked against its records every night.
   Any manual credit or debit needs **two** finance staff: one requests it and a second
   approves it.
@@ -163,6 +166,8 @@ production system yet, and live shipments stay switched off there until we decid
 - **Platform health:** around ten checks (email and webhook backlogs, reroute and review
   queues, wallets below zero, bags without a courier, parcels missing from bags). Ops are
   emailed when one goes red, with reminders while it stays red.
+- **Exports:** the All orders list downloads as a spreadsheet (CSV) for any period up to
+  three months.
 - Every sensitive action is logged: who did what, and when.
 
 ---
@@ -171,7 +176,6 @@ production system yet, and live shipments stay switched off there until we decid
 
 | Phase | What it adds | Why it matters |
 |---|---|---|
-| **Reports and exports** | A merchant dashboard summary (volumes, delivery times, returns, spend) and CSV exports of shipments and wallet history for any date range. | Merchants reconcile with their own systems without engineering help. |
 | **Data compliance** | Automatic clean-up of personal data after its retention period, handling buyers' requests to see or delete their data, and the operations runbook (including breach response). | Required by Nigeria's data protection law (NDPA) before launch. |
 | **Developer experience** | Pick links (a seller shares a link on WhatsApp and the buyer picks their Node), a ready-made developer toolkit, an in-dashboard go-live checklist. | Easier onboarding for small sellers and integrators. |
 

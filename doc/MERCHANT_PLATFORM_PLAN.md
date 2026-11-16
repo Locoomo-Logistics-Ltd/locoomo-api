@@ -1349,6 +1349,23 @@ Decisions:
 - **Health checks and thresholds live in code** (one list, easy to extend); unmatched DVA
   credits aren't a check because unmatched transfers aren't recorded separately today.
 
+### M6c Reports and exports: done (2026-11-16)
+
+| Item | Where |
+|---|---|
+| `GET /merchant/reports/summary` (≤ 93 days, default 30) | `merchant-reports.service.ts`, `reports.controller.ts` |
+| `POST /merchant/exports/shipments` / `wallet-entries` → 15-minute signed link; public `GET /merchant/exports/download` streams CSV in keyset pages | same; `common/crypto/signed-token.ts`, `common/csv/csv.ts` |
+| Admin `POST /admin/exports/orders` + public download (All orders filters, no receiver contact) | admin `admin-orders-query.service.ts`, `admin-ops.controller.ts` |
+
+Decisions:
+- **Stream on demand instead of storing files**: the signed token carries the query
+  (merchant, mode, type, range); nothing is written to storage, so there's nothing to
+  expire or leak later. Memory stays flat (2,000-row pages).
+- **Separate export endpoints per type** so each carries its own permission (wallet lines
+  need `wallet:read` / `wallet.manage`).
+- **CSV formula injection guarded** in the shared CSV writer.
+- Range ≤ 93 days per export, as planned.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

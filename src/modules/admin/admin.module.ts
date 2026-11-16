@@ -9,7 +9,10 @@ import { AdminApprovalsController } from './interface/admin-approvals.controller
 import { AdminCapacityAuditController } from './interface/admin-capacity-audit.controller';
 import { AdminOrdersQueryService } from './application/admin-orders-query.service';
 import { PlatformHealthService } from './application/platform-health.service';
-import { AdminOpsController } from './interface/admin-ops.controller';
+import {
+  AdminExportDownloadController,
+  AdminOpsController,
+} from './interface/admin-ops.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
@@ -24,6 +27,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     AdminCapacityAuditController,
     AdminApprovalsController,
     AdminOpsController,
+    AdminExportDownloadController,
   ],
   providers: [
     CapacityAuditQueryService,

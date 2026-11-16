@@ -1200,6 +1200,38 @@ top-up receipt covers those).
 Errors: `422 INVALID_STATEMENT_MONTH` (not `YYYY-MM`, or in the future),
 `409 INVOICE_NOT_AVAILABLE` (test mode, or the month hasn't ended).
 
+### 14.3 Reports and exports
+
+**`GET /reports/summary?from=&to=`** (scope `shipments:read`; default the last 30 days,
+at most 93) for the key's mode:
+
+```json
+{
+  "from": "2026-10-17T00:00:00.000Z", "to": "2026-11-16T00:00:00.000Z", "mode": "live",
+  "shipments": { "created": 1240, "byStatus": { "collected": 1102, "in_transit": 40, "returned": 31 }, "collectionRate": 0.973 },
+  "times": { "dropOffToReadyHours": 26.5, "readyToCollectedHours": 19.0 },
+  "money": { "shippingCharged": 133400000, "storageCharged": 120000, "claimsCredited": 0, "toppedUp": 150000000 },
+  "topDestinations": [ { "nodeName": "Yaba Node", "shipments": 210 } ]
+}
+```
+
+Counts are for shipments **created** in the range (by their status now). `collectionRate`
+= collected ÷ (collected + sent back because nobody collected), `null` with none finished.
+Times are medians in hours. Money is wallet movement in the range, in kobo.
+
+**CSV exports** (range ≤ 93 days, `from`/`to` required): **`POST /exports/shipments`**
+(scope `shipments:read`) or **`POST /exports/wallet-entries`** (scope `wallet:read`)
+with `{ "from": "…", "to": "…" }` → `{ "downloadPath": "/api/v1/merchant/exports/download?token=…",
+"expiresAt": "…" }`. **GET** the path on the API host within **15 minutes**; it needs no
+API key (the token is the credential), so a browser can open it. Shipments columns:
+`created_at, reference, tracking_code, status, status_changed_at, origin_node,
+destination_node, receiver_name, parcel_size, declared_value_ngn, quoted_ngn, charged_ngn,
+return_reason`. Wallet columns: `created_at, type, description, amount_ngn,
+balance_after_ngn, reference, tracking_code`. Amounts are plain naira (`1075.00`).
+
+Errors: `422 REPORT_RANGE_INVALID`, `403 EXPORT_LINK_INVALID` (expired or altered link:
+create the export again).
+
 ---
 
 ## 15. Claims (lost or damaged parcels)
@@ -1310,6 +1342,8 @@ Prohibited items (listed in the merchant terms) are refused at drop-off.
 | 409 | `CLAIM_ALREADY_DECIDED` | Test claims: already approved or rejected |
 | 422 | `CLAIM_PAYOUT_TOO_HIGH` | Test claims: more than `maxPayoutKobo` |
 | 422 | `RETURN_BATCH_INVALID` | See `details.problems` (§11.3) |
+| 422 | `REPORT_RANGE_INVALID` | `from` before `to`, at most 93 days (§14.3) |
+| 403 | `EXPORT_LINK_INVALID` | The export link expired or was altered: create it again |
 | 422 | `MANIFEST_INVALID` | See `details.problems` (§10) |
 | 409 | `MANIFEST_NOT_EDITABLE` | Closed, received or cancelled |
 | 422 | `NOT_A_HUB` | No hub assigned (or that Node isn't an active hub): ask your account manager |
@@ -1365,6 +1399,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-16 | **Reports and exports** (§14.3): `GET /reports/summary` (volumes, collection rate, median times, spend, top destinations) and CSV exports of shipments or wallet lines through a 15-minute signed link |
 | 2026-11-16 | **Storage fees and disposal for uncollected returns** (§11.3): ₦100 per parcel per day after 10 free working days (`storage_fee` wallet lines, on your monthly invoice), disposal 30 days later (`shipment.disposed`), with email notices. `return.storageFeesFrom` and `return.disposeAt` on shipments and `GET /returns` |
 | 2026-11-15 | **Reroutes for live parcels**: a parcel whose buyer's Node is full or closed at drop-off waits at its origin until a nearby Node is picked (within a working day), then `shipment.destination_changed` (§6). Returns heading back to your hub travel in bags too. Node daily caps can make creation answer `422 DESTINATION_NODE_UNAVAILABLE` |
 | 2026-11-15 | **Hub bags** (§10): parcels checked in at a hub travel in sealed bags per destination Node. No API change; shipment statuses and webhooks are as before |

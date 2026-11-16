@@ -1,4 +1,21 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Req,
+  Res,
+} from '@nestjs/common';
+import { seconds, Throttle } from '@nestjs/throttler';
+import type { Request, Response } from 'express';
+import type { RequestWithUser } from '../../../common/auth/auth.guard';
+import { Public } from '../../../common/auth/decorators/public.decorator';
+import { SkipResponseEnvelope } from '../../../common/decorators/skip-response-envelope.decorator';
 import {
   IsDateString,
   IsIn,
@@ -65,7 +82,33 @@ export class AdminOrdersQueryDto extends CursorQueryDto {
   to?: string;
 }
 
-// Admin app (plan §10, M6b): All orders, and Platform health.
+export class AdminOrdersExportDto {
+  @IsDateString()
+  from!: string;
+
+  @IsDateString()
+  to!: string;
+
+  @IsOptional()
+  @IsIn(['consumer', 'merchant'])
+  source?: 'consumer' | 'merchant';
+
+  @IsOptional()
+  @IsUUID()
+  merchantId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  status?: string;
+
+  @IsOptional()
+  @IsUUID()
+  nodeId?: string;
+}
+
+// Admin app (plan §10, M6b/M6c): All orders (and its CSV export), Platform
+// health.
 @Controller('admin')
 export class AdminOpsController {
   constructor(
@@ -91,5 +134,33 @@ export class AdminOpsController {
   @RequireAdminPermission(AdminPermission.OPS, AdminPermission.SUPPORT)
   platformHealth(): Promise<PlatformHealth> {
     return this.health.health();
+  }
+
+  // The All orders list as CSV: a 15-minute download link.
+  @Post('exports/orders')
+  @HttpCode(HttpStatus.OK)
+  @RequireAdminPermission(AdminPermission.OPS)
+  exportOrders(
+    @Body() dto: AdminOrdersExportDto,
+    @Req() request: Request,
+  ): Promise<{ downloadPath: string; expiresAt: string }> {
+    return this.orders.createExport((request as RequestWithUser).user!.id, dto);
+  }
+}
+
+// The signed link itself: the token is the credential.
+@Controller('admin/exports')
+export class AdminExportDownloadController {
+  constructor(private readonly orders: AdminOrdersQueryService) {}
+
+  @Public()
+  @Get('orders/download')
+  @Throttle({ default: { limit: 30, ttl: seconds(60) } })
+  @SkipResponseEnvelope()
+  async download(
+    @Query('token') token: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    await this.orders.streamExport(token ?? '', res);
   }
 }

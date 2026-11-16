@@ -72,6 +72,11 @@ import {
 import { ManifestService } from './application/manifest.service';
 import { ReturnStorageService } from './application/return-storage.service';
 import { MerchantOverviewService } from './application/merchant-overview.service';
+import { MerchantReportsService } from './application/merchant-reports.service';
+import {
+  ExportDownloadController,
+  ReportsController,
+} from './interface/reports.controller';
 import {
   HubManifestsController,
   ManifestsController,
@@ -218,6 +223,8 @@ import { WebhooksController } from './interface/webhooks.controller';
     ManifestsController,
     TestManifestsController,
     HubManifestsController,
+    ReportsController,
+    ExportDownloadController,
     ShipmentImportsController,
     MerchantPricingController,
     AdminMerchantPricingController,
@@ -258,6 +265,7 @@ import { WebhooksController } from './interface/webhooks.controller';
     ManifestService,
     ReturnStorageService,
     MerchantOverviewService,
+    MerchantReportsService,
     ShipmentLabelService,
     ShipmentImportService,
     MerchantPricingService,

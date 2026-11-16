@@ -3607,6 +3607,22 @@ approves it ([Approvals](#approvals-two-admin-rule)): it credits the wallet (`cl
 unique per claim), marks the claim approved and sends `claim.decided` and an email. While a
 payout approval is pending, reject and a second payout answer `409 CLAIM_PAYOUT_PENDING`.
 
+## Reports and exports (M6c)
+
+- `GET /api/v1/merchant/reports/summary?from=&to=` (`shipments:read`): KPIs for shipments
+  created in the range (≤ 93 days, default 30): counts by status, collection rate, median
+  hours drop-off→ready and ready→collected, wallet spend by kind, top 5 destinations.
+- `POST /api/v1/merchant/exports/shipments` (`shipments:read`) and
+  `POST /api/v1/merchant/exports/wallet-entries` (`wallet:read`), `{ from, to }` →
+  `{ downloadPath, expiresAt }`: a 15-minute HMAC-signed token (purpose-bound, keyed off
+  `JWT_ACCESS_SECRET`). `GET /api/v1/merchant/exports/download?token=` is public and
+  streams the CSV in 2,000-row keyset pages (no file stored). Exports are audited.
+  Errors `422 REPORT_RANGE_INVALID`, `403 EXPORT_LINK_INVALID`.
+- Admin: `POST /api/v1/admin/exports/orders` (`ops`) `{ from, to, source?, merchantId?,
+  status?, nodeId? }` → the same kind of link to `GET /api/v1/admin/exports/orders/download`
+  (no receiver contact details). CSV cells starting with `=`, `+`, `-` (non-numeric) or `@`
+  are prefixed with `'` so spreadsheets don't run them.
+
 ## Admin: all orders, merchant 360, platform health (M6b)
 
 - `GET /api/v1/admin/orders` (`ops`, `support`): consumer and merchant orders, cursor

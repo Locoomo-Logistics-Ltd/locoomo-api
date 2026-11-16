@@ -45,6 +45,7 @@ something UI-related; tell backend.)
 15a. [Claims](#15a-claims)
 15b. [Returns to collect](#15b-returns-to-collect)
 15c. [Hub and manifests](#15c-hub-and-manifests)
+15d. [Reports and exports](#15d-reports-and-exports)
 16. [Coming next 🛠](#16-coming-next-)
 
 **Part C: Admin app**
@@ -130,7 +131,8 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 13 | Claims: file with evidence, track, sandbox decisions | §15a | ✅ |
 | 14 | Returns to collect: one code per batch | §15b | ✅ |
 | 15 | Hub and manifests: bulk drop-off at a hub | §15c | ✅ |
-| 16 | Audit log, go-live checklist | §16 | 🛠 |
+| 16 | Home KPIs, reports and CSV exports | §15d | ✅ |
+| 17 | Audit log, go-live checklist | §16 | 🛠 |
 
 **Admin app screens**
 
@@ -2084,6 +2086,28 @@ Errors:
 
 ---
 
+## 15d. Reports and exports
+
+✅ Ready (`shipments.read`; wallet export needs `wallet.manage`). Mode-aware like the rest.
+
+**Home KPIs and a Reports page:** **`GET /merchant/reports/summary?from=&to=`** (default
+the last 30 days; at most 93) → `ReportSummary` (§20). Show:
+
+- Tiles: shipments created; collected; collection rate (`collectionRate` as a %, "–" when
+  `null`); median "drop-off to ready" and "ready to collected" (`times`, hours → "1 day 2 h");
+  shipping spend (`money.shippingCharged`) and storage fees (`money.storageCharged`).
+- A status breakdown (`shipments.byStatus`) and the top destinations list.
+- A date-range picker (presets: last 7 / 30 / 90 days); refuse > 93 days client-side too
+  (`422 REPORT_RANGE_INVALID`).
+
+**Exports** (a "Download CSV" menu on Shipments and on Wallet): **`POST
+/merchant/exports/shipments`** or **`POST /merchant/exports/wallet-entries`** with `{ from, to }`
+→ `{ downloadPath, expiresAt }`. Open `API_BASE + downloadPath` in a new tab (or set
+`window.location`): it downloads directly, no auth header needed, and works for 15
+minutes. `403 EXPORT_LINK_INVALID` on an old link: "That link expired. Export again."
+
+---
+
 ## 16. Coming next 🛠
 
 Build these behind feature flags against the shapes below. Final shapes land with the backend
@@ -2093,7 +2117,6 @@ phase; we'll update this section.
 |---|---|---|
 | **Go-live checklist** | `GET /merchant/go-live-checklist` | On Home: approved, 2FA, live key, live webhook, wallet funded, test shipment simulated to `collected` and `returned` |
 | **Audit log** | TBD | Who did what in the team |
-| **Home KPIs** | TBD | Shipments today, awaiting drop-off, ready for collection, returns waiting |
 
 ---
 
@@ -2445,6 +2468,11 @@ reason, refusal / exception, the merchant `shipment` (link to it), the full `eve
 timeline (`{ type, payload, at }`) and every courier `deliveries` attempt (`viaBag: true`
 for a bag's trip). Actions already documented elsewhere hang off this page: Lost or
 damaged (§19.2), Reroute (§18.6d).
+
+**Export** (`ops`): "Download CSV" with the current filters and a date range (≤ 93 days)
+→ **`POST /admin/exports/orders`** `{ from, to, source?, merchantId?, status?, nodeId? }`
+→ `{ downloadPath, expiresAt }`; open `API_BASE + downloadPath` within 15 minutes. No
+receiver contact details are in the file.
 
 ### 18.8 Merchant 360 ✅ (`ops`, `support`, `finance`, `kyc`)
 
@@ -2911,6 +2939,18 @@ export interface FundingAccount {
   accountName: string;
   createdAt: string;
 }
+// ─── Reports (§15d) ─────────────────────────────────────────────────────
+export interface ReportSummary {
+  from: string;
+  to: string;
+  mode: 'test' | 'live';
+  shipments: { created: number; byStatus: Record<string, number>; collectionRate: number | null };
+  times: { dropOffToReadyHours: number | null; readyToCollectedHours: number | null };
+  money: { shippingCharged: number; storageCharged: number; claimsCredited: number; toppedUp: number }; // kobo
+  topDestinations: { nodeName: string; shipments: number }[];
+}
+export interface ExportLink { downloadPath: string; expiresAt: string }
+
 // ─── Manifests (§15c) ───────────────────────────────────────────────────
 export interface Manifest {
   id: string;
@@ -3145,6 +3185,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 409 | `CLAIM_PAYOUT_PENDING` | Admin claims: §18.6b |
 | 409 / 422 | `REROUTE_NOT_PENDING` / `REROUTE_TARGET_UNAVAILABLE` | Admin reroutes: §18.6d |
 | 422 / 409 | `RETURN_BATCH_INVALID` / `RETURN_BATCH_NOT_OPEN` | Returns: §15b |
+| 422 / 403 | `REPORT_RANGE_INVALID` / `EXPORT_LINK_INVALID` | Reports and exports: §15d |
 | 422 / 409 / 422 | `MANIFEST_INVALID` / `MANIFEST_NOT_EDITABLE` / `NOT_A_HUB` | Manifests: §15c (admin `NOT_A_HUB`: §18.4) |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | "Live shipments aren't available yet. Switch to Test." |
 | 403 | `SHIPMENT_CREATION_PAUSED` | "New live shipments are paused on your account." |
@@ -3247,6 +3288,9 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | GET | `/merchant/claims`, `/merchant/claims/:id` | `shipments.read` | Mode |
 | POST | `/merchant/test/claims/:id/decide` | `shipments.write` | Test only |
 | GET | `/merchant/returns` | `shipments.read` | Mode |
+| GET | `/merchant/reports/summary` | `shipments.read` | Mode |
+| POST | `/merchant/exports/shipments`, `/merchant/exports/wallet-entries` | `shipments.read` / `wallet.manage` | Mode; returns a 15-minute link |
+| GET | `/merchant/exports/download?token=` | none (signed link) | CSV download |
 | GET | `/merchant/manifests`, `/merchant/manifests/:id`, `…/:id/document` | `shipments.read` | Mode; document is a PDF |
 | POST | `/merchant/manifests`, `…/:id/shipments`, `…/:id/close`, `…/:id/cancel` | `shipments.write` | Mode; Idempotency-Key on create/add |
 | POST | `/merchant/test/manifests/:id/receive` | `shipments.write` | Test only |
@@ -3280,6 +3324,7 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | POST | `/admin/merchant-claims/:id/payout` | `finance` (two-admin approval) |
 | GET / POST | `/admin/reroutes`, `/admin/reroutes/:orderId` | `ops` (`support` can view) |
 | GET | `/admin/orders`, `/admin/orders/:id` | `ops`, `support` |
+| POST / GET | `/admin/exports/orders`, `/admin/exports/orders/download?token=` | `ops` / signed link |
 | GET | `/admin/merchants/:id/overview` | `ops`, `support`, `finance`, `kyc` |
 | GET | `/admin/merchant-platform/health` | `ops`, `support` |
 | POST | `/admin/merchants/:id/wallet/adjustments` | `finance` (runs after a second `finance` admin approves) |

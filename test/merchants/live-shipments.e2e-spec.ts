@@ -2170,6 +2170,67 @@ describe('Live merchant shipments (e2e)', () => {
       await asAdmin(financeViewer, '/orders').expect(403);
     });
 
+    it('summarises a period and exports CSVs through signed links (M6c)', async () => {
+      const s = await create();
+      const from = new Date(Date.now() - 7 * 86_400_000).toISOString();
+      const to = new Date(Date.now() + 60_000).toISOString();
+      const summary = data<{
+        shipments: { created: number; byStatus: Record<string, number> };
+        money: { shippingCharged: number };
+        topDestinations: { nodeName: string }[];
+      }>(await live.get(`/reports/summary?from=${from}&to=${to}`).expect(200));
+      expect(summary.shipments.created).toBeGreaterThan(0);
+      expect(summary.money.shippingCharged).toBeGreaterThan(0);
+      expect(summary.topDestinations.length).toBeGreaterThan(0);
+      const tooLong = new Date(Date.now() - 120 * 86_400_000).toISOString();
+      expect(
+        code(
+          await live
+            .get(`/reports/summary?from=${tooLong}&to=${to}`)
+            .expect(422),
+        ),
+      ).toBe('REPORT_RANGE_INVALID');
+
+      const link = data<{ downloadPath: string; expiresAt: string }>(
+        await live.post('/exports/shipments', { from, to }).expect(200),
+      );
+      // No cookie or key: the signed link is the credential.
+      const csv = await http().get(link.downloadPath).expect(200);
+      expect(csv.headers['content-type']).toContain('text/csv');
+      const lines = csv.text.trim().split('\r\n');
+      expect(lines[0]).toMatch(/^created_at,reference,tracking_code,status/);
+      expect(csv.text).toContain(s.trackingCode);
+      const forged = link.downloadPath.replace(/.(?=$)/, (c) =>
+        c === 'A' ? 'B' : 'A',
+      );
+      expect(code(await http().get(forged).expect(403))).toBe(
+        'EXPORT_LINK_INVALID',
+      );
+
+      const wallet = data<{ downloadPath: string }>(
+        await live.post('/exports/wallet-entries', { from, to }).expect(200),
+      );
+      expect(
+        (await http().get(wallet.downloadPath).expect(200)).text,
+      ).toContain('shipment_charge');
+
+      const orders = data<{ downloadPath: string }>(
+        await http()
+          .post('/api/v1/admin/exports/orders')
+          .set('Cookie', opsViewer)
+          .send({ from, to, merchantId })
+          .expect(200),
+      );
+      expect(
+        (await http().get(orders.downloadPath).expect(200)).text,
+      ).toContain(s.trackingCode);
+      await http()
+        .post('/api/v1/admin/exports/orders')
+        .set('Cookie', financeViewer)
+        .send({ from, to })
+        .expect(403);
+    });
+
     it('shows the merchant 360', async () => {
       const view = data<{
         merchant: { id: string; tradingName: string };

@@ -1,7 +1,16 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
+import type { Response } from 'express';
 import { DataSource } from 'typeorm';
-import { EntityNotFoundException } from '../../../common/exceptions';
+import { AuditService } from '../../../common/audit/audit.service';
+import { signToken, verifyToken } from '../../../common/crypto/signed-token';
+import { csvRow, nairaPlain } from '../../../common/csv/csv';
+import {
+  BusinessException,
+  EntityNotFoundException,
+} from '../../../common/exceptions';
+import type { Env } from '../../../config/env.validation';
 import {
   CursorPage,
   CursorPosition,
@@ -85,15 +94,178 @@ interface RawRow {
 }
 
 const ms = cursorTime('o."createdAt"');
+const EXPORT_PURPOSE = 'admin-orders-export';
+const EXPORT_PAGE = 2_000;
+const MAX_EXPORT_DAYS = 93;
+
+export class ExportRangeException extends BusinessException {
+  readonly errorCode = 'REPORT_RANGE_INVALID';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super(
+      `Pick a date range (from before to) of at most ${MAX_EXPORT_DAYS} days`,
+    );
+  }
+}
+
+export class ExportLinkException extends BusinessException {
+  readonly errorCode = 'EXPORT_LINK_INVALID';
+  readonly httpStatus = 403;
+
+  constructor() {
+    super(
+      'This download link is invalid or has expired. Create the export again.',
+    );
+  }
+}
 
 // Admin app › All orders (plan §10): consumer and merchant parcels in one
 // list for ops and support, with the filters they search by. Read-only.
 @Injectable()
 export class AdminOrdersQueryService {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly config: ConfigService<Env, true>,
+    private readonly audit: AuditService,
+  ) {}
 
   async list(filter: AdminOrderFilter): Promise<CursorPage<AdminOrderRow>> {
     const params: unknown[] = [filter.limit + 1];
+    const where = this.conditions(filter, params);
+    const after = decodeCursor(filter.cursor);
+    if (after) {
+      params.push(after.t, after.id);
+      where.push(
+        `(${ms}, o.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
+      );
+    }
+    const rows = await this.rows(
+      `${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY ${ms} DESC, o.id DESC LIMIT $1`,
+      params,
+    );
+    return toCursorPage<RawRow, AdminOrderRow>(
+      rows,
+      filter.limit,
+      (row): CursorPosition => ({ t: row.createdAt.toISOString(), id: row.id }),
+      (row) => this.view(row),
+    );
+  }
+
+  // The list as CSV through a 15-minute signed link (≤ 93 days; no
+  // receiver contact details).
+  async createExport(
+    adminUserId: string,
+    filter: Omit<AdminOrderFilter, 'limit' | 'cursor'> & {
+      from: string;
+      to: string;
+    },
+    now = new Date(),
+  ): Promise<{ downloadPath: string; expiresAt: string }> {
+    const from = new Date(filter.from);
+    const to = new Date(filter.to);
+    if (
+      !(from < to) ||
+      to.getTime() - from.getTime() > MAX_EXPORT_DAYS * 86_400_000
+    ) {
+      throw new ExportRangeException();
+    }
+    const expiresAt = new Date(now.getTime() + 15 * 60_000);
+    const token = signToken(
+      this.secret(),
+      EXPORT_PURPOSE,
+      { ...filter },
+      expiresAt,
+    );
+    await this.audit.record({
+      actor: { type: 'user', id: adminUserId, role: 'admin' },
+      action: 'admin.orders_exported',
+      metadata: { ...filter },
+    });
+    return {
+      downloadPath: `/api/v1/admin/exports/orders/download?token=${encodeURIComponent(token)}`,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  async streamExport(token: string, res: Response): Promise<void> {
+    const filter = verifyToken<
+      Omit<AdminOrderFilter, 'limit'> & Record<string, unknown>
+    >(this.secret(), EXPORT_PURPOSE, token);
+    if (!filter) {
+      throw new ExportLinkException();
+    }
+    const day = (value: unknown): string =>
+      typeof value === 'string' ? value.slice(0, 10) : '';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="locoomo-orders-${day(filter.from)}-to-${day(filter.to)}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.write(
+      csvRow([
+        'created_at',
+        'tracking_code',
+        'source',
+        'merchant',
+        'reference',
+        'status',
+        'origin',
+        'destination',
+        'amount_ngn',
+        'reroute_state',
+        'bag',
+      ]),
+    );
+    let after: { t: Date; id: string } | null = null;
+    for (;;) {
+      const params: unknown[] = [EXPORT_PAGE];
+      const where = this.conditions({ ...filter, limit: 0 }, params);
+      if (after) {
+        params.push(after.t, after.id);
+        where.push(
+          `(o."createdAt", o.id) > ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
+        );
+      }
+      const page = await this.rows(
+        `${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+         ORDER BY o."createdAt", o.id LIMIT $1`,
+        params,
+      );
+      for (const row of page) {
+        res.write(
+          csvRow([
+            row.createdAt.toISOString(),
+            row.trackingCode,
+            row.source,
+            row.merchantName,
+            row.reference,
+            row.status,
+            row.originName,
+            row.destinationName,
+            nairaPlain(Number(row.amountKobo)),
+            row.rerouteState,
+            row.bagCode,
+          ]),
+        );
+      }
+      if (page.length < EXPORT_PAGE) {
+        break;
+      }
+      const last = page[page.length - 1];
+      after = { t: last.createdAt, id: last.id };
+    }
+    res.end();
+  }
+
+  private secret(): string {
+    return this.config.get('JWT_ACCESS_SECRET', { infer: true });
+  }
+
+  // The list's filters as SQL conditions; values appended to `params`.
+  private conditions(filter: AdminOrderFilter, params: unknown[]): string[] {
     const where: string[] = [];
     const add = (sql: (p: string) => string, value: unknown): void => {
       params.push(value);
@@ -123,24 +295,7 @@ export class AdminOrdersQueryService {
     if (filter.from)
       add((p) => `o."createdAt" >= ${p}::timestamptz`, filter.from);
     if (filter.to) add((p) => `o."createdAt" < ${p}::timestamptz`, filter.to);
-    const after = decodeCursor(filter.cursor);
-    if (after) {
-      params.push(after.t, after.id);
-      where.push(
-        `(${ms}, o.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
-      );
-    }
-    const rows = await this.rows(
-      `${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-       ORDER BY ${ms} DESC, o.id DESC LIMIT $1`,
-      params,
-    );
-    return toCursorPage<RawRow, AdminOrderRow>(
-      rows,
-      filter.limit,
-      (row): CursorPosition => ({ t: row.createdAt.toISOString(), id: row.id }),
-      (row) => this.view(row),
-    );
+    return where;
   }
 
   async detail(id: string): Promise<AdminOrderDetail> {
