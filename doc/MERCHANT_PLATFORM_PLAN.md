@@ -1333,6 +1333,22 @@ Decisions:
   Node keeps the parcel aside until ops remove it.
 - **Wallets may go below zero** for storage, like re-pricing: the parcel is already there.
 
+### M6b Ops views: done (2026-11-16)
+
+| Item | Where |
+|---|---|
+| `GET /admin/orders` (+ `/:id`): consumer and merchant orders with filters; detail with masked receiver contact, timeline, own and bag legs, shipment | admin `admin-orders-query.service.ts`, `admin-ops.controller.ts` |
+| `GET /admin/merchants/:id/overview` (merchant 360) | merchants `merchant-overview.service.ts` |
+| `GET /admin/merchant-platform/health`; `ops_alerts` (migration 380, one open alert per check); worker every 10 min emails ops on breach, reminds every 6 h, closes on clear | admin `platform-health.service.ts` |
+
+Decisions:
+- **Read models are raw SQL in the admin module** (and merchants for the 360): read-only,
+  no cross-module writes, so no new service dependencies.
+- **Receiver contact is masked in the admin order view**: support confirms identity; full
+  contact stays with the counter flows that need it.
+- **Health checks and thresholds live in code** (one list, easy to extend); unmatched DVA
+  credits aren't a check because unmatched transfers aren't recorded separately today.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

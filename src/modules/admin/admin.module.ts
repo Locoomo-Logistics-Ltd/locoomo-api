@@ -7,16 +7,28 @@ import { CapacityAuditQueryService } from './application/capacity-audit-query.se
 import { ApprovalRequestEntity } from './infrastructure/entities/approval-request.entity';
 import { AdminApprovalsController } from './interface/admin-approvals.controller';
 import { AdminCapacityAuditController } from './interface/admin-capacity-audit.controller';
+import { AdminOrdersQueryService } from './application/admin-orders-query.service';
+import { PlatformHealthService } from './application/platform-health.service';
+import { AdminOpsController } from './interface/admin-ops.controller';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ApprovalRequestEntity]),
     // AdminPermissionService: approver/requester permission checks.
     IdentityModule,
+    // OutboxService: platform health alert emails.
+    NotificationsModule,
   ],
-  controllers: [AdminCapacityAuditController, AdminApprovalsController],
+  controllers: [
+    AdminCapacityAuditController,
+    AdminApprovalsController,
+    AdminOpsController,
+  ],
   providers: [
     CapacityAuditQueryService,
+    AdminOrdersQueryService,
+    PlatformHealthService,
     ApprovalActionRegistry,
     ApprovalService,
   ],

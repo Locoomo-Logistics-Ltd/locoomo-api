@@ -71,6 +71,7 @@ import {
 } from './infrastructure/entities/merchant-manifest.entity';
 import { ManifestService } from './application/manifest.service';
 import { ReturnStorageService } from './application/return-storage.service';
+import { MerchantOverviewService } from './application/merchant-overview.service';
 import {
   HubManifestsController,
   ManifestsController,
@@ -256,6 +257,7 @@ import { WebhooksController } from './interface/webhooks.controller';
     ReturnBatchService,
     ManifestService,
     ReturnStorageService,
+    MerchantOverviewService,
     ShipmentLabelService,
     ShipmentImportService,
     MerchantPricingService,

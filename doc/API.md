@@ -3607,6 +3607,21 @@ approves it ([Approvals](#approvals-two-admin-rule)): it credits the wallet (`cl
 unique per claim), marks the claim approved and sends `claim.decided` and an email. While a
 payout approval is pending, reject and a second payout answer `409 CLAIM_PAYOUT_PENDING`.
 
+## Admin: all orders, merchant 360, platform health (M6b)
+
+- `GET /api/v1/admin/orders` (`ops`, `support`): consumer and merchant orders, cursor
+  paginated, newest first. Filters: `source`, `merchantId`, `status`, `nodeId` (origin or
+  destination), `trackingCode` (forgiving), `reference` (merchant's), `rerouteState`,
+  `from`/`to`, `limit`, `cursor`. `GET /api/v1/admin/orders/:id`: the order with masked
+  receiver contact, timeline (`order_events`), courier attempts (own and bag legs), bag
+  and merchant shipment.
+- `GET /api/v1/admin/merchants/:id/overview` (`ops`, `support`, `finance`, `kyc`): team
+  counts, API key metadata, webhook endpoint health (24 h delivery counts), both wallets,
+  shipment counts, API use (24 h requests, 4xx/5xx, p95), open items, last 20 audit events.
+- `GET /api/v1/admin/merchant-platform/health` (`ops`, `support`): the checks and open
+  alerts. A worker (10 min) opens an `ops_alerts` row and emails ops when a check passes
+  its threshold, reminds every 6 h, and closes it when the check clears.
+
 ## Admin: reroutes
 
 `GET /api/v1/admin/reroutes?state=pending|auto` (`ops`, `support`) and

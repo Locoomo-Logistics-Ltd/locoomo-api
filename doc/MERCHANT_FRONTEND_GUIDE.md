@@ -2426,11 +2426,53 @@ was full or closed at drop-off, waiting at their origin.
   automatically." A **"Rerouted automatically"** tab: **`GET /admin/reroutes?state=auto`**
   (last 7 days), to check the choice.
 
-### 18.7 Coming 🛠
+### 18.7 All orders ✅ (`ops`, `support`)
 
-- **Merchant 360** (read-only support view): API key metadata, webhook health, wallet,
-  shipments, audit log. There's no "log in as merchant"; this view replaces it.
-- **All orders** for merchant parcels.
+One list for consumer and merchant parcels. **`GET /admin/orders?source=&merchantId=&status=
+&nodeId=&trackingCode=&reference=&rerouteState=&from=&to=&limit=&cursor=`** →
+`CursorPage<AdminOrder>`, newest first.
+
+- Filters: source (Consumer / Merchant), merchant, status, Node (origin **or**
+  destination), tracking code (typed any way, like the scan), the merchant's own
+  reference, "Waiting for reroute" (`rerouteState=pending`), created between.
+- Columns: tracking code, source (merchant name for merchant parcels, with their
+  reference), status, origin → destination, amount, a "Bag BAG-…" chip (`bagCode`) and a
+  "Reroute" chip when `rerouteState` is `pending`.
+
+**Detail:** **`GET /admin/orders/:id`** → the row plus `receiver` (name, **masked** phone
+and email: enough to confirm who's calling), shelf number, collection deadline, return
+reason, refusal / exception, the merchant `shipment` (link to it), the full `events`
+timeline (`{ type, payload, at }`) and every courier `deliveries` attempt (`viaBag: true`
+for a bag's trip). Actions already documented elsewhere hang off this page: Lost or
+damaged (§19.2), Reroute (§18.6d).
+
+### 18.8 Merchant 360 ✅ (`ops`, `support`, `finance`, `kyc`)
+
+An "Overview" tab, first on the merchant page: **`GET /admin/merchants/:id/overview`** →
+
+| Block | Fields |
+|---|---|
+| `merchant` | name, type, status, tier, hub, creation paused, created/approved |
+| `team` | `members`, `pendingInvites` |
+| `apiKeys` | active keys: name, mode, kind, `prefix…last4`, scopes, last used, expiry (never secrets) |
+| `webhooks` | each endpoint: mode, URL, enabled / why disabled, failing since, last success, `last24h` succeeded / failed / pending |
+| `wallets` | `test` and `live` wallet summaries (§15.1) |
+| `shipments` | live counts by status, live created in the last 30 days, test total |
+| `api` | `last24h`: requests, 4xx, 5xx, p95 ms |
+| `open` | open claims, returns waiting, open return batches, open/closed manifests |
+| `recentActivity` | the last 20 audit events: action, actor type, target, time |
+
+There's no "log in as merchant": this view replaces it.
+
+### 18.9 Platform health ✅ (`ops`, `support`)
+
+A dashboard tile and page: **`GET /admin/merchant-platform/health`** →
+`{ checkedAt, ok, checks: [{ key, label, value, unit, threshold, ok }], openAlerts: [{ key,
+openedAt, lastValue }] }`. Show each check green/red (`threshold: null` = informational,
+always green). Checks: outbox lag and failures, webhook lag, failing merchant endpoints,
+reroute queue age, KYC queue age, negative live wallets, sealed bags without a courier,
+bags with missing parcels. Ops are emailed when a check goes red (a reminder every 6
+hours while it stays red), so the page is for looking, not watching.
 
 ---
 
@@ -3237,6 +3279,9 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | PATCH / POST | `/admin/merchant-claims/:id`, `…/:id/reject` | `finance`, `ops` |
 | POST | `/admin/merchant-claims/:id/payout` | `finance` (two-admin approval) |
 | GET / POST | `/admin/reroutes`, `/admin/reroutes/:orderId` | `ops` (`support` can view) |
+| GET | `/admin/orders`, `/admin/orders/:id` | `ops`, `support` |
+| GET | `/admin/merchants/:id/overview` | `ops`, `support`, `finance`, `kyc` |
+| GET | `/admin/merchant-platform/health` | `ops`, `support` |
 | POST | `/admin/merchants/:id/wallet/adjustments` | `finance` (runs after a second `finance` admin approves) |
 | GET | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance`, `ops`, `support` |
 | PUT | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance` |

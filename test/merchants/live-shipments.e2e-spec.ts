@@ -27,6 +27,7 @@ import { LogisticsProviderRegistry } from '../../src/modules/logistics/applicati
 import { DeliveryLegStatus } from '../../src/modules/logistics/domain/delivery-leg';
 import { RerouteService } from '../../src/modules/handoffs/application/reroute.service';
 import { ReturnStorageService } from '../../src/modules/merchants/application/return-storage.service';
+import { PlatformHealthService } from '../../src/modules/admin/application/platform-health.service';
 
 const PASSWORD = 'Correct-Horse-Battery-1';
 const DOMAIN = 'live.e2e.test';
@@ -2099,6 +2100,139 @@ describe('Live merchant shipments (e2e)', () => {
       const notice = await latestEmailTo(`claims-ops@${DOMAIN}`);
       expect(notice.subject).toContain(`Missing from bag ${code_}`);
       expect((await app.get(BagService).run()).missingAlerts).toBe(0);
+    });
+  });
+
+  describe('ops views (M6b)', () => {
+    let opsViewer: string[];
+    let financeViewer: string[];
+    const asAdmin = (cookie: string[], url: string) =>
+      http().get(`/api/v1/admin${url}`).set('Cookie', cookie);
+
+    beforeAll(async () => {
+      opsViewer = await signIn(
+        await makeUser('ops-views', {
+          role: UserRole.ADMIN,
+          adminPermissions: [AdminPermission.OPS],
+        }),
+      );
+      financeViewer = await signIn(
+        await makeUser('finance-views', {
+          role: UserRole.ADMIN,
+          adminPermissions: [AdminPermission.FINANCE],
+        }),
+      );
+    });
+
+    it('lists and opens orders across consumers and merchants', async () => {
+      const s = await create();
+      const page = data<{
+        items: {
+          id: string;
+          trackingCode: string;
+          source: string;
+          reference: string | null;
+        }[];
+      }>(
+        await asAdmin(
+          opsViewer,
+          `/orders?merchantId=${merchantId}&limit=200`,
+        ).expect(200),
+      );
+      expect(page.items.every((o) => o.source === 'merchant')).toBe(true);
+      const byCode = data<{
+        items: { id: string; reference: string | null }[];
+      }>(
+        await asAdmin(
+          opsViewer,
+          `/orders?trackingCode=${s.trackingCode.toLowerCase()}`,
+        ).expect(200),
+      );
+      expect(byCode.items).toHaveLength(1);
+      expect(byCode.items[0].reference).toBe(s.reference);
+      const byReference = data<{ items: { id: string }[] }>(
+        await asAdmin(
+          opsViewer,
+          `/orders?reference=${encodeURIComponent(s.reference)}`,
+        ).expect(200),
+      );
+      expect(byReference.items.map((o) => o.id)).toEqual([byCode.items[0].id]);
+
+      const detail = data<{
+        receiver: { phone: string; email: string | null };
+        shipment: { id: string } | null;
+        events: { type: string }[];
+      }>(await asAdmin(opsViewer, `/orders/${byCode.items[0].id}`).expect(200));
+      expect(detail.receiver.phone).toMatch(/^\*+4567$/);
+      expect(detail.receiver.email).toMatch(/^b\*+@/);
+      expect(detail.shipment?.id).toBe(s.id);
+      expect(detail.events.map((e) => e.type)).toContain('order_placed');
+      await asAdmin(financeViewer, '/orders').expect(403);
+    });
+
+    it('shows the merchant 360', async () => {
+      const view = data<{
+        merchant: { id: string; tradingName: string };
+        wallets: { live: { mode: string }; test: { mode: string } };
+        shipments: { live: Record<string, number> };
+        open: { claims: number };
+        recentActivity: unknown[];
+      }>(
+        await asAdmin(opsViewer, `/merchants/${merchantId}/overview`).expect(
+          200,
+        ),
+      );
+      expect(view.merchant).toMatchObject({
+        id: merchantId,
+        tradingName: 'Live Stores',
+      });
+      expect(view.wallets.live.mode).toBe('live');
+      expect(Object.keys(view.shipments.live).length).toBeGreaterThan(0);
+      expect(typeof view.open.claims).toBe('number');
+    });
+
+    it('reports platform health and alerts ops once per breach', async () => {
+      const health = data<{ checks: { key: string; ok: boolean }[] }>(
+        await asAdmin(opsViewer, '/merchant-platform/health').expect(200),
+      );
+      expect(health.checks.map((c) => c.key)).toContain('outbox_failed_24h');
+
+      const since = new Date();
+      const [failed] = await dataSource.query<{ id: string }[]>(
+        `INSERT INTO outbox_events ("eventType", payload, status, attempts, "lastError")
+         VALUES ('email', '{}'::jsonb, 'failed', 5, 'test breach') RETURNING id`,
+      );
+      try {
+        const service = app.get(PlatformHealthService);
+        expect(await service.run()).toContain('outbox_failed_24h');
+        expect((await latestEmailTo(`ops-views@${DOMAIN}`)).subject).toMatch(
+          /Platform alert/,
+        );
+        // Still breached, but just alerted: no second email.
+        expect(await service.run()).not.toContain('outbox_failed_24h');
+        await dataSource.query(`DELETE FROM outbox_events WHERE id = $1`, [
+          failed.id,
+        ]);
+        await service.run();
+        // Closed once nothing else in the test DB keeps it breached.
+        const [others] = await dataSource.query<{ count: number }[]>(
+          `SELECT count(*)::int AS count FROM outbox_events
+            WHERE status = 'failed' AND "updatedAt" > now() - interval '24 hours'`,
+        );
+        const [open] = await dataSource.query<{ count: number }[]>(
+          `SELECT count(*)::int AS count FROM ops_alerts
+            WHERE key = 'outbox_failed_24h' AND "resolvedAt" IS NULL`,
+        );
+        expect(open.count).toBe(others.count > 0 ? 1 : 0);
+      } finally {
+        await dataSource.query(`DELETE FROM outbox_events WHERE id = $1`, [
+          failed.id,
+        ]);
+        await dataSource.query(
+          `DELETE FROM ops_alerts WHERE "openedAt" >= $1`,
+          [since],
+        );
+      }
     });
   });
 
