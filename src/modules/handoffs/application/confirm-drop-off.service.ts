@@ -11,6 +11,7 @@ import {
 import { OrderTransitionResult } from '../domain/order-transition-result';
 import { BagService } from './bag.service';
 import { OrderLookupService } from './order-lookup.service';
+import { RerouteService } from './reroute.service';
 import { ReceiverNotificationService } from './receiver-notification.service';
 
 const IDEMPOTENCY_SCOPE = 'handoffs.drop-off';
@@ -26,6 +27,7 @@ export class ConfirmDropOffService {
     private readonly deliveryDispatchService: DeliveryDispatchService,
     private readonly nodesService: NodesService,
     private readonly bags: BagService,
+    private readonly reroutes: RerouteService,
   ) {}
 
   async confirm(
@@ -78,13 +80,12 @@ export class ConfirmDropOffService {
             // At a hub, a merchant parcel goes into the bag for its
             // destination and travels with it (M5b). Otherwise hand it to a
             // courier straight away — whichever one routing picks.
+            // A merchant parcel whose destination is full or closed waits
+            // here for ops to pick another (M5c reroute queue).
             if (
-              order.source === 'merchant' &&
-              (await this.bags.isHub(order.originNodeId, manager))
+              !(await this.reroutes.holdIfDestinationBlocked(order, manager))
             ) {
-              await this.bags.place(order, manager);
-            } else {
-              await this.deliveryDispatchService.dispatch(orderId, manager);
+              await this.bags.sendOnward(order, manager);
             }
             return order;
           },

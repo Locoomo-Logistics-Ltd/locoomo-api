@@ -25,6 +25,7 @@ import { BagService } from '../../src/modules/handoffs/application/bag.service';
 import { DeliveryEventsService } from '../../src/modules/logistics/application/delivery-events.service';
 import { LogisticsProviderRegistry } from '../../src/modules/logistics/application/logistics-provider.registry';
 import { DeliveryLegStatus } from '../../src/modules/logistics/domain/delivery-leg';
+import { RerouteService } from '../../src/modules/handoffs/application/reroute.service';
 
 const PASSWORD = 'Correct-Horse-Battery-1';
 const DOMAIN = 'live.e2e.test';
@@ -1767,6 +1768,256 @@ describe('Live merchant shipments (e2e)', () => {
       await handoff(elsewhereOperator, b.orderId, 'intake').expect(200);
       expect(await bagStatus(code_)).toBe('unpacked');
       expect((await shipment(b.s.id)).status).toBe('ready_for_collection');
+    });
+
+    describe('reroutes, arrival caps and reverse bags (M5c)', () => {
+      let rerouteOps: string[];
+      let rerouteSuper: string[];
+      interface QueueItem {
+        orderId: string;
+        state: string;
+        auto: boolean;
+        candidates: { nodeId: string }[];
+      }
+      const orderRow = async (trackingCode: string) =>
+        (
+          await dataSource.query<
+            {
+              id: string;
+              rerouteState: string;
+              rerouteAuto: boolean;
+              destinationNodeId: string;
+              destinationSlotHeld: boolean;
+              bagId: string | null;
+              status: string;
+            }[]
+          >(
+            `SELECT id, "rerouteState", "rerouteAuto", "destinationNodeId",
+                    "destinationSlotHeld", "bagId", status
+               FROM orders WHERE "trackingCode" = $1`,
+            [trackingCode],
+          )
+        )[0];
+      // Full: whatever it holds now is its capacity, so the next parcel
+      // addressed to it overflows.
+      const fill = (nodeId: string) =>
+        dataSource.query(
+          `UPDATE nodes SET capacity = GREATEST("currentCount" + "destinationHeldCount", 1)
+            WHERE id = $1`,
+          [nodeId],
+        );
+      const toFull = async () => {
+        await fill(node.northB);
+        const s = await create({ destinationNodeId: node.northB });
+        await handoff(
+          originOperator,
+          (await orderOf(s.trackingCode)).id,
+          'drop-off',
+        ).expect(200);
+        return s;
+      };
+
+      beforeAll(async () => {
+        rerouteOps = await signIn(
+          await makeUser('reroute-ops', {
+            role: UserRole.ADMIN,
+            adminPermissions: [AdminPermission.OPS],
+          }),
+        );
+        rerouteSuper = await signIn(
+          await makeUser('reroute-super', {
+            role: UserRole.ADMIN,
+            adminPermissions: [AdminPermission.SUPER],
+          }),
+        );
+        // Plenty of room everywhere else, whatever earlier tests left.
+        await dataSource.query(
+          `UPDATE nodes SET capacity = 1000 WHERE name LIKE $1 AND id <> $2`,
+          [`${NODE_PREFIX}%`, node.northB],
+        );
+      });
+
+      it('holds a parcel for a full destination until ops pick another Node', async () => {
+        const s = await toFull();
+        const waiting = await orderRow(s.trackingCode);
+        expect(waiting).toMatchObject({
+          rerouteState: 'pending',
+          destinationSlotHeld: false,
+          bagId: null,
+          status: 'parcel_received_at_origin',
+        });
+        const [legs] = await dataSource.query<{ count: number }[]>(
+          `SELECT count(*)::int AS count FROM delivery_legs WHERE "orderId" = $1`,
+          [waiting.id],
+        );
+        expect(legs.count).toBe(0);
+
+        const queue = data<QueueItem[]>(
+          await http()
+            .get('/api/v1/admin/reroutes')
+            .set('Cookie', rerouteOps)
+            .expect(200),
+        );
+        const item = queue.find((q) => q.orderId === waiting.id)!;
+        expect(item.candidates.length).toBeGreaterThan(0);
+        const target = item.candidates[0].nodeId;
+        expect(target).not.toBe(node.northB);
+
+        await http()
+          .post(`/api/v1/admin/reroutes/${waiting.id}`)
+          .set('Cookie', rerouteOps)
+          .send({ destinationNodeId: target, reason: 'Yaba is full this week' })
+          .expect(200);
+        const moved = await orderRow(s.trackingCode);
+        expect(moved).toMatchObject({
+          rerouteState: 'resolved',
+          rerouteAuto: false,
+          destinationNodeId: target,
+          destinationSlotHeld: true,
+        });
+        // From the hub it travels in the bag for its new destination.
+        expect(moved.bagId).not.toBeNull();
+        const after = data<
+          Shipment & { destination: { nodeId: string; changed: boolean } }
+        >(await live.get(`/shipments/${s.id}`).expect(200));
+        expect(after.destination).toMatchObject({
+          nodeId: target,
+          changed: true,
+        });
+        const [event] = await dataSource.query<{ count: number }[]>(
+          `SELECT count(*)::int AS count FROM webhook_events
+            WHERE "merchantId" = $1 AND type = 'shipment.destination_changed'
+              AND body LIKE $2`,
+          [merchantId, `%${s.id}%`],
+        );
+        expect(event.count).toBe(1);
+        expect(
+          code(
+            await http()
+              .post(`/api/v1/admin/reroutes/${waiting.id}`)
+              .set('Cookie', rerouteOps)
+              .send({ destinationNodeId: target, reason: 'again' })
+              .expect(409),
+          ),
+        ).toBe('REROUTE_NOT_PENDING');
+      });
+
+      it('picks the nearest Node with room after a working day without a decision', async () => {
+        const s = await toFull();
+        const waiting = await orderRow(s.trackingCode);
+        await dataSource.query(
+          `UPDATE orders SET "rerouteRequestedAt" = now() - interval '5 days' WHERE id = $1`,
+          [waiting.id],
+        );
+        expect(
+          (await app.get(RerouteService).run()).rerouted,
+        ).toBeGreaterThanOrEqual(1);
+        const moved = await orderRow(s.trackingCode);
+        expect(moved).toMatchObject({
+          rerouteState: 'resolved',
+          rerouteAuto: true,
+        });
+        const review = data<QueueItem[]>(
+          await http()
+            .get('/api/v1/admin/reroutes?state=auto')
+            .set('Cookie', rerouteOps)
+            .expect(200),
+        );
+        expect(review.map((q) => q.orderId)).toContain(waiting.id);
+        await dataSource.query(
+          `UPDATE nodes SET capacity = 1000 WHERE id = $1`,
+          [node.northB],
+        );
+      });
+
+      it('caps live merchant parcels a day addressed to a small Node', async () => {
+        const [today] = await dataSource.query<{ count: number }[]>(
+          `SELECT count(*)::int AS count FROM merchant_shipments
+            WHERE mode = 'live' AND destination->>'nodeId' = $1
+              AND "createdAt" >= date_trunc('day', now() AT TIME ZONE 'Africa/Lagos') AT TIME ZONE 'Africa/Lagos'`,
+          [node.northA],
+        );
+        const cap = (value: number | null) =>
+          http()
+            .patch(`/api/v1/nodes/${node.northA}`)
+            .set('Cookie', rerouteSuper)
+            .send({ merchantDailyArrivalCap: value })
+            .expect(200);
+        await cap(today.count);
+        expect(
+          code(
+            await live
+              .post('/shipments', {
+                reference: `CAP-${randomUUID().slice(0, 8)}`,
+                destinationNodeId: node.northA,
+                origin: { type: 'node', nodeId: node.origin },
+                receiver: {
+                  name: 'Chioma Okafor',
+                  phone: '08031234567',
+                  email: `c@${DOMAIN}`,
+                },
+                parcel: {
+                  description: 'Earbuds',
+                  size: 'small',
+                  weightKg: 0.4,
+                },
+              })
+              .expect(422),
+          ),
+        ).toBe('DESTINATION_NODE_UNAVAILABLE');
+        await cap(null);
+        await create({ destinationNodeId: node.northA });
+      });
+
+      it('sends a merchant return back to its hub in a reverse bag', async () => {
+        const { s, orderId } = await onShelf();
+        await live.post(`/shipments/${s.id}/return-to-sender`).expect(200);
+        const returning = await orderRow(s.trackingCode);
+        expect(returning.status).toBe('return_initiated');
+        const [bag] = await dataSource.query<
+          {
+            code: string;
+            direction: string;
+            originNodeId: string;
+            destinationNodeId: string;
+          }[]
+        >(
+          `SELECT code, direction, "originNodeId", "destinationNodeId" FROM bags WHERE id = $1`,
+          [returning.bagId],
+        );
+        expect(bag).toMatchObject({
+          direction: 'return',
+          originNodeId: node.destination,
+          destinationNodeId: node.origin,
+        });
+        const [ownLegs] = await dataSource.query<{ count: number }[]>(
+          `SELECT count(*)::int AS count FROM delivery_legs WHERE "orderId" = $1 AND "legType" = 'return'`,
+          [orderId],
+        );
+        expect(ownLegs.count).toBe(0);
+
+        await counter(destinationOperator)
+          .post(`/bags/${bag.code}/seal`)
+          .expect(200);
+        const [leg] = await dataSource.query<{ legType: string }[]>(
+          `SELECT l."legType" FROM delivery_legs l JOIN bags b ON b.id = l."bagId" WHERE b.code = $1`,
+          [bag.code],
+        );
+        expect(leg.legType).toBe('return');
+        await courierSays(bag.code, 'assigned');
+        await courierSays(bag.code, 'picked_up');
+        expect((await orderRow(s.trackingCode)).status).toBe(
+          'return_in_transit',
+        );
+        await courierSays(bag.code, 'delivered');
+        expect((await orderRow(s.trackingCode)).status).toBe(
+          'returned_to_origin',
+        );
+        expect(await bagStatus(bag.code)).toBe('arrived');
+        await handoff(originOperator, orderId, 'return-intake').expect(200);
+        expect(await bagStatus(bag.code)).toBe('unpacked');
+        expect((await shipment(s.id)).status).toBe('return_ready');
+      });
     });
 
     it('flags parcels still missing a day after their bag arrived', async () => {

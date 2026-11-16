@@ -1277,6 +1277,41 @@ Decisions:
 - **Economics** (`/admin/logistics/economics`) still joins legs to orders, so bag legs'
   costs aren't allocated per parcel there yet (M6 reporting).
 
+### M5c Reroutes, arrival caps, reverse bags, load test: done (2026-11-15). M5 complete
+
+| Item | Where |
+|---|---|
+| `orders.rerouteState/Reason/RequestedAt/ResolvedAt/Auto`; `nodes.merchantDailyArrivalCap`; `bags.direction` (open-bag uniqueness per direction). Migration 377 | entities |
+| Drop-off: a merchant parcel whose destination is full (occupancy over capacity) or not active waits (`pending`): no courier, no bag, destination slot released | `RerouteService.holdIfDestinationBlocked`, `confirm-drop-off.service.ts` |
+| Admin queue `GET /admin/reroutes` (3 nearest Nodes with room, PostGIS), `POST /admin/reroutes/:orderId`; worker auto-picks the nearest after 1 working day (`state=auto` to review). Resolution: `OrdersService.changeDestination` publishes `destination_changed` (same status) → new destination slot (capacity subscriber), merchant `shipment.destination_changed` (mirror), buyer email, then on its way (bag or courier); Locoomo absorbs any price difference | `reroute.service.ts`, `admin-reroutes.controller.ts`, `live-shipment-sync.service.ts` |
+| Arrival caps: live shipment create / destination edit refused (`DESTINATION_NODE_UNAVAILABLE`) once today's (Lagos) live merchant shipments to that Node reach its cap | `merchant-shipment.service.ts` |
+| Reverse bags: a merchant return from a destination shelf back to a hub goes into that hub's return bag (`direction: return`, leg type `return`); sealed by staff, at 50, or after 24 h open; unpacked by return-intake at the hub | `BagService.sendBack`, `parcel-recall.service.ts`, `delivery-dispatch.service.ts`, listener guard |
+| Load test `npm run test:load` (`test/load/hub-throughput.load-spec.ts`; env `LOAD_PARCELS`, `LOAD_SCANNERS`, `LOAD_IN_FLIGHT`, `LOAD_PROFILE`) | test/load |
+
+**Load test result** (one hub, 4 scanners × 2 in flight, full production path per scan):
+2,000 parcels to 5 destinations (dev machine, local Postgres, test DB): **15.5 scans/s**,
+latency p50 332 ms / p95 1.8 s / p99 2.8 s, 0 failures; 40 bags auto-sealed at 50 and 40
+bag couriers booked. That's **~447,000 parcels per 8-hour shift** (~1.34 M per 24 h),
+4.5× the 100k/day exit criterion. Seeding 2,000 shipments through the bulk API took 83 s.
+
+Findings:
+- The buyer's "on its way" email renders a QR PNG **inside the drop-off transaction**
+  (~35 ms in Node; 1.3 s under Jest's sandbox, so the harness renders it once). It holds
+  the hub's and the wallet's row locks meanwhile; moving the QR out of the transaction
+  (or caching it) is a cheap win.
+- Under concurrency the **merchant wallet row** is the serialisation point (one merchant's
+  scans all capture against it: ~200 ms average wait at 8 in flight). Fine at 100k/day; the
+  next lever at higher volume is capturing outside the drop-off transaction (hold →
+  capture asynchronously) or batching captures per bag.
+
+Decisions:
+- **Reroute is decided at drop-off** (the parcel is at the origin and nothing is booked):
+  simplest point to hold it. A Node closing while parcels are already on their way to it
+  isn't handled yet (they arrive; ops reroute by hand).
+- **Arrival caps count shipments created for the Node today**, not arrivals: it's what the
+  merchant controls and keeps the check cheap. The picker doesn't hide capped Nodes yet.
+- **Return bags seal themselves after 24 h**: small Nodes may only ever have a few returns.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

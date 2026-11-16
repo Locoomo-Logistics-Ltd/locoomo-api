@@ -305,7 +305,9 @@ export class MerchantShipmentService {
         );
       }
       destination = dto.destinationNodeId
-        ? await this.availableDestination(dto.destinationNodeId)
+        ? await this.availableDestination(dto.destinationNodeId, {
+            live: current.mode === 'live',
+          })
         : null;
       repriced = await this.price(
         current.origin.nodeId!,
@@ -539,15 +541,37 @@ export class MerchantShipmentService {
     return shipment;
   }
 
-  async availableDestination(nodeId: string): Promise<AvailableNode> {
+  // `live`: also the Node's daily cap on merchant parcels (M5c), counted
+  // over today's live shipments addressed to it (Lagos day).
+  async availableDestination(
+    nodeId: string,
+    options: { live?: boolean } = {},
+  ): Promise<AvailableNode> {
+    let node: AvailableNode;
     try {
-      return await this.nodes.getAvailable(nodeId);
+      node = await this.nodes.getAvailable(nodeId);
     } catch (error) {
       if (error instanceof EntityNotFoundException) {
         throw new DestinationNodeUnavailableException();
       }
       throw error;
     }
+    if (options.live) {
+      const [row] = await this.dataSource.query<
+        { cap: number | null; today: number }[]
+      >(
+        `SELECT n."merchantDailyArrivalCap" AS cap,
+                (SELECT count(*)::int FROM merchant_shipments s
+                  WHERE s.mode = 'live' AND s.destination->>'nodeId' = $1
+                    AND s."createdAt" >= $2) AS today
+           FROM nodes n WHERE n.id = $1::uuid`,
+        [nodeId, lagosDayStart(new Date())],
+      );
+      if (row?.cap !== null && row?.cap !== undefined && row.today >= row.cap) {
+        throw new DestinationNodeUnavailableException();
+      }
+    }
+    return node;
   }
 
   private async createOne(
@@ -580,7 +604,9 @@ export class MerchantShipmentService {
           ? new OriginNodeUnavailableException()
           : error;
       });
-    const destination = await this.availableDestination(dto.destinationNodeId);
+    const destination = await this.availableDestination(dto.destinationNodeId, {
+      live,
+    });
     const parcel = parcelFrom(dto.parcel);
     const priced = await this.price(origin.id, destination.id, parcel, {
       merchantId: caller.merchantId,
@@ -826,4 +852,12 @@ export class MerchantShipmentService {
       throw new DailyLimitReachedException(liveShipmentsPerDay);
     }
   }
+}
+
+// Midnight in Lagos (UTC+1) of the day `instant` falls in.
+function lagosDayStart(instant: Date): Date {
+  const lagos = new Date(instant.getTime() + 3_600_000)
+    .toISOString()
+    .slice(0, 10);
+  return new Date(`${lagos}T00:00:00+01:00`);
 }

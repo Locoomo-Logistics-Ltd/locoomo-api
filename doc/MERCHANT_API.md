@@ -365,9 +365,13 @@ Publishable keys with "hide prices" return `amountKobo: null` and `breakdown: nu
 **Picker tips:**
 - Show a map and list, sorted by distance, with opening hours.
 - Store `destinationNodeId` with your order, not the name.
-- If the buyer's Node later closes or fills up, **we handle it**: we reroute the parcel to
-  a nearby Node, tell the buyer, and send you `shipment.destination_changed`. You don't
-  need to ask the buyer again.
+- If the buyer's Node is full or closed when the parcel is dropped off, **we handle it**:
+  the parcel waits at its origin while we pick a nearby Node (within a working day),
+  then we tell the buyer and send you `shipment.destination_changed` (`destination` is
+  the new Node, `destination.changed: true`, `data.previousDestination` the old one).
+  You don't need to ask the buyer again, and you aren't charged any difference.
+- Small Nodes may cap how many merchant parcels a day can be addressed to them; a capped
+  Node answers `422 DESTINATION_NODE_UNAVAILABLE` at creation. Offer the buyer another.
 
 ---
 
@@ -978,8 +982,8 @@ failure), so register the final URL.
 | `merchant.status_changed` | Your account was submitted, approved, suspended, etc. Sent to test and live endpoints |
 | `webhook.test` | Only from *Send test event*, only to that endpoint |
 
-Sent today: every `shipment.*` event above except `collection_reminder` and
-`destination_changed` for live parcels (test mode simulates both), plus `wallet.funded`,
+Sent today: every `shipment.*` event above except `collection_reminder` for live parcels
+(test mode simulates it), plus `wallet.funded`,
 `wallet.low_balance`, `claim.decided`, `manifest.received`, `merchant.status_changed` and
 `webhook.test`. Expect new event types over time
 ([§3](#3-versioning-and-stability)). Ignore the ones you
@@ -1350,6 +1354,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | **Reroutes for live parcels**: a parcel whose buyer's Node is full or closed at drop-off waits at its origin until a nearby Node is picked (within a working day), then `shipment.destination_changed` (§6). Returns heading back to your hub travel in bags too. Node daily caps can make creation answer `422 DESTINATION_NODE_UNAVAILABLE` |
 | 2026-11-15 | **Hub bags** (§10): parcels checked in at a hub travel in sealed bags per destination Node. No API change; shipment statuses and webhooks are as before |
 | 2026-11-15 | **Hubs and manifests** (§10): hub assignment makes `origin: { "type": "hub" }` the default (and quotes work without `originNodeId`); manifests (create, add, close, cancel, PDF document); hub check-in by our label, your reference or your barcode; `manifest.received`; sandbox check-in |
 | 2026-11-15 | **Return batches** (§11.3): `GET /returns`, `POST /return-batches` (one code for up to 200 returns at a Node), get, list, new code, cancel; `POST /test/return-batches/{id}/collect` in the sandbox. Storage fees for uncollected returns are not charged yet |

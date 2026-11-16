@@ -2414,7 +2414,8 @@ describe('Handoffs (e2e)', () => {
       it('answers every failure with the same 404', async () => {
         const responses = await Promise.all(
           [
-            `/api/v1/track/${trackingCode}?t=${token.slice(0, -1)}x`,
+            // Always a different last character (the real one may be 'x').
+            `/api/v1/track/${trackingCode}?t=${token.slice(0, -1)}${token.endsWith('x') ? 'y' : 'x'}`,
             `/api/v1/track/${trackingCode}?phoneLast4=0000`,
             `/api/v1/track/LCM-0000-0000?t=${token}`,
             `/api/v1/track/garbage?phoneLast4=5678`,

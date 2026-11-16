@@ -26,6 +26,10 @@ export class BagEntity {
   @Column({ type: 'varchar', length: 20, default: BagStatus.OPEN })
   status!: BagStatus;
 
+  // `return`: merchant returns going back to their hub (reverse bag).
+  @Column({ type: 'varchar', length: 10, default: 'forward' })
+  direction!: 'forward' | 'return';
+
   @Column({ type: 'int', default: 0 })
   parcelCount!: number;
 

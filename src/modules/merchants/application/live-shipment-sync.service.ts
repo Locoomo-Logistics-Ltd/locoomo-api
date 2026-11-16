@@ -123,6 +123,10 @@ export class LiveShipmentSyncService
     if (change.source !== 'merchant' || change.fromStatus === null) {
       return;
     }
+    // Rerouted while waiting at its origin (M5c): same status, new Node.
+    if (change.eventType === 'destination_changed') {
+      return this.destinationChanged(change, manager);
+    }
     const target = MIRROR[change.toStatus];
     if (!target) {
       return;
@@ -223,6 +227,50 @@ export class LiveShipmentSyncService
         break;
     }
     await this.events.apply(manager, shipment, target, { nodeName, data });
+  }
+
+  // The buyer's Node was full or closed, so ops (or the system) picked
+  // another: shipment.destination_changed with the previous one.
+  private async destinationChanged(
+    change: OrderStatusChanged,
+    manager: EntityManager,
+  ): Promise<void> {
+    const shipment = await manager
+      .getRepository(MerchantShipmentEntity)
+      .createQueryBuilder('s')
+      .where('s."orderId" = :orderId', { orderId: change.orderId })
+      .setLock('pessimistic_write')
+      .getOne();
+    if (!shipment) {
+      return;
+    }
+    const [node] = await manager.query<
+      {
+        id: string;
+        name: string;
+        address: string;
+        city: string;
+        state: string;
+      }[]
+    >(
+      `SELECT n.id, n.name, n.address, n.city, n.state
+         FROM orders o JOIN nodes n ON n.id = o."destinationNodeId"
+        WHERE o.id = $1`,
+      [change.orderId],
+    );
+    const previous = shipment.destination;
+    shipment.destination = {
+      nodeId: node.id,
+      nodeName: node.name,
+      address: node.address,
+      city: node.city,
+      state: node.state,
+    };
+    shipment.destinationChanged = true;
+    await this.events.apply(manager, shipment, 'destination_changed', {
+      nodeName: node.name,
+      data: { previousDestination: previous },
+    });
   }
 
   // Dropped off (plan E2, E4, D14): charge the held quote, then re-price

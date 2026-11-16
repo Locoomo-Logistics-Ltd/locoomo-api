@@ -1005,7 +1005,9 @@ endpoint, a Node is never removed, only status-transitioned.
 
 Request (all optional): `name`, `address`, `city`, `state`, `country`, `latitude`,
 `longitude`, `capacity`, `contactPhone`, `openingHours`, `operatingHours`, `status`,
-`isHub` (receives bulk merchant inbound against manifests, M5), `forceLocation`. Changing any address field or the coordinates re-runs the
+`isHub` (receives bulk merchant inbound against manifests, M5), `merchantDailyArrivalCap`
+(most live merchant parcels a day that may be addressed to this Node, Lagos day; `null`
+removes it), `forceLocation`. Changing any address field or the coordinates re-runs the
 [location check](#location-check) (`forceLocation: true` skips it — use this to correct a
 pin for an address Google doesn't know). `onboardingType` is immutable after
 creation and isn't accepted here. `isPubliclyVisible` also isn't accepted here — that's
@@ -3594,6 +3596,12 @@ Live claims only (`403 LIVE_MODE_ONLY`). A payout runs when a second `finance` a
 approves it ([Approvals](#approvals-two-admin-rule)): it credits the wallet (`claim_credit`,
 unique per claim), marks the claim approved and sends `claim.decided` and an email. While a
 payout approval is pending, reject and a second payout answer `409 CLAIM_PAYOUT_PENDING`.
+
+## Admin: reroutes
+
+`GET /api/v1/admin/reroutes?state=pending|auto` (`ops`, `support`) and
+`POST /api/v1/admin/reroutes/:orderId` `{ destinationNodeId, reason }` (`ops`). Details:
+[LOGISTICS_API.md §8.0b](LOGISTICS_API.md#80b-reroutes--adminreroutes-ops).
 
 ## Admin: orders
 

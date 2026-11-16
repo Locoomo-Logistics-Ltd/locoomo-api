@@ -23,7 +23,10 @@ import type {
   DeliveryEventListener,
   DeliveryEventNotice,
 } from '../../logistics/application/delivery-event-types';
-import { DeliveryEventType } from '../../logistics/application/delivery-vocabulary';
+import {
+  DeliveryEventType,
+  DeliveryLegType,
+} from '../../logistics/application/delivery-vocabulary';
 import { NodeOperatorQueryService } from '../../node-operators/application/node-operator-query.service';
 import { renderEmail } from '../../notifications/application/email-template';
 import { OutboxService } from '../../notifications/application/outbox.service';
@@ -43,6 +46,11 @@ import { BagNotSealableException } from '../domain/exceptions/bag.exceptions';
 import { BagEntity } from '../infrastructure/entities/bag.entity';
 
 const INTERVAL_NAME = 'bags';
+// A return bag left open this long is sealed by the sweep.
+const RETURN_BAG_OPEN_HOURS = 24;
+// Where parcels wait to be scanned in after their bag arrives: forward
+// bags at the destination, return bags back at the hub.
+const AWAITING_UNPACK = ['arrived_at_destination', 'returned_to_origin'];
 const INTERVAL_MS = 15 * 60_000;
 
 export interface BagNodeRef {
@@ -142,37 +150,84 @@ export class BagService
     return row?.isHub === true;
   }
 
-  // Inside the drop-off transaction (the order is locked): into the open
-  // bag for its destination, opened now if there's none.
+  // A parcel leaving its origin: bagged at a hub (merchant parcels), else
+  // its own courier.
+  async sendOnward(
+    order: {
+      id: string;
+      source: string | null;
+      originNodeId: string;
+      destinationNodeId: string;
+    },
+    manager: EntityManager,
+  ): Promise<PlacedInBag | null> {
+    if (
+      order.source === 'merchant' &&
+      (await this.isHub(order.originNodeId, manager))
+    ) {
+      return this.place(order, manager);
+    }
+    await this.dispatch.dispatch(order.id, manager);
+    return null;
+  }
+
+  // A merchant return going back to its hub travels in the reverse bag for
+  // that hub (plan §7.2); anything else gets its own return courier.
+  async sendBack(
+    order: {
+      id: string;
+      source: string | null;
+      originNodeId: string;
+      destinationNodeId: string;
+    },
+    manager: EntityManager,
+  ): Promise<PlacedInBag | null> {
+    if (
+      order.source === 'merchant' &&
+      (await this.isHub(order.originNodeId, manager))
+    ) {
+      return this.place(order, manager, 'return');
+    }
+    await this.dispatch.dispatch(order.id, manager, DeliveryLegType.RETURN);
+    return null;
+  }
+
+  // Inside the transaction that moved the order (it's locked): into the
+  // open bag for its route, opened now if there's none. Forward bags go
+  // hub → destination; return bags go destination Node → hub.
   async place(
     order: { id: string; originNodeId: string; destinationNodeId: string },
     manager: EntityManager,
+    direction: 'forward' | 'return' = 'forward',
   ): Promise<PlacedInBag> {
+    const from =
+      direction === 'forward' ? order.originNodeId : order.destinationNodeId;
+    const to =
+      direction === 'forward' ? order.destinationNodeId : order.originNodeId;
     let bag: BagEntity | null = null;
     // Twice at most: another drop-off may fill (and seal) the bag between
     // our insert and our lock; then a fresh one opens.
     for (let attempt = 0; !bag && attempt < 2; attempt++) {
       await manager.query(
-        `INSERT INTO bags (code, "originNodeId", "destinationNodeId", status)
-         VALUES ($1, $2, $3, 'open')
-         ON CONFLICT ("originNodeId", "destinationNodeId") WHERE status = 'open'
+        `INSERT INTO bags (code, "originNodeId", "destinationNodeId", status, direction)
+         VALUES ($1, $2, $3, 'open', $4)
+         ON CONFLICT ("originNodeId", "destinationNodeId", direction) WHERE status = 'open'
          DO NOTHING`,
-        [newBagCode(), order.originNodeId, order.destinationNodeId],
+        [newBagCode(), from, to, direction],
       );
       bag = await manager
         .getRepository(BagEntity)
         .createQueryBuilder('b')
         .setLock('pessimistic_write')
         .where(
-          `b."originNodeId" = :origin AND b."destinationNodeId" = :destination AND b.status = 'open'`,
-          { origin: order.originNodeId, destination: order.destinationNodeId },
+          `b."originNodeId" = :from AND b."destinationNodeId" = :to
+             AND b.direction = :direction AND b.status = 'open'`,
+          { from, to, direction },
         )
         .getOne();
     }
     if (!bag) {
-      throw new Error(
-        `No open bag ${order.originNodeId} → ${order.destinationNodeId} for order ${order.id}`,
-      );
+      throw new Error(`No open bag ${from} → ${to} for order ${order.id}`);
     }
     await manager.query(`UPDATE orders SET "bagId" = $1 WHERE id = $2`, [
       bag.id,
@@ -299,7 +354,8 @@ export class BagService
     if (change.source !== 'merchant') {
       return;
     }
-    // Lost or damaged while still being packed: out of the bag.
+    // Lost or damaged while still being packed (either direction): out of
+    // the bag.
     if (change.toStatus === 'exception') {
       const [row] = await manager.query<{ bagId: string | null }[]>(
         `UPDATE orders o SET "bagId" = NULL
@@ -316,26 +372,50 @@ export class BagService
         );
       }
     }
-    // Scanned in at the destination (or turned round, or lost there): the
-    // bag is unpacked once none of its parcels is still waiting.
-    if (change.fromStatus === 'arrived_at_destination') {
+    // Scanned in where the bag arrived (or turned round, or lost there):
+    // unpacked once none of its parcels is still waiting.
+    if (
+      change.fromStatus !== null &&
+      AWAITING_UNPACK.includes(change.fromStatus)
+    ) {
       await manager.query(
         `UPDATE bags b SET status = 'unpacked', "unpackedAt" = now(), "updatedAt" = now()
           FROM orders o
          WHERE o.id = $1 AND b.id = o."bagId" AND b.status = 'arrived'
            AND NOT EXISTS (
              SELECT 1 FROM orders x
-              WHERE x."bagId" = b.id AND x.status = 'arrived_at_destination')`,
-        [change.orderId],
+              WHERE x."bagId" = b.id AND x.status = ANY($2))`,
+        [change.orderId, AWAITING_UNPACK],
       );
     }
   }
 
   // ─── Worker ───────────────────────────────────────────────────────────
 
-  // Sealed bags no bag courier could take are routed again; parcels still
+  // Return bags at small Nodes rarely fill: sealed after a day open. Sealed
+  // bags no bag courier could take are routed again; parcels still
   // unscanned a day after their bag arrived are flagged to ops (once).
   async run(now = new Date()): Promise<BagSweepRun> {
+    const stale = await this.dataSource.query<{ id: string }[]>(
+      `SELECT id FROM bags
+        WHERE status = 'open' AND direction = 'return' AND "createdAt" <= $1
+        LIMIT 100`,
+      [new Date(now.getTime() - RETURN_BAG_OPEN_HOURS * 3_600_000)],
+    );
+    for (const { id } of stale) {
+      await this.dataSource.transaction(async (manager) => {
+        const bag = await manager
+          .getRepository(BagEntity)
+          .createQueryBuilder('b')
+          .setLock('pessimistic_write')
+          .where(`b.id = :id AND b.status = 'open'`, { id })
+          .getOne();
+        if (bag) {
+          await this.seal(manager, bag, null);
+        }
+      });
+    }
+
     const waiting = await this.dataSource.query<{ id: string }[]>(
       `SELECT b.id FROM bags b
         WHERE b.status = 'sealed'
@@ -369,11 +449,11 @@ export class BagService
               array_agg(o."trackingCode" ORDER BY o."trackingCode") AS "trackingCodes"
          FROM bags b
          JOIN nodes n ON n.id = b."destinationNodeId"
-         JOIN orders o ON o."bagId" = b.id AND o.status = 'arrived_at_destination'
+         JOIN orders o ON o."bagId" = b.id AND o.status = ANY($2)
         WHERE b.status = 'arrived' AND b."arrivedAt" <= $1 AND b."missingAlertedAt" IS NULL
         GROUP BY b.id, n.name
         LIMIT 100`,
-      [cutoff],
+      [cutoff, AWAITING_UNPACK],
     );
     for (const bag of missing) {
       await this.dataSource.transaction(async (manager) => {
@@ -417,9 +497,13 @@ export class BagService
     userId: string | null,
   ): Promise<void> {
     const [{ count }] = await manager.query<{ count: number }[]>(
-      `SELECT count(*)::int AS count FROM orders
-        WHERE "bagId" = $1 AND status = 'parcel_received_at_origin'`,
-      [bag.id],
+      `SELECT count(*)::int AS count FROM orders WHERE "bagId" = $1 AND status = $2`,
+      [
+        bag.id,
+        bag.direction === 'return'
+          ? 'return_initiated'
+          : 'parcel_received_at_origin',
+      ],
     );
     bag.parcelCount = count;
     bag.sealedAt = new Date();
