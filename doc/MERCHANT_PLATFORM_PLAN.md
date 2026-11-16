@@ -1312,6 +1312,27 @@ Decisions:
   merchant controls and keeps the check cheap. The picker doesn't hide capped Nodes yet.
 - **Return bags seal themselves after 24 h**: small Nodes may only ever have a few returns.
 
+### M6a Abandoned returns: done (2026-11-16)
+
+M6 ships in slices: **M6a abandoned returns** (this) → M6b ops views (all orders, merchant
+360, platform health + alerts) → M6c merchant reports and exports → M6d privacy
+(retention/redaction jobs, data-subject export/erase) and the ops runbook.
+
+| Item | Where |
+|---|---|
+| Order status `disposed` (migration 378, own migration for the enum value); `merchant_shipments.storageFeesFrom/storageChargedThrough/disposeAt/storageNoticeSentAt/disposalNoticeSentAt` (migration 379) | orders, merchants entities |
+| Hourly worker: schedule (10 working days → fees, +30 days → disposal), charge `RETURN_STORAGE_FEE_KOBO` per parcel per Lagos day (`storage_fee`, `externalRef storage:<shipment>:<day>`), notices (fees start, 7 days before disposal, disposed), disposal (live: handoffs `ReturnCollectionService.dispose` → order `disposed`, slot freed, code voided, mirror → `shipment.disposed`; test: direct); ops emailed parcels to remove | `return-storage.service.ts`, `domain/return-storage.ts` |
+| Storage fees on invoices ("Storage of uncollected returns", parcel-days); dates on `shipment.return` and `GET /returns` | `domain/statement.ts`, `shipment-view.ts`, `return-batch.service.ts` |
+
+Decisions:
+- **F4 defaults** (₦100/day, 30 days to disposal) are applied; the fee is an env setting
+  (`RETURN_STORAGE_FEE_KOBO`) until an admin config screen exists. F4 still needs ops/legal
+  confirmation, and the merchant terms must say so before production.
+- **Charged per Lagos day, catching up** if the worker missed days; each day once.
+- **Disposal is a status, not a physical act**: the system marks it and tells ops; the
+  Node keeps the parcel aside until ops remove it.
+- **Wallets may go below zero** for storage, like re-pricing: the parcel is already there.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

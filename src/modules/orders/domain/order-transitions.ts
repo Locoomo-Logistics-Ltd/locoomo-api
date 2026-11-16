@@ -40,7 +40,12 @@ export const ORDER_TRANSITIONS: Partial<Record<OrderStatus, OrderStatus[]>> = {
     OrderStatus.READY_FOR_SENDER_COLLECTION,
     X,
   ],
-  [OrderStatus.READY_FOR_SENDER_COLLECTION]: [OrderStatus.RETURN_COMPLETED, X],
+  [OrderStatus.READY_FOR_SENDER_COLLECTION]: [
+    OrderStatus.RETURN_COMPLETED,
+    // Never collected (merchant parcels, plan D20).
+    OrderStatus.DISPOSED,
+    X,
+  ],
 };
 
 export function assertLegalTransition(

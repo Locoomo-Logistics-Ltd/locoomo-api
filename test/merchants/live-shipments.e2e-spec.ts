@@ -26,6 +26,7 @@ import { DeliveryEventsService } from '../../src/modules/logistics/application/d
 import { LogisticsProviderRegistry } from '../../src/modules/logistics/application/logistics-provider.registry';
 import { DeliveryLegStatus } from '../../src/modules/logistics/domain/delivery-leg';
 import { RerouteService } from '../../src/modules/handoffs/application/reroute.service';
+import { ReturnStorageService } from '../../src/modules/merchants/application/return-storage.service';
 
 const PASSWORD = 'Correct-Horse-Battery-1';
 const DOMAIN = 'live.e2e.test';
@@ -1249,6 +1250,68 @@ describe('Live merchant shipments (e2e)', () => {
       expect((await shipment(s.id)).status).toBe('return_ready');
       return { s, orderId };
     }
+
+    it('charges storage for a return left waiting, then disposes of it (M6a)', async () => {
+      const { s: parcel, orderId } = await returnReady();
+      const storage = app.get(ReturnStorageService);
+      await storage.run();
+      const [row] = await dataSource.query<
+        { storageFeesFrom: Date; disposeAt: Date }[]
+      >(
+        `SELECT "storageFeesFrom", "disposeAt" FROM merchant_shipments WHERE id = $1`,
+        [parcel.id],
+      );
+      expect(row.storageFeesFrom.getTime()).toBeGreaterThan(Date.now());
+      const view = data<
+        Shipment & { return: { storageFeesFrom: string; disposeAt: string } }
+      >(await live.get(`/shipments/${parcel.id}`).expect(200));
+      expect(view.return).toMatchObject({
+        storageFeesFrom: row.storageFeesFrom.toISOString(),
+        disposeAt: row.disposeAt.toISOString(),
+      });
+
+      const entries = async () =>
+        (
+          await dataSource.query<{ count: number; total: number }[]>(
+            `SELECT count(*)::int AS count, coalesce(sum("amountKobo"), 0)::int AS total
+               FROM wallet_entries WHERE "shipmentId" = $1 AND type = 'storage_fee'`,
+            [parcel.id],
+          )
+        )[0];
+      // A day and a bit into storage: two Lagos days charged, once each.
+      const dayTwo = new Date(row.storageFeesFrom.getTime() + 26 * 3_600_000);
+      await storage.run(dayTwo);
+      const after = await entries();
+      expect(after.count).toBeGreaterThanOrEqual(2);
+      expect(after.total).toBe(-10_000 * after.count);
+      await storage.run(dayTwo);
+      expect((await entries()).count).toBe(after.count);
+      // To the team (owner, admins, operations), not the contact address.
+      expect((await latestEmailTo(`owner@${DOMAIN}`)).subject).toMatch(
+        /Storage fees have started/,
+      );
+
+      const slotsBefore = await originCount();
+      await storage.run(new Date(row.disposeAt.getTime() + 3_600_000));
+      expect((await orderOf(parcel.trackingCode)).status).toBe('disposed');
+      expect((await shipment(parcel.id)).status).toBe('disposed');
+      expect(await originCount()).toBe(slotsBefore - 1);
+      const [codes] = await dataSource.query<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM handoff_codes
+          WHERE "orderId" = $1 AND type = 'sender_collection' AND "usedAt" IS NULL`,
+        [orderId],
+      );
+      expect(codes.count).toBe(0);
+      const [event] = await dataSource.query<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM webhook_events
+          WHERE "merchantId" = $1 AND type = 'shipment.disposed' AND body LIKE $2`,
+        [merchantId, `%${parcel.id}%`],
+      );
+      expect(event.count).toBe(1);
+      expect((await latestEmailTo(`claims-ops@${DOMAIN}`)).subject).toMatch(
+        /abandoned return/,
+      );
+    });
 
     it('hands a whole batch back at the Node on one code', async () => {
       const a = await returnReady();

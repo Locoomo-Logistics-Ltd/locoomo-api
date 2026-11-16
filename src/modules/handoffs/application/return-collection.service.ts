@@ -105,4 +105,25 @@ export class ReturnCollectionService {
     );
     return true;
   }
+
+  // An abandoned merchant return (plan D20, M6a): disposed of instead of
+  // handed back. Its shelf space and Node slot free up and its sender code
+  // stops working. False when it isn't waiting any more.
+  async dispose(manager: EntityManager, orderId: string): Promise<boolean> {
+    const [row] = await manager.query<{ status: string }[]>(
+      `SELECT status FROM orders WHERE id = $1 FOR UPDATE`,
+      [orderId],
+    );
+    if (row?.status !== 'ready_for_sender_collection') {
+      return false;
+    }
+    const order = await this.ordersService.markDisposed(orderId, manager);
+    await this.nodesService.releaseCapacitySlot(order.originNodeId, manager);
+    await manager.query(
+      `UPDATE handoff_codes SET "usedAt" = now()
+        WHERE "orderId" = $1 AND type = $2 AND "usedAt" IS NULL`,
+      [orderId, HandoffCodeType.SENDER_COLLECTION],
+    );
+    return true;
+  }
 }

@@ -15,6 +15,7 @@ import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
 import { UserEntity } from '../../src/modules/identity/infrastructure/entities/user.entity';
 import { ApiRateLimiter } from '../../src/modules/merchants/application/api-rate-limiter';
 import { NODE_CONTACT_FIELDS } from '../fixtures/node-contact.fixture';
+import { ReturnStorageService } from '../../src/modules/merchants/application/return-storage.service';
 
 const PASSWORD = 'Correct-Horse-Battery-1';
 const DOMAIN = 'claims.e2e.test';
@@ -606,6 +607,30 @@ describe('Merchant claims and return batches, sandbox (e2e)', () => {
             .expect(409),
         ),
       ).toBe('RETURN_BATCH_NOT_OPEN');
+    });
+
+    it('stores, charges and disposes of abandoned test returns too (M6a)', async () => {
+      const r = await returnReady();
+      const storage = app.get(ReturnStorageService);
+      await storage.run();
+      const [row] = await dataSource.query<
+        { storageFeesFrom: Date; disposeAt: Date }[]
+      >(
+        `SELECT "storageFeesFrom", "disposeAt" FROM merchant_shipments WHERE id = $1`,
+        [r.id],
+      );
+      const before = await balance();
+      await storage.run(new Date(row.storageFeesFrom.getTime() + 3_600_000));
+      expect(await balance()).toBeLessThan(before);
+      const types = data<{ items: { type: string; shipmentId: string }[] }>(
+        await api(key).get('/wallet/entries?type=storage_fee').expect(200),
+      ).items;
+      expect(types.some((e) => e.shipmentId === r.id)).toBe(true);
+      await storage.run(new Date(row.disposeAt.getTime() + 3_600_000));
+      const after = data<{ status: string }>(
+        await api(key).get(`/shipments/${r.id}`).expect(200),
+      );
+      expect(after.status).toBe('disposed');
     });
 
     it('cancels a batch, freeing its returns for another', async () => {

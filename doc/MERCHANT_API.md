@@ -788,10 +788,20 @@ stops working) and **`POST /return-batches/{id}/cancel`** (the returns go back t
 on their own codes). These need scope `shipments:write`, since a batch carries its code.
 `409 RETURN_BATCH_NOT_OPEN` once a batch is collected or cancelled.
 
-**Uncollected returns:** you have **10 working days** free after `return_ready`.
-*Coming:* after that, a small daily storage fee charged to your wallet, and after 30 more
-days (with email notices) disposal under the merchant terms (`shipment.disposed`). Neither
-is charged or done yet.
+**Uncollected returns.** Storage is free for **10 working days** after `return_ready`.
+After that a **storage fee of ₦100 per parcel per day** is charged to your wallet (one
+`storage_fee` line per parcel per day). **30 days** after fees start, a return still not
+collected is **disposed of** under the merchant terms: the shipment becomes `disposed`
+(`shipment.disposed`) and fees stop. We email your team (owner, admins, operations) when
+fees start and **7 days** before disposal. A return's `return` object shows both dates:
+
+```json
+"return": { "reason": "not_collected", "readyForCollectionAt": "2026-11-02T10:05:00.000Z",
+            "storageFeesFrom": "2026-11-16T10:05:00.000Z", "disposeAt": "2026-12-16T10:05:00.000Z" }
+```
+
+They're on `GET /returns` items too. Collecting (on its own code or in a return batch)
+stops the fees. Test returns go through the same steps on your test wallet.
 
 ---
 
@@ -1117,6 +1127,7 @@ be negative after a re-measure (see above).
 | `shipment_adjustment` | Re-priced after we measured it | − (or + if it came out cheaper) |
 | `adjustment` | A correction by Locoomo (approved by two Locoomo staff) | ± |
 | `claim_credit` | An approved claim's payout (§15) | + |
+| `storage_fee` | A day's storage for a return left past its free period (§11.3) | − |
 | `refund` | Balance refunded to your bank account *(on closure)* | − |
 | `test_funding` | Test mode only: the starting ₦1,000,000 and resets | ± |
 
@@ -1354,6 +1365,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-16 | **Storage fees and disposal for uncollected returns** (§11.3): ₦100 per parcel per day after 10 free working days (`storage_fee` wallet lines, on your monthly invoice), disposal 30 days later (`shipment.disposed`), with email notices. `return.storageFeesFrom` and `return.disposeAt` on shipments and `GET /returns` |
 | 2026-11-15 | **Reroutes for live parcels**: a parcel whose buyer's Node is full or closed at drop-off waits at its origin until a nearby Node is picked (within a working day), then `shipment.destination_changed` (§6). Returns heading back to your hub travel in bags too. Node daily caps can make creation answer `422 DESTINATION_NODE_UNAVAILABLE` |
 | 2026-11-15 | **Hub bags** (§10): parcels checked in at a hub travel in sealed bags per destination Node. No API change; shipment statuses and webhooks are as before |
 | 2026-11-15 | **Hubs and manifests** (§10): hub assignment makes `origin: { "type": "hub" }` the default (and quotes work without `originNodeId`); manifests (create, add, close, cancel, PDF document); hub check-in by our label, your reference or your barcode; `manifest.received`; sandbox check-in |

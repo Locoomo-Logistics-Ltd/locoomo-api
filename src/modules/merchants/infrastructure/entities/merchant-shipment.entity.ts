@@ -143,6 +143,24 @@ export class MerchantShipmentEntity {
     readyForCollectionAt: string | null;
   } | null;
 
+  // Abandoned returns (M6a, plan D20): when storage fees start (10 working
+  // days after return_ready), the last Lagos day charged, when it will be
+  // disposed of, and the notices sent.
+  @Column({ type: 'timestamptz', nullable: true })
+  storageFeesFrom!: Date | null;
+
+  @Column({ type: 'date', nullable: true })
+  storageChargedThrough!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  disposeAt!: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  storageNoticeSentAt!: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  disposalNoticeSentAt!: Date | null;
+
   @Column({ type: 'jsonb', nullable: true })
   exceptionInfo!: {
     type: ExceptionType;

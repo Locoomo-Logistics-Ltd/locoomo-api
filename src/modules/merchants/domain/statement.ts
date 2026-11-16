@@ -95,6 +95,7 @@ export function statementTotals(
 export const INVOICED_TYPES: readonly string[] = [
   WalletEntryType.SHIPMENT_CHARGE,
   WalletEntryType.SHIPMENT_ADJUSTMENT,
+  WalletEntryType.STORAGE_FEE,
 ];
 
 export interface InvoiceLine {
@@ -126,6 +127,9 @@ export function invoiceTotals(
   const adjustments = entries.filter(
     (e) => e.type === (WalletEntryType.SHIPMENT_ADJUSTMENT as string),
   );
+  const storage = entries.filter(
+    (e) => e.type === (WalletEntryType.STORAGE_FEE as string),
+  );
   const lines: InvoiceLine[] = [];
   if (charges.length > 0) {
     lines.push({
@@ -139,6 +143,13 @@ export function invoiceTotals(
       description: 'Re-pricing after measuring at drop-off',
       quantity: adjustments.length,
       amountKobo: -adjustments.reduce((sum, e) => sum + e.amountKobo, 0),
+    });
+  }
+  if (storage.length > 0) {
+    lines.push({
+      description: 'Storage of uncollected returns (parcel-days)',
+      quantity: storage.length,
+      amountKobo: -storage.reduce((sum, e) => sum + e.amountKobo, 0),
     });
   }
   const totalKobo = lines.reduce((sum, line) => sum + line.amountKobo, 0);

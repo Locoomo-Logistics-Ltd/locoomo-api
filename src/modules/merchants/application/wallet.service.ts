@@ -353,6 +353,43 @@ export class WalletService {
     });
   }
 
+  // One day's storage for an uncollected return (plan D20). The unique
+  // externalRef `storage:<shipment>:<day>` charges each day once. May take
+  // the wallet below zero (like re-pricing): the parcel is already there.
+  async chargeStorage(
+    manager: EntityManager,
+    input: {
+      merchantId: string;
+      mode: ApiKeyMode;
+      shipmentId: string;
+      day: string;
+      amountKobo: number;
+      description: string;
+    },
+  ): Promise<WalletEntryEntity | null> {
+    const externalRef = `storage:${input.shipmentId}:${input.day}`;
+    const [seen] = await manager.query<{ id: string }[]>(
+      `SELECT id FROM wallet_entries WHERE "externalRef" = $1`,
+      [externalRef],
+    );
+    if (seen) {
+      return null;
+    }
+    const wallet = await this.walletFor(
+      manager,
+      input.merchantId,
+      input.mode,
+      true,
+    );
+    return this.post(manager, wallet, {
+      type: WalletEntryType.STORAGE_FEE,
+      amountKobo: -input.amountKobo,
+      description: input.description,
+      shipmentId: input.shipmentId,
+      externalRef,
+    });
+  }
+
   // An approved claim's payout (plan D18). The unique externalRef
   // `claim:<id>` makes a second payout for the same claim fail.
   async creditClaim(

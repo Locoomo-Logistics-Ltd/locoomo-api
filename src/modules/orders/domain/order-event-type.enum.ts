@@ -39,4 +39,6 @@ export enum OrderEventType {
   // A new destination was chosen (ops, or automatically after a working
   // day). Published on the status bus with the status unchanged.
   DESTINATION_CHANGED = 'destination_changed',
+  // Abandoned return disposed of (M6a).
+  DISPOSED = 'disposed',
 }

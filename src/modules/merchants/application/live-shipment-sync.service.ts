@@ -40,6 +40,7 @@ const MIRROR: Readonly<Record<string, ShipmentStatus>> = {
   cancelled: S.CANCELLED,
   refused: S.REFUSED,
   exception: S.EXCEPTION,
+  disposed: S.DISPOSED,
 };
 
 interface OrderFacts {

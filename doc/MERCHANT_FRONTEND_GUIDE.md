@@ -1803,6 +1803,7 @@ date range (`from` inclusive, `to` exclusive). Infinite scroll.
 | `shipment_adjustment` | Re-priced after measuring |
 | `adjustment` | Adjustment by Locoomo |
 | `claim_credit` | Claim payout |
+| `storage_fee` | Storage: return not collected |
 | `refund` | Refund to bank |
 | `test_funding` | Test funds |
 
@@ -1997,9 +1998,12 @@ merchant collects them there. Viewing needs `shipments.read`; batches need
   `CursorPage<ReturnItem>`, oldest first. Group the rows by `node` (one card per Node:
   name, address, count). Columns: reference, tracking code, reason (`not_collected` "Buyer
   didn't collect", `delivery_failed` "Couldn't be delivered", `merchant_request` "You
-  asked for it back"), "Waiting since" (`readyForCollectionAt`) with a warning once it's
-  close to **10 working days** (free storage ends), and a "In batch RB-…" chip when
-  `returnBatch` is set.
+  asked for it back"), "Waiting since" (`readyForCollectionAt`), and a "In batch RB-…"
+  chip when `returnBatch` is set.
+  - **Storage:** before `storageFeesFrom` show "Free until {date}"; after it, a warning
+    badge "₦100/day since {date}". Once `disposeAt` is within 7 days, a red badge
+    "Disposed of on {date} if not collected". (Both dates are `null` until the return has
+    been waiting for a short while; show "Free storage" then.)
 - **On the way back** — the same call with `state=incoming`.
 
 **Create a batch:** on a Node card, tick returns (default: all not already in a batch, up
@@ -2771,7 +2775,12 @@ export interface Shipment {
     method: 'code' | 'id_check' | null;
     collectorName: string | null;
   };
-  return: { reason: 'not_collected' | 'delivery_failed' | 'merchant_request'; readyForCollectionAt?: string | null } | null;
+  return: {
+    reason: 'not_collected' | 'delivery_failed' | 'merchant_request';
+    readyForCollectionAt?: string | null;
+    storageFeesFrom?: string | null;   // abandoned returns: ₦100/day from here
+    disposeAt?: string | null;         // disposed of then if not collected
+  } | null;
   exception: { type: 'lost' | 'damaged'; reportedAt: string; claimId?: string | null } | null;
   notifyReceiver: NotifyReceiver;
   metadata: Record<string, string>;
@@ -2822,7 +2831,7 @@ export interface MerchantDiscount {
 }
 export type WalletEntryType =
   | 'top_up' | 'shipment_charge' | 'shipment_adjustment' | 'adjustment'
-  | 'claim_credit' | 'refund' | 'test_funding';
+  | 'claim_credit' | 'storage_fee' | 'refund' | 'test_funding';
 export interface WalletEntry {
   id: string;
   type: WalletEntryType | string;          // tolerate new types
@@ -2892,6 +2901,8 @@ export interface ReturnItem {
   status: 'return_ready' | 'returning';
   returnReason: 'not_collected' | 'delivery_failed' | 'merchant_request' | string | null;
   readyForCollectionAt: string | null;
+  storageFeesFrom: string | null;
+  disposeAt: string | null;
   node: ReturnNode;
   returnBatch: { id: string; reference: string } | null;
 }

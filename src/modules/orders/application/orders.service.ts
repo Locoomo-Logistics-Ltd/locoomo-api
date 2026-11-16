@@ -973,6 +973,22 @@ export class OrdersService {
     return this.placeOnShelf(order, order.originNodeId, manager);
   }
 
+  // An abandoned merchant return (plan D20): it leaves the shelf.
+  async markDisposed(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderEntity> {
+    const order = await this.transition(
+      orderId,
+      OrderStatus.READY_FOR_SENDER_COLLECTION,
+      OrderStatus.DISPOSED,
+      manager,
+      OrderEventType.DISPOSED,
+      {},
+    );
+    return this.clearShelf(order, manager);
+  }
+
   async markCollectedBySender(
     orderId: string,
     manager: EntityManager,

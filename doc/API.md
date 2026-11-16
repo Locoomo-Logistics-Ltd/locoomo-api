@@ -3582,6 +3582,16 @@ Collecting ends each waiting order (`return_completed`, shelf and capacity slot 
 per-parcel code used), which mirrors `shipment.returned`; parcels already handed back are
 skipped.
 
+### Abandoned returns (M6a)
+
+A worker (hourly) handles merchant returns waiting at their Node (`return_ready`): it sets
+`storageFeesFrom` (10 working days after ready) and `disposeAt` (30 days later), charges
+`RETURN_STORAGE_FEE_KOBO` (default 10000 = ₦100) per parcel per Lagos day to the
+merchant's wallet (`storage_fee`, idempotent per parcel per day), emails the merchant team
+when fees start and 7 days before disposal, then disposes of it: order `disposed`
+(new status), origin slot freed, sender code voided, `shipment.disposed`, ops emailed.
+Storage fees are invoiced.
+
 ## Admin: merchant claims
 
 | Endpoint | Permission | |
