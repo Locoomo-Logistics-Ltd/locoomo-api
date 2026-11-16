@@ -21,6 +21,7 @@ export class NodeResponseDto {
   locationCheck!: string | null;
   isPubliclyVisible!: boolean;
   isHub!: boolean;
+  merchantDailyArrivalCap!: number | null;
   createdAt!: Date;
 
   static fromEntity(node: NodeEntity): NodeResponseDto {
@@ -42,6 +43,7 @@ export class NodeResponseDto {
     dto.locationCheck = node.locationCheck ?? null;
     dto.isPubliclyVisible = node.isPubliclyVisible;
     dto.isHub = node.isHub;
+    dto.merchantDailyArrivalCap = node.merchantDailyArrivalCap ?? null;
     dto.createdAt = node.createdAt;
     return dto;
   }

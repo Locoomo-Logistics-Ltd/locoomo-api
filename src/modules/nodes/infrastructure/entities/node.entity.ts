@@ -72,6 +72,11 @@ export class NodeEntity {
   @Column({ type: 'boolean', default: false })
   isHub!: boolean;
 
+  // Most merchant parcels a day that may be addressed to this Node (live,
+  // Lagos day); null = no cap. For small Nodes (plan §5.2).
+  @Column({ type: 'int', nullable: true })
+  merchantDailyArrivalCap!: number | null;
+
   @Index()
   @Column({ type: 'enum', enum: NodeStatus, default: NodeStatus.PENDING })
   status!: NodeStatus;

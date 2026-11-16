@@ -226,6 +226,67 @@ export class OrdersService {
     return true;
   }
 
+  // Reroute queue (M5c, plan §6.5): a merchant parcel just dropped off
+  // whose destination is full or closed waits at its origin for a new one.
+  async markRerouteRequired(
+    orderId: string,
+    reason: 'destination_full' | 'destination_unavailable',
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE orders SET "rerouteState" = 'pending', "rerouteReason" = $2,
+              "rerouteRequestedAt" = now(), "rerouteResolvedAt" = NULL,
+              "rerouteAuto" = false, "updatedAt" = now()
+        WHERE id = $1`,
+      [orderId, reason],
+    );
+    await this.appendEvent(manager, orderId, OrderEventType.REROUTE_REQUIRED, {
+      reason,
+    });
+  }
+
+  // A waiting parcel gets a new destination. The status doesn't change, but
+  // the change is published (eventType destination_changed) so the
+  // destination slot moves and a merchant hears about it. The caller has
+  // locked the order and released the old destination slot.
+  async changeDestination(
+    orderId: string,
+    destinationNodeId: string,
+    manager: EntityManager,
+    by: { auto: boolean; adminUserId: string | null; reason: string },
+  ): Promise<OrderEntity> {
+    const [before] = await manager.query<{ destinationNodeId: string }[]>(
+      `SELECT "destinationNodeId" FROM orders WHERE id = $1`,
+      [orderId],
+    );
+    await manager.query(
+      `UPDATE orders SET "destinationNodeId" = $2, "rerouteState" = 'resolved',
+              "rerouteResolvedAt" = now(), "rerouteAuto" = $3, "updatedAt" = now()
+        WHERE id = $1`,
+      [orderId, destinationNodeId, by.auto],
+    );
+    await this.appendEvent(
+      manager,
+      orderId,
+      OrderEventType.DESTINATION_CHANGED,
+      {
+        from: before.destinationNodeId,
+        to: destinationNodeId,
+        auto: by.auto,
+        adminUserId: by.adminUserId,
+        reason: by.reason,
+      },
+    );
+    const order = await manager.findOneByOrFail(OrderEntity, { id: orderId });
+    await this.publishStatusChange(
+      manager,
+      order,
+      order.status,
+      OrderEventType.DESTINATION_CHANGED,
+    );
+    return order;
+  }
+
   async createFromPaidIntent(
     fields: CreateOrderFromPaidIntentFields,
     manager: EntityManager,

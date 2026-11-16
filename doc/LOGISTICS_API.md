@@ -1136,6 +1136,18 @@ as missing.
 Bags travel only with couriers that carry bags (Sendii today). If none can take one, the
 bag stays `sealed` and is retried every 15 minutes.
 
+**Return bags.** Merchant returns heading back to a hub (not collected in time, or the
+merchant asked for them back) don't get a courier each either: at the destination Node
+they go into that hub's **return bag** (`direction: "return"`; its `origin` is your Node,
+its `destination` the hub). Seal it when the courier is due; a return bag left open for
+**24 hours** seals itself (small Nodes rarely fill one). Hand it over with the `pickup`
+code; at the hub, read the `delivery` code, then **return-intake** each parcel as usual
+(§5.9). The bag is `unpacked` when the last one is in.
+
+**Rerouted parcels.** A merchant parcel whose destination is full or closed at drop-off
+stays on your shelf with no courier and no bag until ops pick a new destination (at most
+a working day). It then moves on by itself; you do nothing.
+
 ---
 
 ## 6. Rider app (Locoomo riders)
@@ -1367,6 +1379,24 @@ the code and the last 4 digits."*
 ## 8. Admin app
 
 **Admin only.** Paths are under `/admin/logistics` unless stated.
+
+### 8.0b Reroutes — `/admin/reroutes` (`ops`)
+
+Merchant parcels dropped off while their destination was **full** or **not active** wait
+at their origin (no courier, no bag; the destination slot is let go).
+
+| Call | |
+|---|---|
+| `GET /admin/reroutes` (`ops`, `support`) | Waiting parcels, oldest first: `{ orderId, trackingCode, merchantName, reason: "destination_full" \| "destination_unavailable", requestedAt, ageMinutes, origin, destination, candidates: [{ nodeId, name, address, city, distanceKm, headroom }] }` (the 3 nearest active Nodes with room) |
+| `GET /admin/reroutes?state=auto` | Parcels the system rerouted itself in the last 7 days, to review |
+| `POST /admin/reroutes/:orderId` (`ops`) | `{ "destinationNodeId": "…", "reason": "…" }` → `{ orderId, destinationNodeId }` |
+
+After a decision the parcel takes a slot at the new Node, the buyer is emailed, the
+merchant gets `shipment.destination_changed`, and the parcel goes on (bagged at a hub,
+else its own courier). Locoomo absorbs any price difference. If nobody decides within
+**1 working day**, the nearest Node with room is picked automatically (`state=auto`).
+Errors: `409 REROUTE_NOT_PENDING`, `422 REROUTE_TARGET_UNAVAILABLE` (inactive, full, the
+origin or the current destination).
 
 ### 8.0a Lost or damaged — `POST /admin/orders/:id/exception` (`ops`)
 

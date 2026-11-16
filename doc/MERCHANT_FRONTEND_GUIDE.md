@@ -2401,11 +2401,32 @@ On the Node edit form, a **"Hub"** switch: `PATCH /nodes/:id` `{ "isHub": true }
 "Receives bulk merchant drops against manifests." Hubs show `isHub: true` in Node lists;
 use that to fill the merchant "Hub" select (§18.4).
 
+Also on the Node form: **"Merchant parcels per day"** (`merchantDailyArrivalCap`, a number
+or empty for no cap). Help: "Most merchant parcels a day that may be addressed to this
+Node. Use it for small Nodes."
+
+### 18.6d Reroutes ✅ (`ops`; `support` can view)
+
+A **Reroutes** queue (sidebar, with a count badge): merchant parcels whose destination
+was full or closed at drop-off, waiting at their origin.
+
+- **`GET /admin/reroutes`** → rows: tracking code, merchant, reason (`destination_full`
+  "Destination full", `destination_unavailable` "Destination closed"), origin, current
+  destination, waiting time (`ageMinutes`; highlight past 4 hours), and up to 3
+  `candidates` (name, city, distance, free space).
+- **"Send here"** on a candidate (or "Choose another Node" with a Node picker) →
+  **`POST /admin/reroutes/:orderId`** `{ destinationNodeId, reason }` (reason required,
+  internal). `409 REROUTE_NOT_PENDING`: refresh; `422 REROUTE_TARGET_UNAVAILABLE`: "That Node
+  is full or closed. Pick another."
+- Help text: "If nobody decides within a working day, the nearest Node with room is picked
+  automatically." A **"Rerouted automatically"** tab: **`GET /admin/reroutes?state=auto`**
+  (last 7 days), to check the choice.
+
 ### 18.7 Coming 🛠
 
 - **Merchant 360** (read-only support view): API key metadata, webhook health, wallet,
   shipments, audit log. There's no "log in as merchant"; this view replaces it.
-- **All orders** and **Reroutes** for merchant parcels.
+- **All orders** for merchant parcels.
 
 ---
 
@@ -3069,6 +3090,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 422 / 409 | `INVALID_STATEMENT_MONTH` / `INVOICE_NOT_AVAILABLE` | Documents: §15.8 |
 | 409 / 422 | `CLAIM_NOT_ALLOWED`, `CLAIM_ALREADY_OPEN`, `CLAIM_ALREADY_DECIDED` / `CLAIM_WINDOW_CLOSED`, `CLAIM_PAYOUT_TOO_HIGH` | Claims: §15a |
 | 409 | `CLAIM_PAYOUT_PENDING` | Admin claims: §18.6b |
+| 409 / 422 | `REROUTE_NOT_PENDING` / `REROUTE_TARGET_UNAVAILABLE` | Admin reroutes: §18.6d |
 | 422 / 409 | `RETURN_BATCH_INVALID` / `RETURN_BATCH_NOT_OPEN` | Returns: §15b |
 | 422 / 409 / 422 | `MANIFEST_INVALID` / `MANIFEST_NOT_EDITABLE` / `NOT_A_HUB` | Manifests: §15c (admin `NOT_A_HUB`: §18.4) |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | "Live shipments aren't available yet. Switch to Test." |
@@ -3203,6 +3225,7 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | GET | `/admin/merchant-claims`, `/admin/merchant-claims/:id` | `finance`, `ops`, `support` |
 | PATCH / POST | `/admin/merchant-claims/:id`, `…/:id/reject` | `finance`, `ops` |
 | POST | `/admin/merchant-claims/:id/payout` | `finance` (two-admin approval) |
+| GET / POST | `/admin/reroutes`, `/admin/reroutes/:orderId` | `ops` (`support` can view) |
 | POST | `/admin/merchants/:id/wallet/adjustments` | `finance` (runs after a second `finance` admin approves) |
 | GET | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance`, `ops`, `support` |
 | PUT | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance` |

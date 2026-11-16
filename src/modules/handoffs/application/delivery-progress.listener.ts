@@ -43,13 +43,13 @@ export class DeliveryProgressListener
     // Two kinds of return: the forward courier turning back mid-delivery
     // (same leg: returning → returned, handled below), and a separately
     // booked RETURN leg from the destination shelf (uncollected parcels).
-    if (notice.legType === DeliveryLegType.RETURN) {
-      return this.onReturnLeg(notice, manager);
-    }
     // A bag's leg (M5b) reaches every parcel in it; one that has left the
     // journey (recorded lost, say) is skipped instead of failing the bag.
     if (notice.bagId && !(await this.stillWithBag(notice, manager))) {
       return;
+    }
+    if (notice.legType === DeliveryLegType.RETURN) {
+      return this.onReturnLeg(notice, manager);
     }
 
     switch (notice.event) {
@@ -238,14 +238,23 @@ export class DeliveryProgressListener
     notice: DeliveryEventNotice,
     manager: EntityManager,
   ): Promise<boolean> {
-    const expected: Partial<Record<DeliveryEventType, string[]>> = {
+    const forward: Partial<Record<DeliveryEventType, string[]>> = {
       [DeliveryEventType.ASSIGNED]: ['parcel_received_at_origin'],
       [DeliveryEventType.PICKED_UP]: ['rider_assigned'],
       [DeliveryEventType.DELIVERED]: ['in_transit'],
       [DeliveryEventType.RETURNING]: ['in_transit'],
       [DeliveryEventType.RETURNED]: ['return_initiated', 'return_in_transit'],
     };
-    const allowed = expected[notice.event];
+    // Return bags (M5c): parcels wait at the destination Node as
+    // return_initiated until the bag is picked up.
+    const back: Partial<Record<DeliveryEventType, string[]>> = {
+      [DeliveryEventType.ASSIGNED]: ['return_initiated'],
+      [DeliveryEventType.PICKED_UP]: ['return_initiated'],
+      [DeliveryEventType.DELIVERED]: ['return_in_transit'],
+    };
+    const allowed = (
+      notice.legType === DeliveryLegType.RETURN ? back : forward
+    )[notice.event];
     if (!allowed) {
       return true;
     }

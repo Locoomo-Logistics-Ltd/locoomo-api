@@ -34,4 +34,9 @@ export enum OrderEventType {
   REPRICED = 'repriced',
   // Re-pricing at drop-off failed; the quoted price stands (ops review).
   REPRICE_FAILED = 'reprice_failed',
+  // Destination full or closed at drop-off: waiting for a new one (M5c).
+  REROUTE_REQUIRED = 'reroute_required',
+  // A new destination was chosen (ops, or automatically after a working
+  // day). Published on the status bus with the status unchanged.
+  DESTINATION_CHANGED = 'destination_changed',
 }

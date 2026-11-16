@@ -1,9 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
-import { DeliveryDispatchService } from '../../logistics/application/delivery-dispatch.service';
-import { DeliveryLegType } from '../../logistics/application/delivery-vocabulary';
 import { OrdersService } from '../../orders/application/orders.service';
 import { HandoffCodeType } from '../domain/handoff-code-type.enum';
+import { BagService } from './bag.service';
 import { HandoffCodeIssuerService } from './handoff-code-issuer.service';
 import { ReceiverNotificationService } from './receiver-notification.service';
 import { ReturnNotificationService } from './return-notification.service';
@@ -18,7 +17,7 @@ export type ShelfReturnReason = 'not_collected' | 'merchant_request';
 export class ParcelRecallService {
   constructor(
     private readonly ordersService: OrdersService,
-    private readonly deliveryDispatchService: DeliveryDispatchService,
+    private readonly bags: BagService,
     private readonly handoffCodeIssuerService: HandoffCodeIssuerService,
     private readonly receiverNotificationService: ReceiverNotificationService,
     private readonly returnNotificationService: ReturnNotificationService,
@@ -42,11 +41,8 @@ export class ParcelRecallService {
         WHERE "orderId" = $1 AND type = $2 AND "usedAt" IS NULL`,
       [orderId, HandoffCodeType.RECEIVER_COLLECTION],
     );
-    await this.deliveryDispatchService.dispatch(
-      orderId,
-      manager,
-      DeliveryLegType.RETURN,
-    );
+    // Back to a hub: in that hub's return bag (M5c); else its own courier.
+    await this.bags.sendBack(order, manager);
     await this.returnNotificationService.enqueueReturnStarted(
       order,
       manager,

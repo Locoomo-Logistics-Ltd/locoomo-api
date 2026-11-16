@@ -165,6 +165,24 @@ export class OrderEntity {
   @Column({ type: 'uuid', nullable: true })
   bagId!: string | null;
 
+  // Reroute queue (M5c, plan §6.5): a merchant parcel whose destination was
+  // full or closed at drop-off waits at its origin (`pending`) until ops —
+  // or, after a working day, the system (`rerouteAuto`) — picks another.
+  @Column({ type: 'varchar', length: 10, default: 'none' })
+  rerouteState!: 'none' | 'pending' | 'resolved';
+
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  rerouteReason!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  rerouteRequestedAt!: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  rerouteResolvedAt!: Date | null;
+
+  @Column({ type: 'boolean', default: false })
+  rerouteAuto!: boolean;
+
   // Proof of delivery (plan §5.4): when, how (code | id_check), who
   // collected, and an optional photo taken at the counter.
   @Column({ type: 'timestamptz', nullable: true })

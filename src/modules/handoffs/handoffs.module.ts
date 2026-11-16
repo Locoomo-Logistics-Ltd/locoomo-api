@@ -1,3 +1,5 @@
+import { RerouteService } from './application/reroute.service';
+import { AdminReroutesController } from './interface/admin-reroutes.controller';
 import { BagService } from './application/bag.service';
 import { BagsController } from './interface/bags.controller';
 import { BagEntity } from './infrastructure/entities/bag.entity';
@@ -77,9 +79,15 @@ import { HandoffsController } from './interface/handoffs.controller';
     // AdminPermissionService: who to alert about parcels missing from bags.
     IdentityModule,
   ],
-  controllers: [HandoffsController, AdminOrdersController, BagsController],
+  controllers: [
+    HandoffsController,
+    AdminOrdersController,
+    BagsController,
+    AdminReroutesController,
+  ],
   providers: [
     BagService,
+    RerouteService,
     ParcelRecallService,
     ReceiverCodeRelay,
     BrowseAvailableOrdersService,

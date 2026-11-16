@@ -85,6 +85,37 @@ export class ReceiverNotificationService {
     );
   }
 
+  // Rerouted (M5c): the parcel will be at a different Node than the buyer
+  // chose, because theirs was full or closed.
+  async enqueueDestinationChanged(
+    order: OrderForReceiverEmail,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (
+      !order.receiverEmail ||
+      (await this.notifyMode(order.trackingCode, manager)) === 'merchant'
+    ) {
+      return;
+    }
+    const destination = await this.destinationOf(order, manager);
+    const where = `${destination.name}, ${destination.address}, ${destination.city}`;
+    await this.outboxService.enqueueEmail(
+      {
+        to: order.receiverEmail,
+        subject: 'Your parcel will be at a different pickup point',
+        text:
+          `The pickup point you chose for your parcel (${order.trackingCode}) can't take it right now, ` +
+          `so it will be ready for collection at ${where} instead. ` +
+          `We'll email you a collection code when it arrives.`,
+        html:
+          `<p>The pickup point you chose for your parcel (<strong>${escapeHtml(order.trackingCode)}</strong>) can't take it right now, ` +
+          `so it will be ready for collection at <strong>${escapeHtml(where)}</strong> instead.</p>` +
+          `<p>We'll email you a collection code when it arrives.</p>`,
+      },
+      manager,
+    );
+  }
+
   async enqueueReadyForCollection(
     order: OrderForReceiverEmail,
     collectionCode: string,

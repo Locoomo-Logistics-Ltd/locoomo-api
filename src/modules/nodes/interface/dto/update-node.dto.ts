@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  ValidateIf,
   IsEnum,
   IsInt,
   IsLatitude,
@@ -98,4 +99,12 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsBoolean()
   isHub?: boolean;
+
+  // Admin: most live merchant parcels a day addressed to this Node; null
+  // removes the cap.
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsInt()
+  @Min(0)
+  merchantDailyArrivalCap?: number | null;
 }

@@ -148,6 +148,10 @@ export class DeliveryDispatchService implements OnModuleInit {
       { vehicleClass: VehicleClass | null }[]
     >(`SELECT "vehicleClass" FROM orders WHERE "bagId" = $1`, [bagId]);
     const vehicleClass = bagVehicleClass(parcels.map((p) => p.vehicleClass));
+    const [{ direction }] = await manager.query<{ direction: string }[]>(
+      `SELECT direction FROM bags WHERE id = $1`,
+      [bagId],
+    );
     const choice = await this.router.chooseForBag(bagId, vehicleClass, manager);
     if (!choice) {
       this.logger.error(
@@ -159,7 +163,11 @@ export class DeliveryDispatchService implements OnModuleInit {
       legs.create({
         orderId: null,
         bagId,
-        legType: DeliveryLegType.FORWARD,
+        // A return bag's events reach the orders as a return leg's would.
+        legType:
+          direction === 'return'
+            ? DeliveryLegType.RETURN
+            : DeliveryLegType.FORWARD,
         providerKey: choice.provider.key,
         status: DeliveryLegStatus.REQUESTED,
         attemptNumber: choice.attemptNumber,
