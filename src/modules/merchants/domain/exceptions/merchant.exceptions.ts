@@ -741,3 +741,24 @@ export class AmbiguousParcelCodeException extends BusinessException {
     );
   }
 }
+
+export class ReportRangeInvalidException extends BusinessException {
+  readonly errorCode = 'REPORT_RANGE_INVALID';
+  readonly httpStatus = 422;
+
+  constructor(maxDays: number) {
+    super(`Pick a date range (from before to) of at most ${maxDays} days`);
+    this.details = { maxDays };
+  }
+}
+
+export class ExportLinkInvalidException extends BusinessException {
+  readonly errorCode = 'EXPORT_LINK_INVALID';
+  readonly httpStatus = 403;
+
+  constructor() {
+    super(
+      'This download link is invalid or has expired. Create the export again.',
+    );
+  }
+}

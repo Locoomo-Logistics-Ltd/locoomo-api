@@ -3582,6 +3582,16 @@ Collecting ends each waiting order (`return_completed`, shelf and capacity slot 
 per-parcel code used), which mirrors `shipment.returned`; parcels already handed back are
 skipped.
 
+### Abandoned returns (M6a)
+
+A worker (hourly) handles merchant returns waiting at their Node (`return_ready`): it sets
+`storageFeesFrom` (10 working days after ready) and `disposeAt` (30 days later), charges
+`RETURN_STORAGE_FEE_KOBO` (default 10000 = ₦100) per parcel per Lagos day to the
+merchant's wallet (`storage_fee`, idempotent per parcel per day), emails the merchant team
+when fees start and 7 days before disposal, then disposes of it: order `disposed`
+(new status), origin slot freed, sender code voided, `shipment.disposed`, ops emailed.
+Storage fees are invoiced.
+
 ## Admin: merchant claims
 
 | Endpoint | Permission | |
@@ -3596,6 +3606,54 @@ Live claims only (`403 LIVE_MODE_ONLY`). A payout runs when a second `finance` a
 approves it ([Approvals](#approvals-two-admin-rule)): it credits the wallet (`claim_credit`,
 unique per claim), marks the claim approved and sends `claim.decided` and an email. While a
 payout approval is pending, reject and a second payout answer `409 CLAIM_PAYOUT_PENDING`.
+
+## Privacy and retention (M6d)
+
+- **Retention worker** (every 6 h, batches): finished orders (`completed`,
+  `return_completed`, `cancelled`, `refused`, `disposed`, `exception`) not updated for 180
+  days have receiver name/phone/email and collector name redacted on the order, its
+  `order_events` payloads, the merchant shipment and its timeline; counter photos
+  (collection, refusal) are deleted from Cloudinary first (`orders.piiRedactedAt`). KYC
+  documents and director IDs are deleted 90 days after a rejection or 5 years after
+  closure (`merchants.kycPurgedAt`, audited). Sandbox shipments/manifests/return batches
+  older than 90 days are deleted. Migration 381.
+- **Data-subject requests** (`super`): `POST /api/v1/admin/privacy/subject-export`
+  `{ phone } | { email }` → `{ orders, shipments }`; `POST /api/v1/admin/privacy/subject-erase`
+  `{ phone | email, reason }` → `{ erasedOrders, erasedShipments, skippedInFlight }`
+  (unfinished parcels are skipped). Audited without the personal data.
+  `422 SUBJECT_QUERY_INVALID`.
+- Procedures (identity checks, breach response, NDPC 72 h): [OPS_RUNBOOK.md](OPS_RUNBOOK.md).
+
+## Reports and exports (M6c)
+
+- `GET /api/v1/merchant/reports/summary?from=&to=` (`shipments:read`): KPIs for shipments
+  created in the range (≤ 93 days, default 30): counts by status, collection rate, median
+  hours drop-off→ready and ready→collected, wallet spend by kind, top 5 destinations.
+- `POST /api/v1/merchant/exports/shipments` (`shipments:read`) and
+  `POST /api/v1/merchant/exports/wallet-entries` (`wallet:read`), `{ from, to }` →
+  `{ downloadPath, expiresAt }`: a 15-minute HMAC-signed token (purpose-bound, keyed off
+  `JWT_ACCESS_SECRET`). `GET /api/v1/merchant/exports/download?token=` is public and
+  streams the CSV in 2,000-row keyset pages (no file stored). Exports are audited.
+  Errors `422 REPORT_RANGE_INVALID`, `403 EXPORT_LINK_INVALID`.
+- Admin: `POST /api/v1/admin/exports/orders` (`ops`) `{ from, to, source?, merchantId?,
+  status?, nodeId? }` → the same kind of link to `GET /api/v1/admin/exports/orders/download`
+  (no receiver contact details). CSV cells starting with `=`, `+`, `-` (non-numeric) or `@`
+  are prefixed with `'` so spreadsheets don't run them.
+
+## Admin: all orders, merchant 360, platform health (M6b)
+
+- `GET /api/v1/admin/orders` (`ops`, `support`): consumer and merchant orders, cursor
+  paginated, newest first. Filters: `source`, `merchantId`, `status`, `nodeId` (origin or
+  destination), `trackingCode` (forgiving), `reference` (merchant's), `rerouteState`,
+  `from`/`to`, `limit`, `cursor`. `GET /api/v1/admin/orders/:id`: the order with masked
+  receiver contact, timeline (`order_events`), courier attempts (own and bag legs), bag
+  and merchant shipment.
+- `GET /api/v1/admin/merchants/:id/overview` (`ops`, `support`, `finance`, `kyc`): team
+  counts, API key metadata, webhook endpoint health (24 h delivery counts), both wallets,
+  shipment counts, API use (24 h requests, 4xx/5xx, p95), open items, last 20 audit events.
+- `GET /api/v1/admin/merchant-platform/health` (`ops`, `support`): the checks and open
+  alerts. A worker (10 min) opens an `ops_alerts` row and emails ops when a check passes
+  its threshold, reminds every 6 h, and closes it when the check clears.
 
 ## Admin: reroutes
 

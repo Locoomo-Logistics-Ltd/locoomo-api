@@ -25,6 +25,9 @@ export enum WalletEntryType {
   // A Locoomo admin's correction, approved by a second admin (E12).
   ADJUSTMENT = 'adjustment',
   CLAIM_CREDIT = 'claim_credit',
+  // A day's storage for a return left uncollected past its free period
+  // (plan D20, M6a).
+  STORAGE_FEE = 'storage_fee',
   REFUND = 'refund',
 }
 

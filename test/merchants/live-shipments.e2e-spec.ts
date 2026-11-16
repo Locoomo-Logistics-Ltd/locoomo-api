@@ -26,6 +26,10 @@ import { DeliveryEventsService } from '../../src/modules/logistics/application/d
 import { LogisticsProviderRegistry } from '../../src/modules/logistics/application/logistics-provider.registry';
 import { DeliveryLegStatus } from '../../src/modules/logistics/domain/delivery-leg';
 import { RerouteService } from '../../src/modules/handoffs/application/reroute.service';
+import { ReturnStorageService } from '../../src/modules/merchants/application/return-storage.service';
+import { PlatformHealthService } from '../../src/modules/admin/application/platform-health.service';
+import { PrivacyService } from '../../src/modules/admin/application/privacy.service';
+import { CloudinaryService } from '../../src/common/cloudinary/cloudinary.service';
 
 const PASSWORD = 'Correct-Horse-Battery-1';
 const DOMAIN = 'live.e2e.test';
@@ -1250,6 +1254,68 @@ describe('Live merchant shipments (e2e)', () => {
       return { s, orderId };
     }
 
+    it('charges storage for a return left waiting, then disposes of it (M6a)', async () => {
+      const { s: parcel, orderId } = await returnReady();
+      const storage = app.get(ReturnStorageService);
+      await storage.run();
+      const [row] = await dataSource.query<
+        { storageFeesFrom: Date; disposeAt: Date }[]
+      >(
+        `SELECT "storageFeesFrom", "disposeAt" FROM merchant_shipments WHERE id = $1`,
+        [parcel.id],
+      );
+      expect(row.storageFeesFrom.getTime()).toBeGreaterThan(Date.now());
+      const view = data<
+        Shipment & { return: { storageFeesFrom: string; disposeAt: string } }
+      >(await live.get(`/shipments/${parcel.id}`).expect(200));
+      expect(view.return).toMatchObject({
+        storageFeesFrom: row.storageFeesFrom.toISOString(),
+        disposeAt: row.disposeAt.toISOString(),
+      });
+
+      const entries = async () =>
+        (
+          await dataSource.query<{ count: number; total: number }[]>(
+            `SELECT count(*)::int AS count, coalesce(sum("amountKobo"), 0)::int AS total
+               FROM wallet_entries WHERE "shipmentId" = $1 AND type = 'storage_fee'`,
+            [parcel.id],
+          )
+        )[0];
+      // A day and a bit into storage: two Lagos days charged, once each.
+      const dayTwo = new Date(row.storageFeesFrom.getTime() + 26 * 3_600_000);
+      await storage.run(dayTwo);
+      const after = await entries();
+      expect(after.count).toBeGreaterThanOrEqual(2);
+      expect(after.total).toBe(-10_000 * after.count);
+      await storage.run(dayTwo);
+      expect((await entries()).count).toBe(after.count);
+      // To the team (owner, admins, operations), not the contact address.
+      expect((await latestEmailTo(`owner@${DOMAIN}`)).subject).toMatch(
+        /Storage fees have started/,
+      );
+
+      const slotsBefore = await originCount();
+      await storage.run(new Date(row.disposeAt.getTime() + 3_600_000));
+      expect((await orderOf(parcel.trackingCode)).status).toBe('disposed');
+      expect((await shipment(parcel.id)).status).toBe('disposed');
+      expect(await originCount()).toBe(slotsBefore - 1);
+      const [codes] = await dataSource.query<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM handoff_codes
+          WHERE "orderId" = $1 AND type = 'sender_collection' AND "usedAt" IS NULL`,
+        [orderId],
+      );
+      expect(codes.count).toBe(0);
+      const [event] = await dataSource.query<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM webhook_events
+          WHERE "merchantId" = $1 AND type = 'shipment.disposed' AND body LIKE $2`,
+        [merchantId, `%${parcel.id}%`],
+      );
+      expect(event.count).toBe(1);
+      expect((await latestEmailTo(`claims-ops@${DOMAIN}`)).subject).toMatch(
+        /abandoned return/,
+      );
+    });
+
     it('hands a whole batch back at the Node on one code', async () => {
       const a = await returnReady();
       const b = await returnReady();
@@ -2036,6 +2102,300 @@ describe('Live merchant shipments (e2e)', () => {
       const notice = await latestEmailTo(`claims-ops@${DOMAIN}`);
       expect(notice.subject).toContain(`Missing from bag ${code_}`);
       expect((await app.get(BagService).run()).missingAlerts).toBe(0);
+    });
+  });
+
+  describe('ops views (M6b)', () => {
+    let opsViewer: string[];
+    let financeViewer: string[];
+    const asAdmin = (cookie: string[], url: string) =>
+      http().get(`/api/v1/admin${url}`).set('Cookie', cookie);
+
+    beforeAll(async () => {
+      opsViewer = await signIn(
+        await makeUser('ops-views', {
+          role: UserRole.ADMIN,
+          adminPermissions: [AdminPermission.OPS],
+        }),
+      );
+      financeViewer = await signIn(
+        await makeUser('finance-views', {
+          role: UserRole.ADMIN,
+          adminPermissions: [AdminPermission.FINANCE],
+        }),
+      );
+    });
+
+    it('lists and opens orders across consumers and merchants', async () => {
+      const s = await create();
+      const page = data<{
+        items: {
+          id: string;
+          trackingCode: string;
+          source: string;
+          reference: string | null;
+        }[];
+      }>(
+        await asAdmin(
+          opsViewer,
+          `/orders?merchantId=${merchantId}&limit=200`,
+        ).expect(200),
+      );
+      expect(page.items.every((o) => o.source === 'merchant')).toBe(true);
+      const byCode = data<{
+        items: { id: string; reference: string | null }[];
+      }>(
+        await asAdmin(
+          opsViewer,
+          `/orders?trackingCode=${s.trackingCode.toLowerCase()}`,
+        ).expect(200),
+      );
+      expect(byCode.items).toHaveLength(1);
+      expect(byCode.items[0].reference).toBe(s.reference);
+      const byReference = data<{ items: { id: string }[] }>(
+        await asAdmin(
+          opsViewer,
+          `/orders?reference=${encodeURIComponent(s.reference)}`,
+        ).expect(200),
+      );
+      expect(byReference.items.map((o) => o.id)).toEqual([byCode.items[0].id]);
+
+      const detail = data<{
+        receiver: { phone: string; email: string | null };
+        shipment: { id: string } | null;
+        events: { type: string }[];
+      }>(await asAdmin(opsViewer, `/orders/${byCode.items[0].id}`).expect(200));
+      expect(detail.receiver.phone).toMatch(/^\*+4567$/);
+      expect(detail.receiver.email).toMatch(/^b\*+@/);
+      expect(detail.shipment?.id).toBe(s.id);
+      expect(detail.events.map((e) => e.type)).toContain('order_placed');
+      await asAdmin(financeViewer, '/orders').expect(403);
+    });
+
+    it('summarises a period and exports CSVs through signed links (M6c)', async () => {
+      const s = await create();
+      const from = new Date(Date.now() - 7 * 86_400_000).toISOString();
+      const to = new Date(Date.now() + 60_000).toISOString();
+      const summary = data<{
+        shipments: { created: number; byStatus: Record<string, number> };
+        money: { shippingCharged: number };
+        topDestinations: { nodeName: string }[];
+      }>(await live.get(`/reports/summary?from=${from}&to=${to}`).expect(200));
+      expect(summary.shipments.created).toBeGreaterThan(0);
+      expect(summary.money.shippingCharged).toBeGreaterThan(0);
+      expect(summary.topDestinations.length).toBeGreaterThan(0);
+      const tooLong = new Date(Date.now() - 120 * 86_400_000).toISOString();
+      expect(
+        code(
+          await live
+            .get(`/reports/summary?from=${tooLong}&to=${to}`)
+            .expect(422),
+        ),
+      ).toBe('REPORT_RANGE_INVALID');
+
+      const link = data<{ downloadPath: string; expiresAt: string }>(
+        await live.post('/exports/shipments', { from, to }).expect(200),
+      );
+      // No cookie or key: the signed link is the credential.
+      const csv = await http().get(link.downloadPath).expect(200);
+      expect(csv.headers['content-type']).toContain('text/csv');
+      const lines = csv.text.trim().split('\r\n');
+      expect(lines[0]).toMatch(/^created_at,reference,tracking_code,status/);
+      expect(csv.text).toContain(s.trackingCode);
+      const forged = link.downloadPath.replace(/.(?=$)/, (c) =>
+        c === 'A' ? 'B' : 'A',
+      );
+      expect(code(await http().get(forged).expect(403))).toBe(
+        'EXPORT_LINK_INVALID',
+      );
+
+      const wallet = data<{ downloadPath: string }>(
+        await live.post('/exports/wallet-entries', { from, to }).expect(200),
+      );
+      expect(
+        (await http().get(wallet.downloadPath).expect(200)).text,
+      ).toContain('shipment_charge');
+
+      const orders = data<{ downloadPath: string }>(
+        await http()
+          .post('/api/v1/admin/exports/orders')
+          .set('Cookie', opsViewer)
+          .send({ from, to, merchantId })
+          .expect(200),
+      );
+      expect(
+        (await http().get(orders.downloadPath).expect(200)).text,
+      ).toContain(s.trackingCode);
+      await http()
+        .post('/api/v1/admin/exports/orders')
+        .set('Cookie', financeViewer)
+        .send({ from, to })
+        .expect(403);
+    });
+
+    it('redacts receiver details 180 days after a parcel finishes (M6d)', async () => {
+      jest
+        .spyOn(app.get(CloudinaryService), 'deleteResource')
+        .mockResolvedValue(undefined);
+      const s = await create();
+      await live.post(`/shipments/${s.id}/cancel`).expect(200);
+      const { id: orderId } = await orderOf(s.trackingCode);
+      await dataSource.query(
+        `UPDATE orders SET "updatedAt" = now() - interval '200 days' WHERE id = $1`,
+        [orderId],
+      );
+      const run = await app.get(PrivacyService).run();
+      expect(run.ordersRedacted).toBeGreaterThanOrEqual(1);
+      const [order] = await dataSource.query<
+        {
+          receiverFullName: string;
+          receiverPhone: string;
+          receiverEmail: string | null;
+          piiRedactedAt: Date | null;
+        }[]
+      >(
+        `SELECT "receiverFullName", "receiverPhone", "receiverEmail", "piiRedactedAt"
+           FROM orders WHERE id = $1`,
+        [orderId],
+      );
+      expect(order).toMatchObject({
+        receiverFullName: '[redacted]',
+        receiverPhone: '',
+        receiverEmail: null,
+      });
+      expect(order.piiRedactedAt).not.toBeNull();
+      const [shipmentRow] = await dataSource.query<
+        { receiverName: string; receiverEmail: string | null }[]
+      >(
+        `SELECT "receiverName", "receiverEmail" FROM merchant_shipments WHERE id = $1`,
+        [s.id],
+      );
+      expect(shipmentRow).toEqual({
+        receiverName: '[redacted]',
+        receiverEmail: null,
+      });
+    });
+
+    it('answers data-subject export and erase requests (M6d)', async () => {
+      const superAdmin = await signIn(
+        await makeUser('privacy-super', {
+          role: UserRole.ADMIN,
+          adminPermissions: [AdminPermission.SUPER],
+        }),
+      );
+      const email = `dsr+${randomUUID().slice(0, 6)}@${DOMAIN}`;
+      const s = await create({
+        receiver: { name: 'Ada Lovelace', phone: '08031230000', email },
+      });
+      const privacy = (path: string, body: object, cookie = superAdmin) =>
+        http()
+          .post(`/api/v1/admin/privacy/${path}`)
+          .set('Cookie', cookie)
+          .send(body);
+
+      const exported = data<{
+        orders: { trackingCode: string }[];
+        shipments: unknown[];
+      }>(
+        await privacy('subject-export', { email: email.toUpperCase() }).expect(
+          200,
+        ),
+      );
+      expect(exported.orders.map((o) => o.trackingCode)).toEqual([
+        s.trackingCode,
+      ]);
+      expect(exported.shipments).toHaveLength(1);
+      await privacy('subject-export', { email }, opsViewer).expect(403);
+
+      const early = data<{
+        erasedOrders: number;
+        skippedInFlight: { trackingCode: string }[];
+      }>(
+        await privacy('subject-erase', { email, reason: 'DSR-0001' }).expect(
+          200,
+        ),
+      );
+      expect(early.erasedOrders).toBe(0);
+      expect(early.skippedInFlight.map((o) => o.trackingCode)).toEqual([
+        s.trackingCode,
+      ]);
+
+      await live.post(`/shipments/${s.id}/cancel`).expect(200);
+      const done = data<{ erasedOrders: number; skippedInFlight: unknown[] }>(
+        await privacy('subject-erase', { email, reason: 'DSR-0001' }).expect(
+          200,
+        ),
+      );
+      expect(done).toMatchObject({ erasedOrders: 1, skippedInFlight: [] });
+      const after = data<{ orders: unknown[]; shipments: unknown[] }>(
+        await privacy('subject-export', { email }).expect(200),
+      );
+      expect(after).toEqual({ orders: [], shipments: [] });
+    });
+
+    it('shows the merchant 360', async () => {
+      const view = data<{
+        merchant: { id: string; tradingName: string };
+        wallets: { live: { mode: string }; test: { mode: string } };
+        shipments: { live: Record<string, number> };
+        open: { claims: number };
+        recentActivity: unknown[];
+      }>(
+        await asAdmin(opsViewer, `/merchants/${merchantId}/overview`).expect(
+          200,
+        ),
+      );
+      expect(view.merchant).toMatchObject({
+        id: merchantId,
+        tradingName: 'Live Stores',
+      });
+      expect(view.wallets.live.mode).toBe('live');
+      expect(Object.keys(view.shipments.live).length).toBeGreaterThan(0);
+      expect(typeof view.open.claims).toBe('number');
+    });
+
+    it('reports platform health and alerts ops once per breach', async () => {
+      const health = data<{ checks: { key: string; ok: boolean }[] }>(
+        await asAdmin(opsViewer, '/merchant-platform/health').expect(200),
+      );
+      expect(health.checks.map((c) => c.key)).toContain('outbox_failed_24h');
+
+      const since = new Date();
+      const [failed] = await dataSource.query<{ id: string }[]>(
+        `INSERT INTO outbox_events ("eventType", payload, status, attempts, "lastError")
+         VALUES ('email', '{}'::jsonb, 'failed', 5, 'test breach') RETURNING id`,
+      );
+      try {
+        const service = app.get(PlatformHealthService);
+        expect(await service.run()).toContain('outbox_failed_24h');
+        expect((await latestEmailTo(`ops-views@${DOMAIN}`)).subject).toMatch(
+          /Platform alert/,
+        );
+        // Still breached, but just alerted: no second email.
+        expect(await service.run()).not.toContain('outbox_failed_24h');
+        await dataSource.query(`DELETE FROM outbox_events WHERE id = $1`, [
+          failed.id,
+        ]);
+        await service.run();
+        // Closed once nothing else in the test DB keeps it breached.
+        const [others] = await dataSource.query<{ count: number }[]>(
+          `SELECT count(*)::int AS count FROM outbox_events
+            WHERE status = 'failed' AND "updatedAt" > now() - interval '24 hours'`,
+        );
+        const [open] = await dataSource.query<{ count: number }[]>(
+          `SELECT count(*)::int AS count FROM ops_alerts
+            WHERE key = 'outbox_failed_24h' AND "resolvedAt" IS NULL`,
+        );
+        expect(open.count).toBe(others.count > 0 ? 1 : 0);
+      } finally {
+        await dataSource.query(`DELETE FROM outbox_events WHERE id = $1`, [
+          failed.id,
+        ]);
+        await dataSource.query(
+          `DELETE FROM ops_alerts WHERE "openedAt" >= $1`,
+          [since],
+        );
+      }
     });
   });
 

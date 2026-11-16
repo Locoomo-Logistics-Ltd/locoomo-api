@@ -18,5 +18,8 @@ export enum OrderStatus {
   REFUSED = 'refused',
   // Lost or damaged in our custody (admin-set).
   EXCEPTION = 'exception',
+  // An abandoned merchant return, disposed of under the merchant terms
+  // (plan D20, M6a).
+  DISPOSED = 'disposed',
   DISPUTED = 'disputed',
 }

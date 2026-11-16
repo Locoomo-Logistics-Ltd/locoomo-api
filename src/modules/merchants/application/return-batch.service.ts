@@ -57,6 +57,9 @@ export interface ReturnItemView {
   status: string;
   returnReason: string | null;
   readyForCollectionAt: string | null;
+  // Abandoned returns (M6a): storage charged daily from, disposal on.
+  storageFeesFrom: string | null;
+  disposeAt: string | null;
   node: ReturnNode;
   returnBatch: { id: string; reference: string } | null;
 }
@@ -169,6 +172,8 @@ export class ReturnBatchService {
           readyForCollectionAt: string | null;
         } | null;
         statusChangedAt: Date;
+        storageFeesFrom: Date | null;
+        disposeAt: Date | null;
         nodeId: string;
         nodeName: string;
         nodeAddress: string;
@@ -178,7 +183,8 @@ export class ReturnBatchService {
       }[]
     >(
       `SELECT s.id, s.reference, s."trackingCode", s.status, s."returnInfo",
-              s."statusChangedAt", n.id AS "nodeId", n.name AS "nodeName",
+              s."statusChangedAt", s."storageFeesFrom", s."disposeAt",
+              n.id AS "nodeId", n.name AS "nodeName",
               n.address AS "nodeAddress", n.city AS "nodeCity",
               b.id AS "batchId", b.reference AS "batchReference"
          FROM merchant_shipments s
@@ -204,6 +210,8 @@ export class ReturnBatchService {
         status: row.status,
         returnReason: row.returnInfo?.reason ?? null,
         readyForCollectionAt: row.returnInfo?.readyForCollectionAt ?? null,
+        storageFeesFrom: row.storageFeesFrom?.toISOString() ?? null,
+        disposeAt: row.disposeAt?.toISOString() ?? null,
         node: {
           id: row.nodeId,
           name: row.nodeName,

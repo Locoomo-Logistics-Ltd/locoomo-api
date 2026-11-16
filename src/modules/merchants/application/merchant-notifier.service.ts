@@ -442,6 +442,110 @@ export class MerchantNotifierService {
     );
   }
 
+  // Abandoned returns (plan D20, M6a), one email per merchant per run.
+  async returnsStorage(
+    merchant: MerchantEntity,
+    stage: 'fees_started' | 'disposal_soon' | 'disposed',
+    items: {
+      reference: string;
+      trackingCode: string;
+      nodeName: string;
+      disposeAt: Date | null;
+    }[],
+    feeKobo: number,
+    manager: EntityManager,
+  ): Promise<void> {
+    const recipients = await this.teamLeads(merchant.id, manager, [
+      MerchantRole.OWNER,
+      MerchantRole.ADMIN,
+      MerchantRole.OPERATIONS,
+    ]);
+    const n = items.length;
+    const parcels = `${n} return${n === 1 ? '' : 's'}`;
+    const copy = {
+      fees_started: {
+        subject: `Storage fees have started on ${parcels}`,
+        heading: 'Your returns are waiting to be collected',
+        text: `These returns have been waiting at their Node for 10 working days, so storage is now charged to your wallet at ${formatNaira(feeKobo)} per parcel per day. Collect them (one code for many: Returns › Collect these) to stop the charges.`,
+      },
+      disposal_soon: {
+        subject: `${parcels} will be disposed of in 7 days`,
+        heading: 'Collect your returns, or they will be disposed of',
+        text: 'Under the merchant terms, uncollected returns are disposed of 30 days after storage fees start. Collect these before the date shown.',
+      },
+      disposed: {
+        subject: `${parcels} disposed of`,
+        heading: 'Uncollected returns disposed of',
+        text: 'These returns were never collected and have been disposed of under the merchant terms. Storage fees have stopped.',
+      },
+    }[stage];
+    await this.send(
+      recipients,
+      {
+        subject: copy.subject,
+        heading: copy.heading,
+        blocks: [
+          { kind: 'paragraph', text: copy.text },
+          {
+            kind: 'details',
+            rows: items.slice(0, 50).map((item) => ({
+              label: `${item.reference} (${item.trackingCode})`,
+              value:
+                stage === 'disposal_soon' && item.disposeAt
+                  ? `${item.nodeName}, by ${item.disposeAt.toISOString().slice(0, 10)}`
+                  : item.nodeName,
+            })),
+          },
+          ...(n > 50
+            ? [
+                {
+                  kind: 'paragraph' as const,
+                  text: `…and ${n - 50} more. See them all in the merchant dashboard: ${this.dashboardUrl('/returns')}`,
+                },
+              ]
+            : [
+                {
+                  kind: 'paragraph' as const,
+                  text: `Merchant dashboard: ${this.dashboardUrl('/returns')}`,
+                },
+              ]),
+        ],
+      },
+      manager,
+    );
+  }
+
+  // Ops: physical parcels to remove from Node shelves.
+  async returnsDisposedForOps(
+    items: { merchantName: string; trackingCode: string; nodeName: string }[],
+    manager: EntityManager,
+  ): Promise<void> {
+    if (items.length === 0) {
+      return;
+    }
+    await this.send(
+      await this.adminsWith(AdminPermission.OPS),
+      {
+        subject: `${items.length} abandoned return(s) to dispose of`,
+        heading: 'Abandoned returns to remove from Nodes',
+        blocks: [
+          {
+            kind: 'paragraph',
+            text: 'These merchant returns passed their disposal date. Arrange removal from the Nodes under the merchant terms.',
+          },
+          {
+            kind: 'details',
+            rows: items.slice(0, 100).map((item) => ({
+              label: item.trackingCode,
+              value: `${item.nodeName} · ${item.merchantName}`,
+            })),
+          },
+        ],
+      },
+      manager,
+    );
+  }
+
   // A claim was approved (and paid into the wallet) or rejected (D18).
   async claimDecided(
     merchant: MerchantEntity,

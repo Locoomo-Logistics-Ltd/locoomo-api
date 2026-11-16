@@ -1,6 +1,6 @@
 # Locoomo for Merchants: what's built and what's next
 
-*Status as of 15 November 2026*
+*Status as of 16 November 2026*
 
 ## In one paragraph
 
@@ -24,12 +24,16 @@ merchant dashboard.
 | Pricing, volume discounts, statements and tax invoices | ✅ Built |
 | Labels, bulk upload, buyer-code relay | ✅ Built |
 | Returns, refusals, lost/damaged claims | ✅ Built |
-| Hubs, manifests and bags (marketplace-scale inbound) | 🔜 Next |
-| Operations dashboards, reports, storage fees, data compliance | 🔜 Planned |
+| Hubs, manifests and bags (marketplace-scale inbound), full-Node reroutes | ✅ Built |
+| Storage fees and disposal for returns nobody collects | ✅ Built * |
+| Staff views: all orders, merchant 360, platform health alerts | ✅ Built * |
+| Merchant reports and data exports | ✅ Built * |
+| Data retention, personal-data requests, operations runbook | ✅ Built * |
 | Pick links, developer toolkit, go-live checklist | 🔜 Planned |
 
 "Built" means the system (backend) and its documentation are finished, tested and running
-on our **staging** (test) environment. The screens merchants and staff will use are being
+on our **staging** (test) environment. Rows marked * are finished and tested but not yet
+deployed to staging; they go with the next deployment. The screens merchants and staff will use are being
 built by the frontend team from that documentation. Nothing merchant-facing is on the
 production system yet, and live shipments stay switched off there until we decide to open.
 
@@ -96,6 +100,9 @@ production system yet, and live shipments stay switched off there until we decid
   goes below its allowed overdraft.
 - **Monthly statements and tax invoices** (PDF or spreadsheet), downloadable by the
   merchant and by our staff.
+- **Reports and exports.** A dashboard summary for any period (volumes, how many buyers
+  collect, typical delivery and pickup times, spend, busiest destinations) and
+  spreadsheet downloads of shipments and wallet history, up to three months at a time.
 - **Safety checks for finance.** Every wallet is checked against its records every night.
   Any manual credit or debit needs **two** finance staff: one requests it and a second
   approves it.
@@ -112,8 +119,36 @@ production system yet, and live shipments stay switched off there until we decid
 - **Collecting returns.** Returned parcels wait at the Node the merchant dropped them at.
   The merchant can collect them one by one, or create a **return batch**: one reference and
   one code to collect up to 200 parcels at once.
+- **Returns nobody collects.** Storage is free for 10 working days, then ₦100 per parcel
+  per day is charged to the merchant's wallet (shown on the monthly invoice). The merchant
+  is emailed when fees start and a week before disposal; 30 days after fees start the
+  parcel is disposed of under the merchant terms and our operations team is told to
+  remove it from the Node.
 
-### 6. Tools for Locoomo staff
+### 6. Marketplace-scale inbound: hubs, manifests and bags
+
+- **Hubs.** Locoomo marks some Nodes as hubs and assigns a hub to each large merchant;
+  their shipments then start at the hub by default.
+- **Manifests.** A merchant lists the parcels on a truck (up to 10,000) and prints a
+  manifest with a QR code for the driver. The hub scans the manifest, then each parcel by
+  our label, the merchant's own order number or the merchant's own barcode (so
+  cross-border parcels don't need relabelling). When the hub finishes, the merchant gets
+  a report: received, missing, and parcels that arrived without being listed.
+- **Bags.** At the hub, parcels are sorted into one sealed bag per destination Node (up to
+  50 a bag), and each bag travels as **one courier trip** instead of 50. Every parcel's
+  status and notifications still update individually. At the destination, staff scan the
+  parcels out of the bag as usual; anything still missing a day later is flagged to ops.
+  Returns heading back to a hub travel in bags too.
+- **Full or closed Nodes.** If the buyer's Node is full or closed when a parcel is dropped
+  off, the parcel waits at its origin while ops pick a nearby Node (the system picks the
+  nearest with space if nobody decides within a working day). The buyer and merchant are
+  told; Locoomo absorbs any price difference. Small Nodes can also cap how many merchant
+  parcels a day are addressed to them.
+- **Tested at scale.** A load test pushed 2,000 parcels through one hub at about 15 per
+  second with no errors: roughly **447,000 parcels in an 8-hour shift**, 4.5× the
+  100,000-a-day target.
+
+### 7. Tools for Locoomo staff
 
 - Merchant review queue and account controls (KYC team and operations).
 - Wallet view per merchant, manual adjustments with two-person approval, and a pricing
@@ -121,6 +156,23 @@ production system yet, and live shipments stay switched off there until we decid
 - Claims queue with evidence, notes, rejection and payout (operations and finance).
 - Recording parcels as lost or damaged, and managing public holidays so collection
   deadlines skip them (operations).
+- Hubs, merchant hub assignment, daily caps on small Nodes, and the reroute queue for
+  parcels whose Node is full or closed (operations).
+- **All orders:** consumer and merchant parcels in one searchable list, with each
+  parcel's full history and courier trips (buyer contact details masked for support).
+- **Merchant 360:** one page per merchant with its team, API keys, webhook health,
+  wallets, shipment volumes, API errors, open items and recent activity. It replaces
+  any need to "log in as the merchant".
+- **Platform health:** around ten checks (email and webhook backlogs, reroute and review
+  queues, wallets below zero, bags without a courier, parcels missing from bags). Ops are
+  emailed when one goes red, with reminders while it stays red.
+- **Exports:** the All orders list downloads as a spreadsheet (CSV) for any period up to
+  three months.
+- **Privacy:** buyers' details are removed automatically 180 days after a parcel is
+  finished (photos deleted too), KYC files are deleted on schedule, and a super admin can
+  export or erase everything we hold about a buyer on request. An **operations runbook**
+  covers alerts, everyday procedures and data-breach response (including the 72-hour
+  notice to the NDPC).
 - Every sensitive action is logged: who did what, and when.
 
 ---
@@ -129,14 +181,16 @@ production system yet, and live shipments stay switched off there until we decid
 
 | Phase | What it adds | Why it matters |
 |---|---|---|
-| **Hubs, manifests and bags** | Large merchants bulk-drop thousands of parcels at a hub with a manifest. The hub scans them in, sorts them into sealed bags (one per destination Node) and sends each bag as a single trip. Plus handling Nodes that are full or closed. | Needed before **marketplace-scale merchants (e.g. Temu)** can go live. Target: 100,000 parcels a day through one hub. |
-| **Operations and compliance** | All-orders and "merchant 360" views for support, health monitoring and alerts, exports and reports. Storage fees and disposal for returns nobody collects. Data retention and personal-data requests. | Day-to-day running at scale, and regulatory compliance. Until then, uncollected returns are free and ops chase them by hand. |
 | **Developer experience** | Pick links (a seller shares a link on WhatsApp and the buyer picks their Node), a ready-made developer toolkit, an in-dashboard go-live checklist. | Easier onboarding for small sellers and integrators. |
 
 **Smaller items still open:**
 - Refunding the delivery fee when a parcel is lost. Today a claim covers only the goods'
   value.
 - Automatically flagging parcels with no scan for 5 working days.
+- Bags travel only with Sendii today; Locoomo's own riders can't carry bags yet.
+- A Node that closes while parcels are already on their way to it isn't rerouted
+  automatically; ops redirect those by hand.
+- Courier costs for bag trips aren't yet split per parcel in the margin report.
 
 ---
 
@@ -152,8 +206,8 @@ These don't block building, but they must be settled before or soon after launch
 | Volume discount tiers | 0/5/10/15% at 0/500/5,000/50,000 parcels a month | Commercial |
 | Card top-up fees | Passed on to the merchant. Bank-transfer fees absorbed by Locoomo. | Finance |
 | Liability and claims | ₦50,000 cap, 30-day window, prohibited-items list | Legal / ops |
-| Storage fee for uncollected returns | ₦100 per parcel per day after 10 working days; disposal after 30 more days | Ops |
-| Data retention and privacy | Retention periods, data-processing agreement, NDPC registration | Legal / DPO |
+| Storage fee for uncollected returns | Built with ₦100 per parcel per day after 10 working days, disposal 30 days later. **Needs ops/legal sign-off, and the merchant terms must say so.** | Ops / legal |
+| Data retention and privacy | Built with: buyer details 180 days after delivery, KYC files 90 days after rejection / 5 years after closure, API logs 30 days. **DPO to confirm these, the deadline for answering data requests, the data-processing agreement, and NDPC registration.** | Legal / DPO |
 | SMS | Sender name "Locoomo", merchant name in the message; cost absorbed | Commercial |
 | Consumer refunds | Amount and approval when a consumer parcel is refused or lost | Finance / ops |
 
@@ -168,5 +222,5 @@ These don't block building, but they must be settled before or soon after launch
    accounts, invoice company details, SMS provider.
 4. **Switch on live shipments** in production. This is a single setting, already on in
    staging.
-5. **First merchant:** a small seller dropping at Nodes. Marketplace-scale merchants
-   follow once hubs, manifests and bags are built.
+5. **First merchant:** a small seller dropping at Nodes. Marketplace-scale merchants can
+   follow once a hub is set up and Sendii (which carries the bags) is live in production.

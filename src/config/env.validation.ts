@@ -64,6 +64,12 @@ export const envSchema = z
     INVOICE_SELLER_NAME: optionalString(),
     INVOICE_SELLER_ADDRESS: optionalString(),
     INVOICE_SELLER_TIN: optionalString(),
+    // Daily storage fee for a merchant return left uncollected past its 10
+    // free working days (plan D20, F4), in kobo. Default ₦100.
+    RETURN_STORAGE_FEE_KOBO: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.coerce.number().int().min(0).default(10_000),
+    ),
     // Google Sign-In (identity/application/google-auth.service.ts) — the
     // OAuth client ID registered for this app, used as the `audience` when
     // verifying a Google ID token. Public value, not a secret; no client

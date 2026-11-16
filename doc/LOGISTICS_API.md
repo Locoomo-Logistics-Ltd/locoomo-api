@@ -1007,6 +1007,11 @@ Every attempt, right or wrong, is logged with the staff member's name.
 
    Response `200`: an `OrderTransition` with `"status": "return_completed"`.
 
+**Abandoned merchant returns.** A merchant return still on your shelf 30 days after its
+storage fees started (10 working days free first) is **disposed of**: its status becomes
+`disposed`, it leaves your shelf list, its slot frees up and its code stops working. Ops
+are emailed the list and arrange removal; keep it aside until they do.
+
 ### 5.9a Merchant return batches — `/handoffs/return-batches`
 
 A merchant collecting many returns at once brings a **batch reference** (`RB-7KQ2-M9XD`)

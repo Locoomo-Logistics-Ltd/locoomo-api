@@ -1,4 +1,8 @@
 import {
+  MerchantOverview,
+  MerchantOverviewService,
+} from '../application/merchant-overview.service';
+import {
   Body,
   Controller,
   Get,
@@ -42,7 +46,10 @@ const actorFrom = (request: Request): AdminActor => ({
 // Not behind MerchantGuard, so the platform kill switch never locks ops out.
 @Controller('admin/merchants')
 export class AdminMerchantsController {
-  constructor(private readonly merchants: AdminMerchantsService) {}
+  constructor(
+    private readonly merchants: AdminMerchantsService,
+    private readonly overviews: MerchantOverviewService,
+  ) {}
 
   @Get()
   @RequireAdminPermission(
@@ -65,6 +72,19 @@ export class AdminMerchantsController {
   )
   detail(@Param('id', ParseUUIDPipe) id: string): Promise<AdminMerchantDetail> {
     return this.merchants.detail(id);
+  }
+
+  // Merchant 360 (M6b): keys, webhooks, wallets, shipments, API use, open
+  // items and recent activity in one read-only view.
+  @Get(':id/overview')
+  @RequireAdminPermission(
+    AdminPermission.KYC,
+    AdminPermission.OPS,
+    AdminPermission.SUPPORT,
+    AdminPermission.FINANCE,
+  )
+  overview(@Param('id', ParseUUIDPipe) id: string): Promise<MerchantOverview> {
+    return this.overviews.overview(id);
   }
 
   // POST, not GET: each call is an audited disclosure, never a cacheable read.

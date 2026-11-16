@@ -1312,6 +1312,80 @@ Decisions:
   merchant controls and keeps the check cheap. The picker doesn't hide capped Nodes yet.
 - **Return bags seal themselves after 24 h**: small Nodes may only ever have a few returns.
 
+### M6a Abandoned returns: done (2026-11-16)
+
+M6 ships in slices: **M6a abandoned returns** (this) → M6b ops views (all orders, merchant
+360, platform health + alerts) → M6c merchant reports and exports → M6d privacy
+(retention/redaction jobs, data-subject export/erase) and the ops runbook.
+
+| Item | Where |
+|---|---|
+| Order status `disposed` (migration 378, own migration for the enum value); `merchant_shipments.storageFeesFrom/storageChargedThrough/disposeAt/storageNoticeSentAt/disposalNoticeSentAt` (migration 379) | orders, merchants entities |
+| Hourly worker: schedule (10 working days → fees, +30 days → disposal), charge `RETURN_STORAGE_FEE_KOBO` per parcel per Lagos day (`storage_fee`, `externalRef storage:<shipment>:<day>`), notices (fees start, 7 days before disposal, disposed), disposal (live: handoffs `ReturnCollectionService.dispose` → order `disposed`, slot freed, code voided, mirror → `shipment.disposed`; test: direct); ops emailed parcels to remove | `return-storage.service.ts`, `domain/return-storage.ts` |
+| Storage fees on invoices ("Storage of uncollected returns", parcel-days); dates on `shipment.return` and `GET /returns` | `domain/statement.ts`, `shipment-view.ts`, `return-batch.service.ts` |
+
+Decisions:
+- **F4 defaults** (₦100/day, 30 days to disposal) are applied; the fee is an env setting
+  (`RETURN_STORAGE_FEE_KOBO`) until an admin config screen exists. F4 still needs ops/legal
+  confirmation, and the merchant terms must say so before production.
+- **Charged per Lagos day, catching up** if the worker missed days; each day once.
+- **Disposal is a status, not a physical act**: the system marks it and tells ops; the
+  Node keeps the parcel aside until ops remove it.
+- **Wallets may go below zero** for storage, like re-pricing: the parcel is already there.
+
+### M6b Ops views: done (2026-11-16)
+
+| Item | Where |
+|---|---|
+| `GET /admin/orders` (+ `/:id`): consumer and merchant orders with filters; detail with masked receiver contact, timeline, own and bag legs, shipment | admin `admin-orders-query.service.ts`, `admin-ops.controller.ts` |
+| `GET /admin/merchants/:id/overview` (merchant 360) | merchants `merchant-overview.service.ts` |
+| `GET /admin/merchant-platform/health`; `ops_alerts` (migration 380, one open alert per check); worker every 10 min emails ops on breach, reminds every 6 h, closes on clear | admin `platform-health.service.ts` |
+
+Decisions:
+- **Read models are raw SQL in the admin module** (and merchants for the 360): read-only,
+  no cross-module writes, so no new service dependencies.
+- **Receiver contact is masked in the admin order view**: support confirms identity; full
+  contact stays with the counter flows that need it.
+- **Health checks and thresholds live in code** (one list, easy to extend); unmatched DVA
+  credits aren't a check because unmatched transfers aren't recorded separately today.
+
+### M6c Reports and exports: done (2026-11-16)
+
+| Item | Where |
+|---|---|
+| `GET /merchant/reports/summary` (≤ 93 days, default 30) | `merchant-reports.service.ts`, `reports.controller.ts` |
+| `POST /merchant/exports/shipments` / `wallet-entries` → 15-minute signed link; public `GET /merchant/exports/download` streams CSV in keyset pages | same; `common/crypto/signed-token.ts`, `common/csv/csv.ts` |
+| Admin `POST /admin/exports/orders` + public download (All orders filters, no receiver contact) | admin `admin-orders-query.service.ts`, `admin-ops.controller.ts` |
+
+Decisions:
+- **Stream on demand instead of storing files**: the signed token carries the query
+  (merchant, mode, type, range); nothing is written to storage, so there's nothing to
+  expire or leak later. Memory stays flat (2,000-row pages).
+- **Separate export endpoints per type** so each carries its own permission (wallet lines
+  need `wallet:read` / `wallet.manage`).
+- **CSV formula injection guarded** in the shared CSV writer.
+- Range ≤ 93 days per export, as planned.
+
+### M6d Privacy, retention and the ops runbook: done (2026-11-16). M6 complete
+
+| Item | Where |
+|---|---|
+| `orders.piiRedactedAt`, `merchant_shipments.piiRedactedAt`, `merchants.kycPurgedAt` (migration 381); `CloudinaryService.deleteResource` | entities, `common/cloudinary` |
+| Retention worker: receiver data and counter photos 180 days after the final state; KYC files 90 days after rejection / 5 years after closure; sandbox data 90 days | admin `privacy.service.ts` |
+| Data-subject export and erase (`super`) by phone or email; in-flight parcels skipped | `admin-privacy.controller.ts` |
+| **OPS_RUNBOOK.md**: alerts and first steps, procedures (merchants, money, reroutes, lost parcels, couriers, bags, abandoned returns, hubs), retention schedule, data-subject requests, breach response (NDPC 72 h), secrets and switches, deploys | doc |
+
+Decisions:
+- **Redact, don't delete, orders**: earnings, invoices and the wallet ledger reference
+  them; the personal fields are blanked and photos deleted.
+- **"Finished" is the clock start** (approximated by `updatedAt` once in a final status).
+- **API logs stay 30 days** (plan said 14, partitioned daily): a daily purge job with an
+  index does the same at our volumes without the operational cost of partitions.
+  Partitioning can come if `merchant_api_requests` grows past what the purge handles.
+- **Test wallet lines aren't purged** (the ledger must keep summing to the balance).
+- **Open with legal/DPO**: response deadlines for data-subject requests, NDPC
+  registration (F7), the 30-day API log retention.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

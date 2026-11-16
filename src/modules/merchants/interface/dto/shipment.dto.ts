@@ -405,6 +405,10 @@ export class ShipmentCollectionView {
 export class ShipmentReturnView {
   reason!: 'not_collected' | 'delivery_failed' | 'merchant_request';
   readyForCollectionAt!: string | null;
+  /** Waiting at the Node: storage is charged daily from this time (10 working days after `readyForCollectionAt`). */
+  storageFeesFrom!: string | null;
+  /** Disposed of at this time if still not collected (30 days after storage starts). */
+  disposeAt!: string | null;
 }
 
 export class ShipmentExceptionView {

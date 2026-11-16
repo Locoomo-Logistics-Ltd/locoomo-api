@@ -75,6 +75,10 @@ export class ReturnItemView {
   status!: string;
   returnReason!: string | null;
   readyForCollectionAt!: string | null;
+  /** Storage is charged daily from here (10 working days after it was ready). */
+  storageFeesFrom!: string | null;
+  /** Disposed of at this time if still not collected. */
+  disposeAt!: string | null;
   node!: ReturnNodeView;
   @ApiProperty({ nullable: true, type: Object })
   returnBatch!: { id: string; reference: string } | null;

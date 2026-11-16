@@ -51,7 +51,15 @@ export function shipmentView(
       method: s.collectionMethod,
       collectorName: s.collectorName,
     },
-    return: s.returnInfo,
+    return: s.returnInfo
+      ? {
+          ...s.returnInfo,
+          // Abandoned returns (M6a): storage charged daily from, and
+          // disposal on, these dates unless collected first.
+          storageFeesFrom: s.storageFeesFrom?.toISOString() ?? null,
+          disposeAt: s.disposeAt?.toISOString() ?? null,
+        }
+      : null,
     exception: s.exceptionInfo,
     notifyReceiver: s.notifyReceiver,
     metadata: s.metadata,
