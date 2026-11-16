@@ -1366,6 +1366,26 @@ Decisions:
 - **CSV formula injection guarded** in the shared CSV writer.
 - Range ≤ 93 days per export, as planned.
 
+### M6d Privacy, retention and the ops runbook: done (2026-11-16). M6 complete
+
+| Item | Where |
+|---|---|
+| `orders.piiRedactedAt`, `merchant_shipments.piiRedactedAt`, `merchants.kycPurgedAt` (migration 381); `CloudinaryService.deleteResource` | entities, `common/cloudinary` |
+| Retention worker: receiver data and counter photos 180 days after the final state; KYC files 90 days after rejection / 5 years after closure; sandbox data 90 days | admin `privacy.service.ts` |
+| Data-subject export and erase (`super`) by phone or email; in-flight parcels skipped | `admin-privacy.controller.ts` |
+| **OPS_RUNBOOK.md**: alerts and first steps, procedures (merchants, money, reroutes, lost parcels, couriers, bags, abandoned returns, hubs), retention schedule, data-subject requests, breach response (NDPC 72 h), secrets and switches, deploys | doc |
+
+Decisions:
+- **Redact, don't delete, orders**: earnings, invoices and the wallet ledger reference
+  them; the personal fields are blanked and photos deleted.
+- **"Finished" is the clock start** (approximated by `updatedAt` once in a final status).
+- **API logs stay 30 days** (plan said 14, partitioned daily): a daily purge job with an
+  index does the same at our volumes without the operational cost of partitions.
+  Partitioning can come if `merchant_api_requests` grows past what the purge handles.
+- **Test wallet lines aren't purged** (the ledger must keep summing to the balance).
+- **Open with legal/DPO**: response deadlines for data-subject requests, NDPC
+  registration (F7), the 30-day API log retention.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

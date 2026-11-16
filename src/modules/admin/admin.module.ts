@@ -14,6 +14,9 @@ import {
   AdminOpsController,
 } from './interface/admin-ops.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { CloudinaryModule } from '../../common/cloudinary/cloudinary.module';
+import { PrivacyService } from './application/privacy.service';
+import { AdminPrivacyController } from './interface/admin-privacy.controller';
 
 @Module({
   imports: [
@@ -22,17 +25,21 @@ import { NotificationsModule } from '../notifications/notifications.module';
     IdentityModule,
     // OutboxService: platform health alert emails.
     NotificationsModule,
+    // Retention deletes counter photos and KYC files.
+    CloudinaryModule,
   ],
   controllers: [
     AdminCapacityAuditController,
     AdminApprovalsController,
     AdminOpsController,
     AdminExportDownloadController,
+    AdminPrivacyController,
   ],
   providers: [
     CapacityAuditQueryService,
     AdminOrdersQueryService,
     PlatformHealthService,
+    PrivacyService,
     ApprovalActionRegistry,
     ApprovalService,
   ],

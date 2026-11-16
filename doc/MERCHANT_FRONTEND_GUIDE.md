@@ -2502,6 +2502,26 @@ reroute queue age, KYC queue age, negative live wallets, sealed bags without a c
 bags with missing parcels. Ops are emailed when a check goes red (a reminder every 6
 hours while it stays red), so the page is for looking, not watching.
 
+### 18.10 Privacy requests ✅ (`super` only)
+
+A "Privacy" page for data-subject requests about a **receiver** (buyer). Both calls are
+POSTs (personal data stays out of URLs) and are audited. Procedure (identity check,
+deadlines): OPS_RUNBOOK.md §5.2.
+
+- Form: "Phone" or "Email", and a "Request reference" (required for erase).
+- **Export:** **`POST /admin/privacy/subject-export`** `{ phone }` or `{ email }` →
+  `{ orders: [...], shipments: [...] }` with their details, statuses and dates. Offer
+  "Download JSON".
+- **Erase:** **`POST /admin/privacy/subject-erase`** `{ phone | email, reason }` →
+  `{ erasedOrders, erasedShipments, skippedInFlight: [{ trackingCode, status }] }`.
+  Confirm first: "This redacts this person's details from every finished parcel and
+  deletes counter photos. It can't be undone." Show skipped parcels: "Still on their way:
+  erase again once they're finished."
+- `422 SUBJECT_QUERY_INVALID`: "Enter a valid phone number or email."
+
+Merchant pages and shipments show `[redacted]` for receivers whose data was erased or
+passed the 180-day retention.
+
 ---
 
 ## 19. Operations tools that affect merchant parcels
@@ -3327,6 +3347,7 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | POST / GET | `/admin/exports/orders`, `/admin/exports/orders/download?token=` | `ops` / signed link |
 | GET | `/admin/merchants/:id/overview` | `ops`, `support`, `finance`, `kyc` |
 | GET | `/admin/merchant-platform/health` | `ops`, `support` |
+| POST | `/admin/privacy/subject-export`, `/admin/privacy/subject-erase` | `super` |
 | POST | `/admin/merchants/:id/wallet/adjustments` | `finance` (runs after a second `finance` admin approves) |
 | GET | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance`, `ops`, `support` |
 | PUT | `/admin/pricing/volume-tiers`, `/admin/merchants/:id/pricing` | `finance` |

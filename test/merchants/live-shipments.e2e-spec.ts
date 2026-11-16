@@ -28,6 +28,8 @@ import { DeliveryLegStatus } from '../../src/modules/logistics/domain/delivery-l
 import { RerouteService } from '../../src/modules/handoffs/application/reroute.service';
 import { ReturnStorageService } from '../../src/modules/merchants/application/return-storage.service';
 import { PlatformHealthService } from '../../src/modules/admin/application/platform-health.service';
+import { PrivacyService } from '../../src/modules/admin/application/privacy.service';
+import { CloudinaryService } from '../../src/common/cloudinary/cloudinary.service';
 
 const PASSWORD = 'Correct-Horse-Battery-1';
 const DOMAIN = 'live.e2e.test';
@@ -2229,6 +2231,106 @@ describe('Live merchant shipments (e2e)', () => {
         .set('Cookie', financeViewer)
         .send({ from, to })
         .expect(403);
+    });
+
+    it('redacts receiver details 180 days after a parcel finishes (M6d)', async () => {
+      jest
+        .spyOn(app.get(CloudinaryService), 'deleteResource')
+        .mockResolvedValue(undefined);
+      const s = await create();
+      await live.post(`/shipments/${s.id}/cancel`).expect(200);
+      const { id: orderId } = await orderOf(s.trackingCode);
+      await dataSource.query(
+        `UPDATE orders SET "updatedAt" = now() - interval '200 days' WHERE id = $1`,
+        [orderId],
+      );
+      const run = await app.get(PrivacyService).run();
+      expect(run.ordersRedacted).toBeGreaterThanOrEqual(1);
+      const [order] = await dataSource.query<
+        {
+          receiverFullName: string;
+          receiverPhone: string;
+          receiverEmail: string | null;
+          piiRedactedAt: Date | null;
+        }[]
+      >(
+        `SELECT "receiverFullName", "receiverPhone", "receiverEmail", "piiRedactedAt"
+           FROM orders WHERE id = $1`,
+        [orderId],
+      );
+      expect(order).toMatchObject({
+        receiverFullName: '[redacted]',
+        receiverPhone: '',
+        receiverEmail: null,
+      });
+      expect(order.piiRedactedAt).not.toBeNull();
+      const [shipmentRow] = await dataSource.query<
+        { receiverName: string; receiverEmail: string | null }[]
+      >(
+        `SELECT "receiverName", "receiverEmail" FROM merchant_shipments WHERE id = $1`,
+        [s.id],
+      );
+      expect(shipmentRow).toEqual({
+        receiverName: '[redacted]',
+        receiverEmail: null,
+      });
+    });
+
+    it('answers data-subject export and erase requests (M6d)', async () => {
+      const superAdmin = await signIn(
+        await makeUser('privacy-super', {
+          role: UserRole.ADMIN,
+          adminPermissions: [AdminPermission.SUPER],
+        }),
+      );
+      const email = `dsr+${randomUUID().slice(0, 6)}@${DOMAIN}`;
+      const s = await create({
+        receiver: { name: 'Ada Lovelace', phone: '08031230000', email },
+      });
+      const privacy = (path: string, body: object, cookie = superAdmin) =>
+        http()
+          .post(`/api/v1/admin/privacy/${path}`)
+          .set('Cookie', cookie)
+          .send(body);
+
+      const exported = data<{
+        orders: { trackingCode: string }[];
+        shipments: unknown[];
+      }>(
+        await privacy('subject-export', { email: email.toUpperCase() }).expect(
+          200,
+        ),
+      );
+      expect(exported.orders.map((o) => o.trackingCode)).toEqual([
+        s.trackingCode,
+      ]);
+      expect(exported.shipments).toHaveLength(1);
+      await privacy('subject-export', { email }, opsViewer).expect(403);
+
+      const early = data<{
+        erasedOrders: number;
+        skippedInFlight: { trackingCode: string }[];
+      }>(
+        await privacy('subject-erase', { email, reason: 'DSR-0001' }).expect(
+          200,
+        ),
+      );
+      expect(early.erasedOrders).toBe(0);
+      expect(early.skippedInFlight.map((o) => o.trackingCode)).toEqual([
+        s.trackingCode,
+      ]);
+
+      await live.post(`/shipments/${s.id}/cancel`).expect(200);
+      const done = data<{ erasedOrders: number; skippedInFlight: unknown[] }>(
+        await privacy('subject-erase', { email, reason: 'DSR-0001' }).expect(
+          200,
+        ),
+      );
+      expect(done).toMatchObject({ erasedOrders: 1, skippedInFlight: [] });
+      const after = data<{ orders: unknown[]; shipments: unknown[] }>(
+        await privacy('subject-export', { email }).expect(200),
+      );
+      expect(after).toEqual({ orders: [], shipments: [] });
     });
 
     it('shows the merchant 360', async () => {

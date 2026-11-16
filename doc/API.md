@@ -3607,6 +3607,23 @@ approves it ([Approvals](#approvals-two-admin-rule)): it credits the wallet (`cl
 unique per claim), marks the claim approved and sends `claim.decided` and an email. While a
 payout approval is pending, reject and a second payout answer `409 CLAIM_PAYOUT_PENDING`.
 
+## Privacy and retention (M6d)
+
+- **Retention worker** (every 6 h, batches): finished orders (`completed`,
+  `return_completed`, `cancelled`, `refused`, `disposed`, `exception`) not updated for 180
+  days have receiver name/phone/email and collector name redacted on the order, its
+  `order_events` payloads, the merchant shipment and its timeline; counter photos
+  (collection, refusal) are deleted from Cloudinary first (`orders.piiRedactedAt`). KYC
+  documents and director IDs are deleted 90 days after a rejection or 5 years after
+  closure (`merchants.kycPurgedAt`, audited). Sandbox shipments/manifests/return batches
+  older than 90 days are deleted. Migration 381.
+- **Data-subject requests** (`super`): `POST /api/v1/admin/privacy/subject-export`
+  `{ phone } | { email }` → `{ orders, shipments }`; `POST /api/v1/admin/privacy/subject-erase`
+  `{ phone | email, reason }` → `{ erasedOrders, erasedShipments, skippedInFlight }`
+  (unfinished parcels are skipped). Audited without the personal data.
+  `422 SUBJECT_QUERY_INVALID`.
+- Procedures (identity checks, breach response, NDPC 72 h): [OPS_RUNBOOK.md](OPS_RUNBOOK.md).
+
 ## Reports and exports (M6c)
 
 - `GET /api/v1/merchant/reports/summary?from=&to=` (`shipments:read`): KPIs for shipments

@@ -69,6 +69,21 @@ export class CloudinaryService {
     }
   }
 
+  // Retention (plan §11.6): removes an `authenticated` asset for good and
+  // purges cached copies. An asset already gone counts as deleted.
+  async deleteResource(publicId: string): Promise<void> {
+    const result = (await cloudinary.uploader.destroy(publicId, {
+      type: 'authenticated',
+      resource_type: 'image',
+      invalidate: true,
+    })) as { result?: string };
+    if (result.result !== 'ok' && result.result !== 'not found') {
+      throw new Error(
+        `Cloudinary refused to delete ${publicId}: ${String(result.result)}`,
+      );
+    }
+  }
+
   getSignedViewUrl(publicId: string): string {
     return cloudinary.url(publicId, {
       type: 'authenticated',

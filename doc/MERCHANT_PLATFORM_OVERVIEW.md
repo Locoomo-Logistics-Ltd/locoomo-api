@@ -28,7 +28,7 @@ merchant dashboard.
 | Storage fees and disposal for returns nobody collects | ✅ Built * |
 | Staff views: all orders, merchant 360, platform health alerts | ✅ Built * |
 | Merchant reports and data exports | ✅ Built * |
-| Data retention, personal-data requests, operations runbook | 🔜 Next |
+| Data retention, personal-data requests, operations runbook | ✅ Built * |
 | Pick links, developer toolkit, go-live checklist | 🔜 Planned |
 
 "Built" means the system (backend) and its documentation are finished, tested and running
@@ -168,6 +168,11 @@ production system yet, and live shipments stay switched off there until we decid
   emailed when one goes red, with reminders while it stays red.
 - **Exports:** the All orders list downloads as a spreadsheet (CSV) for any period up to
   three months.
+- **Privacy:** buyers' details are removed automatically 180 days after a parcel is
+  finished (photos deleted too), KYC files are deleted on schedule, and a super admin can
+  export or erase everything we hold about a buyer on request. An **operations runbook**
+  covers alerts, everyday procedures and data-breach response (including the 72-hour
+  notice to the NDPC).
 - Every sensitive action is logged: who did what, and when.
 
 ---
@@ -176,7 +181,6 @@ production system yet, and live shipments stay switched off there until we decid
 
 | Phase | What it adds | Why it matters |
 |---|---|---|
-| **Data compliance** | Automatic clean-up of personal data after its retention period, handling buyers' requests to see or delete their data, and the operations runbook (including breach response). | Required by Nigeria's data protection law (NDPA) before launch. |
 | **Developer experience** | Pick links (a seller shares a link on WhatsApp and the buyer picks their Node), a ready-made developer toolkit, an in-dashboard go-live checklist. | Easier onboarding for small sellers and integrators. |
 
 **Smaller items still open:**
@@ -203,7 +207,7 @@ These don't block building, but they must be settled before or soon after launch
 | Card top-up fees | Passed on to the merchant. Bank-transfer fees absorbed by Locoomo. | Finance |
 | Liability and claims | ₦50,000 cap, 30-day window, prohibited-items list | Legal / ops |
 | Storage fee for uncollected returns | Built with ₦100 per parcel per day after 10 working days, disposal 30 days later. **Needs ops/legal sign-off, and the merchant terms must say so.** | Ops / legal |
-| Data retention and privacy | Retention periods, data-processing agreement, NDPC registration | Legal / DPO |
+| Data retention and privacy | Built with: buyer details 180 days after delivery, KYC files 90 days after rejection / 5 years after closure, API logs 30 days. **DPO to confirm these, the deadline for answering data requests, the data-processing agreement, and NDPC registration.** | Legal / DPO |
 | SMS | Sender name "Locoomo", merchant name in the message; cost absorbed | Commercial |
 | Consumer refunds | Amount and approval when a consumer parcel is refused or lost | Finance / ops |
 

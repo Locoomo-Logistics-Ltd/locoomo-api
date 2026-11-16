@@ -415,6 +415,12 @@ Scope `shipments:write`. Send `Idempotency-Key`.
 | `receiver.name` | Required, 2–100 chars |
 | `receiver.phone` | Required, valid phone |
 | `receiver.email` | Optional. We recommend it: email is always sent, SMS where available |
+
+Receiver details are personal data. We keep them **180 days after the shipment is
+finished** (collected, returned, cancelled, refused, disposed or lost), then redact them:
+the shipment's `receiver.name` reads `[redacted]` and phone and email are emptied. Keep
+your own copy if you need it longer (you're responsible for it under your privacy
+policy). Sandbox shipments are deleted after 90 days.
 | `parcel.description` | Required, ≤ 500 chars. Be specific ("Wireless earbuds", not "Item") |
 | `parcel.size` | Required: `small` · `medium` · `large` · `extra_large` |
 | `parcel.weightKg` | Optional, 0.1–1000 |
@@ -1399,6 +1405,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-16 | **Data retention** (§7): receiver details are redacted 180 days after a shipment finishes; sandbox shipments, manifests and return batches are deleted after 90 days |
 | 2026-11-16 | **Reports and exports** (§14.3): `GET /reports/summary` (volumes, collection rate, median times, spend, top destinations) and CSV exports of shipments or wallet lines through a 15-minute signed link |
 | 2026-11-16 | **Storage fees and disposal for uncollected returns** (§11.3): ₦100 per parcel per day after 10 free working days (`storage_fee` wallet lines, on your monthly invoice), disposal 30 days later (`shipment.disposed`), with email notices. `return.storageFeesFrom` and `return.disposeAt` on shipments and `GET /returns` |
 | 2026-11-15 | **Reroutes for live parcels**: a parcel whose buyer's Node is full or closed at drop-off waits at its origin until a nearby Node is picked (within a working day), then `shipment.destination_changed` (§6). Returns heading back to your hub travel in bags too. Node daily caps can make creation answer `422 DESTINATION_NODE_UNAVAILABLE` |
