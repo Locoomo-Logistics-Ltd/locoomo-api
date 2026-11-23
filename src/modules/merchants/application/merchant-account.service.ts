@@ -19,6 +19,7 @@ import {
   AlreadyAMerchantMemberException,
   DirectorLimitReachedException,
   InvalidMerchantTransitionException,
+  MerchantCloseBlockedException,
   MerchantDetailsLockedException,
   MerchantNotEditableException,
   NotApplicableToIndividualsException,
@@ -503,9 +504,9 @@ export class MerchantAccountService {
     return this.overview(actor.merchantId, actor.memberId, actor.role);
   }
 
-  // Owner closes the account. Nothing can be in flight before M4 (no live
-  // shipments or wallet yet); M4 adds the in-flight / balance checks and
-  // the maker-checker refund here (plan §2.1).
+  // Owner closes the account (plan §2.1). Not while live parcels are in
+  // flight or the live wallet owes us; a positive live balance is refunded
+  // to the verified bank account by finance, who are told here.
   async close(actor: MerchantActor): Promise<void> {
     let memberUserIds: string[] = [];
     await this.dataSource.transaction(async (manager) => {
@@ -514,6 +515,34 @@ export class MerchantAccountService {
         throw new InvalidMerchantTransitionException(
           merchant.status,
           MerchantStatus.CLOSED,
+        );
+      }
+      const [live] = await manager.query<
+        { inFlightShipments: number; balanceKobo: number; heldKobo: number }[]
+      >(
+        `SELECT (SELECT count(*)::int FROM merchant_shipments s
+                  WHERE s."merchantId" = $1 AND s.mode = 'live'
+                    AND s.status IN ('created', 'received', 'in_transit',
+                                     'ready_for_collection', 'returning', 'return_ready')
+                ) AS "inFlightShipments",
+                COALESCE((SELECT w."balanceKobo"::int FROM merchant_wallets w
+                           WHERE w."merchantId" = $1 AND w.mode = 'live'), 0) AS "balanceKobo",
+                COALESCE((SELECT w."heldKobo"::int FROM merchant_wallets w
+                           WHERE w."merchantId" = $1 AND w.mode = 'live'), 0) AS "heldKobo"`,
+        [merchant.id],
+      );
+      if (
+        live.inFlightShipments > 0 ||
+        live.heldKobo > 0 ||
+        live.balanceKobo < 0
+      ) {
+        throw new MerchantCloseBlockedException(live);
+      }
+      if (live.balanceKobo > 0) {
+        await this.notifier.closedWithBalance(
+          merchant,
+          live.balanceKobo,
+          manager,
         );
       }
       const from = merchant.status;

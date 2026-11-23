@@ -647,6 +647,44 @@ export class MerchantNotifierService {
     );
   }
 
+  // A merchant closed with money left in the live wallet: finance refunds
+  // it to the verified settlement account (BUSINESS_DECISIONS #5).
+  async closedWithBalance(
+    merchant: MerchantEntity,
+    balanceKobo: number,
+    manager: EntityManager,
+  ): Promise<void> {
+    const admins = await this.adminsWith(AdminPermission.FINANCE);
+    if (admins.length === 0) {
+      this.logger.error(
+        `Merchant ${merchant.id} closed with a live balance but no active admin has the finance permission`,
+      );
+      return;
+    }
+    await this.send(
+      admins,
+      {
+        subject: `Refund due: ${merchant.tradingName} closed their account`,
+        heading: 'Refund the closed merchant’s wallet balance',
+        blocks: [
+          {
+            kind: 'details',
+            rows: [
+              { label: 'Merchant', value: merchant.tradingName },
+              { label: 'Merchant ID', value: merchant.id },
+              { label: 'Live balance', value: formatNaira(balanceKobo) },
+            ],
+          },
+          {
+            kind: 'paragraph',
+            text: 'Pay this to the verified settlement bank account shown on Merchant 360, then record it as a wallet adjustment so the balance reaches ₦0 (OPS_RUNBOOK: closed merchant with a balance).',
+          },
+        ],
+      },
+      manager,
+    );
+  }
+
   // Nightly reconciliation found cached wallet totals that don't match the
   // ledger (plan §8.1). Finance investigates; nothing is auto-corrected.
   async walletDrift(

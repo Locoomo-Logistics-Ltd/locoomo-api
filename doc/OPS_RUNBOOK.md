@@ -80,6 +80,11 @@ it stays red; it closes by itself when it clears.
   Engineering investigates; corrections are adjustments (two-admin), never DB edits.
 - **Storage fee dispute:** refund with a wallet adjustment (credit), reason "storage fee
   waiver: <tracking code>".
+- **Closed merchant with a balance** (email "Refund due: … closed their account"): pay the
+  live balance to the verified settlement bank account on Merchant 360, then raise a wallet
+  adjustment (debit, reason "closure refund: <transfer reference>") for a second finance
+  admin to approve, so the wallet ends at ₦0. Closure is refused while live parcels are in
+  flight or the wallet is below zero, so there is nothing else to settle.
 - **Claims:** Admin › Claims. Reject with a reason (one admin), or raise a payout (finance)
   for a second finance admin to approve. Payout ≤ the claim's `maxPayoutKobo`.
 

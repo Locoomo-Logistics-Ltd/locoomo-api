@@ -21,7 +21,9 @@ import {
 import type { Env } from '../../../config/env.validation';
 import {
   DuplicateReferenceException,
+  OriginRequiredException,
   PickLinkFailedException,
+  PickLinkNotFoundException,
   PickLinkUnavailableException,
 } from '../domain/exceptions/merchant.exceptions';
 import {
@@ -137,6 +139,13 @@ export class PickLinkService {
         details: toValidationDetails(errors, 'shipment'),
       });
     }
+    // Fail now, to the merchant, for what would otherwise fail later, to
+    // the buyer: an account that can't create shipments in this mode, or
+    // no origin to price and ship from.
+    const merchant = await this.shipments.creatableMerchant(caller);
+    if (!dto.origin && !merchant.hubNodeId) {
+      throw new OriginRequiredException();
+    }
     const [taken] = await this.dataSource.query<
       { kind: 'shipment' | 'pick_link'; id: string }[]
     >(
@@ -220,12 +229,20 @@ export class PickLinkService {
     id: string,
   ): Promise<PickLinkView> {
     const link = await this.own(caller, id);
-    const status = pickLinkStatus(link.status, link.expiresAt);
-    if (status !== 'open') {
-      throw new PickLinkUnavailableException(status);
+    // Conditional, so a buyer picking at the same moment wins cleanly.
+    const [, cancelled] = await this.dataSource.query<[unknown[], number]>(
+      `UPDATE pick_links SET status = 'cancelled', "updatedAt" = now()
+        WHERE id = $1 AND status = 'open' AND "expiresAt" > now()
+        RETURNING id`,
+      [link.id],
+    );
+    if (cancelled === 0) {
+      const fresh = await this.own(caller, id);
+      throw new PickLinkUnavailableException(
+        pickLinkStatus(fresh.status, fresh.expiresAt),
+      );
     }
-    link.status = 'cancelled';
-    return this.view(await this.dataSource.manager.save(link));
+    return this.view(await this.own(caller, id));
   }
 
   // ─── Buyer (public) ───────────────────────────────────────────────────
@@ -365,6 +382,24 @@ export class PickLinkService {
       throw error;
     }
     if (!result.ok) {
+      await this.audit.record({
+        actor: { type: 'system', id: null },
+        action: 'merchant.pick_link_failed',
+        merchantId: link.merchantId,
+        target: { type: 'pick_link', id: link.id },
+        metadata: { reason: result.error.code, destinationNodeId },
+        context,
+      });
+      // The merchant used the reference on a shipment of their own: this
+      // link can never succeed, so retire it rather than reopen it.
+      if (result.error.code === 'DUPLICATE_REFERENCE') {
+        await this.dataSource.query(
+          `UPDATE pick_links SET status = 'cancelled', "usedAt" = NULL, "updatedAt" = now()
+            WHERE id = $1 AND "shipmentId" IS NULL`,
+          [link.id],
+        );
+        throw new PickLinkUnavailableException('cancelled');
+      }
       await this.reopen(link.id);
       throw new PickLinkFailedException(result.error);
     }
@@ -400,7 +435,7 @@ export class PickLinkService {
       tokenHash: hashToken(token),
     });
     if (!link) {
-      throw new EntityNotFoundException('Pick link', 'token');
+      throw new PickLinkNotFoundException();
     }
     return link;
   }

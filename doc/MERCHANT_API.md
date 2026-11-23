@@ -163,7 +163,8 @@ Authorization: Bearer sk_live_9fQ2…
 - Never put a secret key in a URL. Keys in query strings are rejected.
 
 Invalid, revoked or expired keys all return the same `401 INVALID_API_KEY`. So do keys
-used from an IP or browser origin outside their allow-list.
+used from an IP or browser origin outside their allow-list. A missing `Authorization` header,
+or one that isn't a `Bearer sk_…`/`pk_…` key, is `401 UNAUTHENTICATED`.
 
 **Check a key**: `GET /ping` (any key) tells you which account and mode it belongs to and
 what it may do:
@@ -664,14 +665,19 @@ mistakes surface to you, not to the buyer (`400 VALIDATION_FAILED`, fields prefi
 
 - **One use, 7 days.** `status` is `open`, `used` (then `shipmentId` is set), `cancelled`
   or `expired`.
-- **The reference is reserved** while the link is open: another link or shipment with it is
-  `409 DUPLICATE_REFERENCE`. An expired link frees it.
+- **One open link per reference**: a second link with it is `409 DUPLICATE_REFERENCE`
+  (`existingPickLinkId`). An expired link frees it. Don't create a shipment with the same
+  reference yourself while the link is open: the link then stops working (`cancelled`).
+- **Checked at creation**, so they fail to you rather than to the buyer: your account must
+  be able to create shipments in that mode (approved, not paused) and the draft needs an
+  `origin` unless you have a hub (`422 ORIGIN_REQUIRED`).
 - **What the buyer sees:** your trading name, their first name, the parcel description and
   size, and the Nodes near them. With `"hidePrices": true` no prices are shown; otherwise
   each Node shows the delivery price you'll be charged.
 - **If the pick can't go through** (the Node can't take it, your wallet can't cover it, your
   account is paused), the buyer is asked to pick again or to contact you, and the link stays
-  open. Watch your wallet so this doesn't happen.
+  open. We don't email you when that happens, so watch your wallet (a low-balance alert
+  helps) and check the link's status.
 
 | Endpoint | |
 |---|---|
@@ -1384,6 +1390,8 @@ Prohibited items (listed in the merchant terms) are refused at drop-off.
 | 400 | `INVALID_IDEMPOTENCY_KEY` | Use 1–255 printable characters (a UUID) |
 | 400 | `INVALID_CURSOR` | The pagination cursor was altered; restart the listing without it |
 | 401 | `INVALID_API_KEY` | Unknown, revoked or expired key, or IP not allowed |
+| 401 | `UNAUTHENTICATED` | No `Authorization: Bearer` key, or not key-shaped |
+| 415 | `UNSUPPORTED_REQUEST_BODY` | Send `application/json` in UTF-8 (or multipart for imports) |
 | 402 | `INSUFFICIENT_WALLET_BALANCE` | Top up; see `requiredKobo` and `availableKobo` |
 | 403 | `INSUFFICIENT_SCOPE` | The key lacks the scope for this endpoint |
 | 403 | `MERCHANT_NOT_APPROVED` | Live mode before approval |
@@ -1400,6 +1408,10 @@ Prohibited items (listed in the merchant terms) are refused at drop-off.
 | 403 | `SHIPMENT_CREATION_PAUSED` | Locoomo paused new live shipments on your account; contact your account manager |
 | 409 | `IDEMPOTENCY_IN_PROGRESS` | Retry shortly with the same key |
 | 413 | `PAYLOAD_TOO_LARGE` | Over 1 MB; use imports |
+| 409 | `IMPORTS_IN_PROGRESS` | Too many imports running; wait for one to finish (§7.3) |
+| 422 | `INVALID_IMPORT_FILE` / `IMPORT_SIZE` | The CSV can't be read, or has no rows or too many (§7.3) |
+| 422 | `UPLOAD_NOT_FOUND` | A claim's evidence wasn't uploaded through `POST /claims/uploads` (§15) |
+| 503 | `PRICING_NOT_CONFIGURED` | Temporary on our side: retry later and tell support |
 | 422 | `DESTINATION_NODE_UNAVAILABLE` | That Node isn't accepting parcels; pick another from `/nodes` |
 | 422 | `ORIGIN_NODE_UNAVAILABLE` | The origin Node isn't available for drop-off |
 | 422 | `RECEIVER_RELAY_NOT_ENABLED` | `notifyReceiver` `merchant`/`both` must be enabled on your account first |
@@ -1493,6 +1505,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-23 | **Fixes from a review**: pick links are checked at creation (account can create in that mode; `origin` or a hub needed: `422 ORIGIN_REQUIRED`), a link whose reference you then use on your own shipment is cancelled, and cancel no longer races with the buyer. Closing an account is refused while live parcels are in flight or the live wallet is below zero; a positive balance is refunded to your verified bank account. §16 now lists `UNAUTHENTICATED`, `UNSUPPORTED_REQUEST_BODY`, the import codes, `UPLOAD_NOT_FOUND` and `PRICING_NOT_CONFIGURED` (all existing behaviour) |
 | 2026-11-23 | **Pick links** (§7.6): `POST /pick-links` and friends. Share a link; the buyer picks their Node and the shipment is created then. **Go-live checklist API** (§17): `GET /go-live-checklist`. **Postman collection** (§2) at `GET /api/v1/merchant/postman.json`, generated with the OpenAPI document. `DUPLICATE_REFERENCE` may carry `existingPickLinkId` |
 | 2026-11-16 | **Data retention** (§7): receiver details are redacted 180 days after a shipment finishes; sandbox shipments, manifests and return batches are deleted after 90 days |
 | 2026-11-16 | **Reports and exports** (§14.3): `GET /reports/summary` (volumes, collection rate, median times, spend, top destinations) and CSV exports of shipments or wallet lines through a 15-minute signed link |

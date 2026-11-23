@@ -88,6 +88,24 @@ export class InvalidMerchantTransitionException extends BusinessException {
   }
 }
 
+export class MerchantCloseBlockedException extends BusinessException {
+  readonly errorCode = 'MERCHANT_CLOSE_BLOCKED';
+  readonly httpStatus = 409;
+
+  constructor(blockers: {
+    inFlightShipments: number;
+    heldKobo: number;
+    balanceKobo: number;
+  }) {
+    super(
+      blockers.inFlightShipments > 0 || blockers.heldKobo > 0
+        ? 'Live parcels are still on their way. Cancel unshipped ones and wait for the rest to finish before closing.'
+        : 'Your live wallet is below zero. Top it up to ₦0 before closing.',
+    );
+    this.details = blockers;
+  }
+}
+
 export class OnboardingIncompleteException extends BusinessException {
   readonly errorCode = 'ONBOARDING_INCOMPLETE';
   readonly httpStatus = 422;
@@ -766,6 +784,16 @@ export class ExportLinkInvalidException extends BusinessException {
     super(
       'This download link is invalid or has expired. Create the export again.',
     );
+  }
+}
+
+// The buyer's page: no ids in the message (the token is the credential).
+export class PickLinkNotFoundException extends BusinessException {
+  readonly errorCode = 'NOT_FOUND';
+  readonly httpStatus = 404;
+
+  constructor() {
+    super('This link isn’t valid. Check you opened the whole link.');
   }
 }
 

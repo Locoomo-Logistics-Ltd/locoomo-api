@@ -111,7 +111,7 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
                                                        approved ◄─────────────────┤
                                                           │        changes requested ─► fix and resubmit
                                                           ▼
-                                     Live keys, then live shipments and the wallet (🛠, §16)
+                                     Live keys, then live shipments and the wallet (§12, §15)
 ```
 
 **Build order for the dashboard**
@@ -146,7 +146,7 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | Merchants queue, review, suspend/reinstate, settings | §18 | ✅ |
 | Public holidays, lost/damaged parcel | §19 | ✅ |
 | Merchant wallet panel and adjustments | §18.6 | ✅ |
-| Merchant 360 support view | §18.7 | 🛠 |
+| Merchant 360 support view | §18.8 | ✅ |
 
 ---
 
@@ -604,10 +604,10 @@ Use **`me.permissions`**, not the role name, to show or hide controls:
 | Can… | Permission | owner | admin | developer | operations | finance | viewer |
 |---|---|:-:|:-:|:-:|:-:|:-:|:-:|
 | See shipments, returns, reports | `shipments.read` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Create, edit, cancel shipments; simulator; claims; manifests 🛠 | `shipments.write` | ✓ | ✓ | ✓ | ✓ | | |
+| Create, edit, cancel shipments; simulator; claims; manifests | `shipments.write` | ✓ | ✓ | ✓ | ✓ | | |
 | Return batches and their collection codes | `returns.collect` | ✓ | ✓ | | ✓ | | |
 | API keys, API logs, webhooks | `developers.manage` | ✓ | ✓ | ✓ | | | |
-| Wallet statement and holds; top-up and invoices 🛠 (the balance itself is visible to everyone) | `wallet.manage` | ✓ | ✓ | | | ✓ | |
+| Wallet statement and holds; top-up and invoices (the balance itself is visible to everyone) | `wallet.manage` | ✓ | ✓ | | | ✓ | |
 | Profile, KYC, bank, terms, submit | `account.manage` | ✓ | ✓ | | | | |
 | Team: invite, change roles, remove | `team.manage` | ✓ | ✓ | | | | |
 | Transfer ownership, close account | `ownership` | ✓ | | | | | |
@@ -1175,8 +1175,8 @@ or live endpoints. Up to 5 endpoints per mode.
 | Problems | `shipment.exception` |
 | Account | `merchant.status_changed` |
 
-`manifest.received`, `claim.decided`, `wallet.funded` and `wallet.low_balance` arrive with
-their features (🛠). Fetching the list of event types from the API isn't available, so keep
+`manifest.received`, `claim.decided`, `wallet.funded` and `wallet.low_balance` are sent
+too (§15, §15a, §15c). Fetching the list of event types from the API isn't available, so keep
 this list in the app.
 
 ### 10.3 Edit, roll secret, delete
@@ -1392,7 +1392,7 @@ created ──► received ──► in_transit ──► ready_for_collection �
 | `reference` | Exact match: the search box |
 | `status` | One status: the filter chips |
 | `destinationNodeId` | Filter by the buyer's Node |
-| `manifestId` | 🛠 with manifests |
+| `manifestId` | Shipments on one manifest (§15c) |
 | `createdFrom`, `createdTo` | ISO date-times: the date-range picker |
 | `updatedSince` | For sync loops; returns oldest change first. Not needed in the UI |
 | `limit`, `cursor` | 1–200, default 50 |
@@ -1471,7 +1471,7 @@ On success, go to the detail page with a toast: "Shipment created. Drop it off a
 |---|---|
 | `400 VALIDATION_FAILED` | Field errors from `details[].field` |
 | `409 DUPLICATE_REFERENCE` | "You've already used this reference." + link to the existing shipment (`details.existingShipmentId`) |
-| `402 INSUFFICIENT_WALLET_BALANCE` | `details.requiredKobo` / `details.availableKobo`. Test: "Not enough test funds (₦{available} available). Reset your test wallet or cancel shipments waiting for drop-off." + link to §15.4. Live: "Not enough funds: this shipment needs ₦{required}, you have ₦{available}. Top up your wallet." (top-up 🛠) |
+| `402 INSUFFICIENT_WALLET_BALANCE` | `details.requiredKobo` / `details.availableKobo`. Test: "Not enough test funds (₦{available} available). Reset your test wallet or cancel shipments waiting for drop-off." + link to §15.4. Live: "Not enough funds: this shipment needs ₦{required}, you have ₦{available}. Top up your wallet." + link to §15.5 |
 | `422 DESTINATION_NODE_UNAVAILABLE` | Under the destination: "This Node isn't accepting parcels. Pick another." |
 | `422 ORIGIN_NODE_UNAVAILABLE` | Under the drop-off: same copy |
 | `422 ORIGIN_REQUIRED` | Under the drop-off: "Pick where you'll drop it off." |
@@ -1481,7 +1481,7 @@ On success, go to the detail page with a toast: "Shipment created. Drop it off a
 | `403 MERCHANT_NOT_APPROVED`, `403 LIVE_SHIPMENTS_NOT_AVAILABLE` | Live mode: "Live shipments aren't available yet. Switch to Test." |
 | `403 MERCHANT_SUSPENDED` | Live: "Your account is suspended, so you can't create live shipments. Existing parcels keep moving." |
 | `403 SHIPMENT_CREATION_PAUSED` | Live: "New live shipments are paused on your account. Contact your account manager." |
-| `429 DAILY_LIMIT_REACHED` 🛠 (live only) | "You've reached today's shipment limit. It resets at midnight." |
+| `429 DAILY_LIMIT_REACHED` (live only) | "You've reached today's shipment limit. It resets at midnight." |
 
 **Bulk (optional for the dashboard).** **`POST /merchant/shipments/bulk`** with
 `{ "items": [ …up to 100 create bodies… ] }` (and an `Idempotency-Key`). Each item succeeds or
@@ -1667,8 +1667,8 @@ All return the updated Shipment. Confirm copy:
 After a return, the shipment says `returning` straight away. When it's back at the origin
 (`return_ready`), Locoomo emails a collection code to the account's contact email (owner's
 email if none), valid 10 working days. Show on the detail page: "Back at {origin.nodeName}.
-We've emailed your collection code to {contact email}." (Return batches with one code for
-many parcels are 🛠.)
+We've emailed your collection code to {contact email}." (For many parcels at one Node, one
+code covers a return batch: §15b.)
 
 A cancel can race with the drop-off scan: on `409 SHIPMENT_NOT_CANCELLABLE`, refetch and offer
 "Return to sender" instead.
@@ -1724,8 +1724,13 @@ Owner only (`ownership`). A "Danger zone" card at the bottom of Settings.
 - Confirm by typing the trading name: "This can't be undone. Type **{tradingName}** to
   confirm."
 - After `204`, clear the store and go to "Create business".
-- 🛠 From the wallet release it will also require no parcels in flight and a non-negative
-  wallet; unused balance is refunded to the verified bank account.
+- Refused while live parcels are on their way or the live wallet is below zero:
+  `409 MERCHANT_CLOSE_BLOCKED` with `details: { inFlightShipments, heldKobo, balanceKobo }`.
+  Show: "You can't close yet: {inFlightShipments} live parcels are still on their way"
+  (link to Shipments filtered to in-flight; unshipped ones can be cancelled), or "Your live
+  wallet is ₦{−balance} below zero. Top up to ₦0 first."
+- With money left in the live wallet, say before confirming: "₦{balance} will be refunded to
+  your verified bank account." Locoomo's finance team makes the transfer.
 
 ---
 
@@ -2152,7 +2157,10 @@ without a checkout (WhatsApp, Instagram): a link the buyer opens to pick their o
   destinationNodeId>, hidePrices?: boolean }` → `PickLink`. Validation errors come back as
   `400 VALIDATION_FAILED` with fields prefixed `shipment.` (`shipment.receiver.phone`): strip
   the prefix to map them onto the same form as §12.4. `409 DUPLICATE_REFERENCE`: "That
-  reference is already used by a shipment or an open pick link."
+  reference is already used by a shipment or an open pick link." `422 ORIGIN_REQUIRED`: make
+  the origin field required when the merchant has no hub. Account errors
+  (`MERCHANT_NOT_APPROVED`, `SHIPMENT_CREATION_PAUSED`, `LIVE_SHIPMENTS_NOT_AVAILABLE`) as on
+  New shipment.
 - **After creating:** show `url` with **Copy** and **Share on WhatsApp**
   (`https://wa.me/?text=` + encoded "Hi {first name}, choose where to collect your order: {url}").
   The link works once, for 7 days.
@@ -2255,7 +2263,7 @@ otherwise.
 | `kyc` | Merchant verification | Queue, review, approve, request changes, reject, view KYC files |
 | `finance` | Money: wallets, adjustments, claims, refunds, pricing | Wallet panel and adjustments (§18.6); claim payouts (§18.6b) |
 | `ops` | Operations: reroutes, suspensions, hubs, exceptions | Queue, suspend/reinstate, settings, public holidays, lost/damaged |
-| `support` | Support tools | Queue and detail (read-only), 🛠 Merchant 360 |
+| `support` | Support tools | Queue and detail (read-only), Merchant 360 |
 
 **Admins screen** (`super` only; others get `403` from `GET /admin/admins`, so hide the menu):
 
@@ -2273,8 +2281,8 @@ release: narrow them down from this screen.
 ### 17.3 Approvals queue (two-admin rule) ✅
 
 Money moves and other risky actions are **requested** by one admin and **approved** by
-another before they run. (Wallet adjustments for merchants will be raised from the merchant's
-page 🛠; this queue is where the second admin decides.)
+another before they run. (Wallet adjustments for merchants are raised from the merchant's
+wallet page, §18.6; this queue is where the second admin decides.)
 
 ```
 Approvals                                          [Pending ▾]
@@ -3318,6 +3326,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 403 | `SHIPMENT_CREATION_PAUSED` | "New live shipments are paused on your account." |
 | 403 | `TEST_MODE_ONLY` | Hide the simulator on live shipments |
 | 409 | `DUPLICATE_REFERENCE` | Link to `details.existingShipmentId` (or the pick link, `details.existingPickLinkId`) |
+| 409 | `MERCHANT_CLOSE_BLOCKED` | Close account: §14 |
 | 409 | `SHIPMENT_NOT_EDITABLE` / `SHIPMENT_NOT_CANCELLABLE` / `SHIPMENT_NOT_RETURNABLE` | Refetch; hide the button |
 | 409 | `INVALID_SIMULATION` | "That can't happen from {status}." |
 | 422 | `DESTINATION_NODE_UNAVAILABLE` / `ORIGIN_NODE_UNAVAILABLE` | "Pick another Node." |
@@ -3326,7 +3335,7 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 422 | `RECEIVER_RELAY_NOT_ENABLED` | Hide the option unless `receiverCodeRelay` |
 | 422 | `NO_DELIVERY_OPTION` | "Too big or heavy, or we don't cover this route yet." |
 | 503 | `PRICING_NOT_CONFIGURED` | "Pricing unavailable right now." |
-| 429 | `DAILY_LIMIT_REACHED` 🛠 | Live only: "You've reached today's shipment limit." |
+| 429 | `DAILY_LIMIT_REACHED` | Live only: "You've reached today's shipment limit." |
 
 **Admin**
 
@@ -3418,6 +3427,10 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | GET | `/merchant/reports/summary` | `shipments.read` | Mode |
 | POST | `/merchant/exports/shipments`, `/merchant/exports/wallet-entries` | `shipments.read` / `wallet.manage` | Mode; returns a 15-minute link |
 | GET | `/merchant/exports/download?token=` | none (signed link) | CSV download |
+| GET | `/merchant/go-live-checklist` | `shipments.read` | Mode-independent (§15e) |
+| POST / GET | `/merchant/pick-links`, `/merchant/pick-links/:id` | `shipments.write` / `shipments.read` | Mode (§15f) |
+| POST | `/merchant/pick-links/:id/cancel` | `shipments.write` | Mode |
+| GET / POST | `/pick/:token`, `/pick/:token/nodes` (GET) | none (token) | The buyer's page, consumer web app (§15f) |
 | GET | `/merchant/manifests`, `/merchant/manifests/:id`, `…/:id/document` | `shipments.read` | Mode; document is a PDF |
 | POST | `/merchant/manifests`, `…/:id/shipments`, `…/:id/close`, `…/:id/cancel` | `shipments.write` | Mode; Idempotency-Key on create/add |
 | POST | `/merchant/test/manifests/:id/receive` | `shipments.write` | Test only |

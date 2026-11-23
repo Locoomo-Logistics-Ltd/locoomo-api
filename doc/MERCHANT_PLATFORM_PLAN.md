@@ -1406,6 +1406,11 @@ Decisions:
   merchant's trading name. Prices are optional (`hidePrices`).
 - **Webhook-verification snippets** (Node, PHP, Python) were already in MERCHANT_API §12.3;
   no new work.
+- **Review fixes (same day):** atomic cancel; creation checks (`creatableMerchant`, origin or
+  hub); a reference later used on the merchant's own shipment retires the link; failed picks
+  are audited (`merchant.pick_link_failed`); account closure is refused with live parcels in
+  flight, held money or a negative live balance, and finance is emailed to refund a positive
+  one (the M4 check that was never added).
 
 ### Documentation
 

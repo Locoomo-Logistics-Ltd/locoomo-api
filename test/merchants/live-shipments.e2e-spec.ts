@@ -2550,6 +2550,22 @@ describe('Live merchant shipments (e2e)', () => {
       expect(nodes.every((n) => n.priceKobo === null)).toBe(true);
     });
 
+    it('retires a link whose reference the merchant used on a shipment', async () => {
+      const reference = `P-${randomUUID().slice(0, 8)}`;
+      const link = await newLink(reference);
+      // POST /shipments doesn't know about pick links: the merchant can
+      // take the reference themselves.
+      const own = await create({ reference });
+      const refused = await pub
+        .post(tokenOf(link), { destinationNodeId: node.destination })
+        .expect(410);
+      expect(code(refused)).toBe('PICK_LINK_UNAVAILABLE');
+      expect(
+        data<Link>(await live.get(`/pick-links/${link.id}`).expect(200)).status,
+      ).toBe('cancelled');
+      await live.post(`/shipments/${own.id}/cancel`).expect(200);
+    });
+
     it('reopens the link when the pick fails, and honours cancel and expiry', async () => {
       const link = await newLink(`P-${randomUUID().slice(0, 8)}`);
       const token = tokenOf(link);
@@ -2597,6 +2613,66 @@ describe('Live merchant shipments (e2e)', () => {
       expect(listed.items.map((l) => l.id)).toEqual(
         expect.arrayContaining([link.id, old.id]),
       );
+    });
+  });
+
+  describe('closing an account with live money and parcels', () => {
+    it('refuses while parcels are in flight', async () => {
+      const s = await create();
+      const refused = await http()
+        .post('/api/v1/merchant/account/close')
+        .set('Cookie', owner)
+        .set('X-Locoomo-Client', 'web')
+        .expect(409);
+      expect(code(refused)).toBe('MERCHANT_CLOSE_BLOCKED');
+      expect(
+        (refused.body as { error: { details: { inFlightShipments: number } } })
+          .error.details.inFlightShipments,
+      ).toBeGreaterThan(0);
+      await live.post(`/shipments/${s.id}/cancel`).expect(200);
+    });
+
+    it('closes with a positive balance and tells finance to refund it', async () => {
+      const closer = await signIn(await makeUser('closer'));
+      const id = data<{ merchant: { id: string } }>(
+        await http()
+          .post('/api/v1/merchant/account')
+          .set('Cookie', closer)
+          .send({ type: 'business', tradingName: 'Closing Stores' })
+          .expect(201),
+      ).merchant.id;
+      try {
+        await dataSource.query(
+          `UPDATE merchants SET status = 'approved', tier = 'business' WHERE id = $1`,
+          [id],
+        );
+        await dataSource.transaction((manager) =>
+          app.get(WalletService).creditExternal(manager, {
+            merchantId: id,
+            mode: 'live',
+            type: WalletEntryType.TOP_UP,
+            amountKobo: 250_000,
+            description: 'Test funding',
+            externalRef: `test:${id}`,
+          }),
+        );
+        await http()
+          .post('/api/v1/merchant/account/close')
+          .set('Cookie', closer)
+          .set('X-Locoomo-Client', 'web')
+          .expect(204);
+        const email = await latestEmailTo(`admin@${DOMAIN}`);
+        expect(email.subject).toBe(
+          'Refund due: Closing Stores closed their account',
+        );
+        expect(email.text).toContain('2,500');
+      } finally {
+        await dataSource.query(
+          `DELETE FROM audit_events WHERE "merchantId" = $1`,
+          [id],
+        );
+        await dataSource.query(`DELETE FROM merchants WHERE id = $1`, [id]);
+      }
     });
   });
 
