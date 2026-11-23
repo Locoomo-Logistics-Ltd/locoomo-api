@@ -195,10 +195,18 @@ production system yet, and live shipments stay switched off there until we decid
 
 ## Decisions we need from the business
 
-These don't block building, but they must be settled before or soon after launch.
+Every decision now has a working default so building could continue; the full list, with
+what's built and who signs each off, is in **[BUSINESS_DECISIONS.md](BUSINESS_DECISIONS.md)**.
+The ones that must be settled before production:
 
-| Topic | Current default | Owner |
-|---|---|---|
+| Topic | Owner |
+|---|---|
+| Wallet as prepaid credit, refundable only on closure (CBN) | Legal |
+| Merchant terms and data-processing agreement (storage and disposal, liability, prohibited items) | Legal |
+| NDPC registration | DPO / legal |
+| Registered company name, address and TIN on invoices; whether we charge VAT | Finance |
+
+---|---|---|
 | Wallet as prepaid credit, refundable only on account closure | Built this way. **Needs legal sign-off (CBN).** | Legal |
 | VAT | 7.5%, prices include it. VAT lines on invoices are switched **off** until finance confirms we charge VAT on these services. | Finance / tax |
 | Invoice details | Our registered company name, address and tax ID must be set before the first live invoice. Do we need gap-free sequential invoice numbers for FIRS? | Finance |
