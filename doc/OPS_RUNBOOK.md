@@ -208,7 +208,11 @@ question (plan §15, F7).
 2. PR `dev → staging`; Railway deploys staging. Check the logs for "Applied N
    migration(s)" and "Nest application successfully started", then `/health`.
 3. Production: PR `staging → main`, same checks on `api.locoomo.com`.
-4. Migrations run on start; enum values are added in their own migrations. If a deploy
-   fails after a migration, roll forward with a fix (down migrations are for local use).
+4. Migrations run on start, **each in its own transaction**; enum values are added in
+   their own migrations (Postgres can't use a new enum value before it commits: that's
+   what failed the first M6 staging deploy). If a deploy fails on a migration, the ones
+   before it in the batch stay applied, the app doesn't start (the previous deployment
+   keeps serving), and we roll forward with a fix (down migrations are for local use).
+   A failed deploy shows on the staging commit in GitHub ("Deployment failed").
 5. Load check for hubs: `npm run test:load` against a test database (one hub, 2,000
    parcels: ~15 scans/s on a dev machine).
