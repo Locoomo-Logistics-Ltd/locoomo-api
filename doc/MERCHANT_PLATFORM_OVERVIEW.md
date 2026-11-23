@@ -1,6 +1,6 @@
 # Locoomo for Merchants: what's built and what's next
 
-*Status as of 16 November 2026*
+*Status as of 23 November 2026*
 
 ## In one paragraph
 
@@ -25,15 +25,14 @@ merchant dashboard.
 | Labels, bulk upload, buyer-code relay | ✅ Built |
 | Returns, refusals, lost/damaged claims | ✅ Built |
 | Hubs, manifests and bags (marketplace-scale inbound), full-Node reroutes | ✅ Built |
-| Storage fees and disposal for returns nobody collects | ✅ Built * |
-| Staff views: all orders, merchant 360, platform health alerts | ✅ Built * |
-| Merchant reports and data exports | ✅ Built * |
-| Data retention, personal-data requests, operations runbook | ✅ Built * |
+| Storage fees and disposal for returns nobody collects | ✅ Built |
+| Staff views: all orders, merchant 360, platform health alerts | ✅ Built |
+| Merchant reports and data exports | ✅ Built |
+| Data retention, personal-data requests, operations runbook | ✅ Built |
 | Pick links, developer toolkit, go-live checklist | 🔜 Planned |
 
 "Built" means the system (backend) and its documentation are finished, tested and running
-on our **staging** (test) environment. Rows marked * are finished and tested but not yet
-deployed to staging; they go with the next deployment. The screens merchants and staff will use are being
+on our **staging** (test) environment. The screens merchants and staff will use are being
 built by the frontend team from that documentation. Nothing merchant-facing is on the
 production system yet, and live shipments stay switched off there until we decide to open.
 
