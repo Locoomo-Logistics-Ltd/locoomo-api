@@ -23,4 +23,11 @@ export const AppDataSource = new DataSource({
       : 'src/database/migrations/*.ts',
   ],
   synchronize: false,
+  // Each migration commits on its own. Postgres can't use an enum value in
+  // the transaction that added it, so "ADD VALUE gets its own migration"
+  // (plan §11.7) only holds if that migration commits before the next one
+  // runs — with one transaction for the whole batch it doesn't (the M6
+  // staging deploy failed on exactly this). A failure mid-batch leaves the
+  // earlier migrations applied: we roll forward (OPS_RUNBOOK.md §7).
+  migrationsTransactionMode: 'each',
 });

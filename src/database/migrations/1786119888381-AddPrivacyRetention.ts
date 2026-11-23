@@ -17,9 +17,10 @@ export class AddPrivacyRetention1786119888381 implements MigrationInterface {
     );
     // Finished orders still holding receiver details, oldest first.
     await queryRunner.query(
+      // No status in the predicate: 'disposed' is added by migration 378,
+      // and a new enum value can't be used in the transaction that added it.
       `CREATE INDEX "IDX_orders_pii_retention" ON "orders" ("updatedAt")
-         WHERE "piiRedactedAt" IS NULL
-           AND status IN ('completed', 'return_completed', 'cancelled', 'refused', 'disposed', 'exception')`,
+         WHERE "piiRedactedAt" IS NULL`,
     );
   }
 
