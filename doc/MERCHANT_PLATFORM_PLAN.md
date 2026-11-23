@@ -1386,6 +1386,27 @@ Decisions:
 - **Open with legal/DPO**: response deadlines for data-subject requests, NDPC
   registration (F7), the 30-day API log retention.
 
+### M7a–c Go-live checklist, pick links, Postman: done (2026-11-23)
+
+| Item | Where |
+|---|---|
+| `GET /merchant/go-live-checklist`: nine automatic checks (approved, 2FA on every owner/admin, live secret key, a live webhook that has answered 2xx, live wallet funded, low-balance alert, a test shipment simulated to collected and one to returned, hub) and three manual reminders | `go-live-checklist.service.ts`, `reports.controller.ts` |
+| Pick links: `pick_links` (migration 382; open-reference unique index); merchant `POST/GET /merchant/pick-links`, `/{id}`, `/{id}/cancel`; public `GET /pick/:token`, `GET /pick/:token/nodes`, `POST /pick/:token` | `domain/pick-link.ts`, `pick-link.service.ts`, `pick-links.controller.ts` |
+| Postman collection generated from the OpenAPI document: served at `GET /api/v1/merchant/postman.json` and written with the spec by `npm run openapi:generate` (`doc/openapi/`) | `src/openapi/postman.ts` |
+
+Decisions:
+- **The shipment is created when the buyer picks, as the link's creator** (their session
+  user or API key), through the same `createItem` path as `POST /shipments`. The wallet is
+  held then, not at link creation: an unused link costs nothing.
+- **The draft is validated at link creation** with a placeholder destination, so the
+  merchant sees mistakes, not the buyer.
+- **Claim, then create**: the link is marked used atomically before creating; a failed
+  creation reopens it so the buyer can pick again.
+- **The buyer sees first name only**, the parcel's description and size, and the
+  merchant's trading name. Prices are optional (`hidePrices`).
+- **Webhook-verification snippets** (Node, PHP, Python) were already in MERCHANT_API §12.3;
+  no new work.
+
 ### Documentation
 
 - **[MERCHANT_API.md](MERCHANT_API.md)** is the public v1 contract for integrators (Preview).

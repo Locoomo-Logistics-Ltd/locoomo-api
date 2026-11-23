@@ -1,6 +1,6 @@
 # Locoomo for Merchants: what's built and what's next
 
-*Status as of 16 November 2026*
+*Status as of 23 November 2026*
 
 ## In one paragraph
 
@@ -25,15 +25,14 @@ merchant dashboard.
 | Labels, bulk upload, buyer-code relay | ✅ Built |
 | Returns, refusals, lost/damaged claims | ✅ Built |
 | Hubs, manifests and bags (marketplace-scale inbound), full-Node reroutes | ✅ Built |
-| Storage fees and disposal for returns nobody collects | ✅ Built * |
-| Staff views: all orders, merchant 360, platform health alerts | ✅ Built * |
-| Merchant reports and data exports | ✅ Built * |
-| Data retention, personal-data requests, operations runbook | ✅ Built * |
-| Pick links, developer toolkit, go-live checklist | 🔜 Planned |
+| Storage fees and disposal for returns nobody collects | ✅ Built |
+| Staff views: all orders, merchant 360, platform health alerts | ✅ Built |
+| Merchant reports and data exports | ✅ Built |
+| Data retention, personal-data requests, operations runbook | ✅ Built |
+| Pick links, developer toolkit, go-live checklist | ✅ Built (reaches staging with the next deploy) |
 
 "Built" means the system (backend) and its documentation are finished, tested and running
-on our **staging** (test) environment. Rows marked * are finished and tested but not yet
-deployed to staging; they go with the next deployment. The screens merchants and staff will use are being
+on our **staging** (test) environment. The screens merchants and staff will use are being
 built by the frontend team from that documentation. Nothing merchant-facing is on the
 production system yet, and live shipments stay switched off there until we decide to open.
 
@@ -64,11 +63,22 @@ production system yet, and live shipments stay switched off there until we decid
 - **Notifications to merchant systems (webhooks).** Every change to a parcel is pushed to
   the merchant's system automatically: dropped off, on the way, ready, collected, returned
   and so on. Failed notifications are retried for about a day and a half.
+- **Go-live checklist.** The dashboard's home page shows what's left before a merchant's
+  first real parcel (approved, two-step login on, live key, notifications working, wallet
+  funded, test parcels run through) and ticks each item off automatically.
+- **Developer toolkit.** A ready-made collection that developers import into Postman, a
+  popular API tool, to try every request in minutes, plus a machine-readable description of
+  the API for generating code. Both are produced from the system itself, so they never go
+  out of date.
 
 ### 3. Sending parcels
 
 - **Buyer picks a Node at checkout.** Merchants can show our Nodes and prices on their own
   checkout page.
+- **Pick links, for sellers without a checkout.** A seller on WhatsApp or Instagram sends
+  the buyer a link. The buyer opens it on their phone, chooses the Node nearest them, and
+  the parcel is booked at that moment. The buyer sees only their first name, the item and
+  the seller's name; prices can be hidden. Each link works once, for 7 days.
 - **Create shipments** one at a time, or in bulk by uploading a spreadsheet (up to 10,000
   at once).
 - **Shipping labels** with barcodes, printable one per page or four per A4 sheet.
@@ -179,9 +189,13 @@ production system yet, and live shipments stay switched off there until we decid
 
 ## What's next
 
-| Phase | What it adds | Why it matters |
-|---|---|---|
-| **Developer experience** | Pick links (a seller shares a link on WhatsApp and the buyer picks their Node), a ready-made developer toolkit, an in-dashboard go-live checklist. | Easier onboarding for small sellers and integrators. |
+The planned build is complete. What remains is getting it in front of merchants:
+
+| Step | What it means |
+|---|---|
+| **Screens** | The frontend team builds the merchant dashboard and staff screens from the documentation (in progress). |
+| **Business sign-off** | The must-have decisions below (legal, finance, ops). |
+| **Opening live** | Switching live shipments on in production, first for a few pilot merchants. |
 
 **Smaller items still open:**
 - Refunding the delivery fee when a parcel is lost. Today a claim covers only the goods'
@@ -196,10 +210,18 @@ production system yet, and live shipments stay switched off there until we decid
 
 ## Decisions we need from the business
 
-These don't block building, but they must be settled before or soon after launch.
+Every decision now has a working default so building could continue; the full list, with
+what's built and who signs each off, is in **[BUSINESS_DECISIONS.md](BUSINESS_DECISIONS.md)**.
+The ones that must be settled before production:
 
-| Topic | Current default | Owner |
-|---|---|---|
+| Topic | Owner |
+|---|---|
+| Wallet as prepaid credit, refundable only on closure (CBN) | Legal |
+| Merchant terms and data-processing agreement (storage and disposal, liability, prohibited items) | Legal |
+| NDPC registration | DPO / legal |
+| Registered company name, address and TIN on invoices; whether we charge VAT | Finance |
+
+---|---|---|
 | Wallet as prepaid credit, refundable only on account closure | Built this way. **Needs legal sign-off (CBN).** | Legal |
 | VAT | 7.5%, prices include it. VAT lines on invoices are switched **off** until finance confirms we charge VAT on these services. | Finance / tax |
 | Invoice details | Our registered company name, address and tax ID must be set before the first live invoice. Do we need gap-free sequential invoice numbers for FIRS? | Finance |

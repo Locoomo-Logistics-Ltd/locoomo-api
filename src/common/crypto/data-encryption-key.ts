@@ -13,7 +13,8 @@ export function createSecretBox(
     | 'merchant-kyc'
     | 'bank-account'
     | 'webhook-secret'
-    | 'return-batch-code',
+    | 'return-batch-code'
+    | 'pick-link',
 ): SecretBox {
   return new SecretBox(
     config.get('DATA_ENCRYPTION_KEY', { infer: true }) ??

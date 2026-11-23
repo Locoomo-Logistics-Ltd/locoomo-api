@@ -1,0 +1,2326 @@
+{
+  "info": {
+    "name": "Locoomo Merchant API",
+    "description": "Create and track shipments through the Locoomo pickup-station network.\n\nAuth: `Authorization: Bearer sk_test_…` / `sk_live_…` (server-side) or\n`pk_…` (browser, Nodes and quotes only).\nEvery response is wrapped as `{ success, data, meta }` / `{ success: false, error }`;\nbranch on `error.code`. Stability: additive changes only within v1 —\ntolerate unknown fields, enum values and webhook event types.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{secretKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.locoomo.com/api/v1"
+    },
+    {
+      "key": "secretKey",
+      "value": "sk_test_…"
+    }
+  ],
+  "item": [
+    {
+      "name": "Claims",
+      "item": [
+        {
+          "name": "Your claims, newest first",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/claims?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "claims"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "shipmentId",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "File a claim, within 30 days of the shipment's last status change",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/claims",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "claims"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shipmentId\": \"00000000-0000-4000-8000-000000000000\",\n  \"type\": \"lost\",\n  \"description\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "A signed upload for one evidence file (photo or PDF)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/claims/uploads",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "claims",
+                "uploads"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /merchant/claims/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/claims/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "claims",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Approve (credits the test wallet) or reject a test claim",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/test/claims/:id/decide",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "test",
+                "claims",
+                ":id",
+                "decide"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approve\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Keys",
+      "item": [
+        {
+          "name": "GET /merchant/ping",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/ping",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "ping"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Manifests",
+      "item": [
+        {
+          "name": "GET /merchant/manifests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/manifests?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "manifests"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /merchant/manifests",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/manifests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "manifests"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /merchant/manifests/{id}/shipments",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/manifests/:id/shipments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "manifests",
+                ":id",
+                "shipments"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shipmentIds\": [\n    \"00000000-0000-4000-8000-000000000000\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The truck has left: nothing more can be added",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/manifests/:id/close",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "manifests",
+                ":id",
+                "close"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /merchant/manifests/{id}/cancel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/manifests/:id/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "manifests",
+                ":id",
+                "cancel"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /merchant/manifests/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/manifests/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "manifests",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "PDF for the driver: reference + QR, hub, every parcel",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/manifests/:id/document",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "manifests",
+                ":id",
+                "document"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /merchant/test/manifests/{id}/receive",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/test/manifests/:id/receive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "test",
+                "manifests",
+                ":id",
+                "receive"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Nodes and quotes",
+      "item": [
+        {
+          "name": "Nodes a buyer can collect from: open for business, with shelf space",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/nodes?radiusKm=&limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "nodes"
+              ],
+              "query": [
+                {
+                  "key": "near",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Sort by distance from this point: `latitude,longitude`."
+                },
+                {
+                  "key": "radiusKm",
+                  "value": "",
+                  "disabled": false,
+                  "description": "With `near`: search radius in km (default 10, max 50)."
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Search name, address and area."
+                },
+                {
+                  "key": "state",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "city",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "parcelSize",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Only Nodes that can accept this parcel size now."
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "One Node. 404 if it has closed or been withdrawn",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/nodes/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "nodes",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Estimated price to a destination Node. Fixed when the shipment is created",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/quotes?destinationNodeId=&parcelSize=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "quotes"
+              ],
+              "query": [
+                {
+                  "key": "destinationNodeId",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "originNodeId",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Where you'll drop the parcel. Required until a hub is assigned to your account."
+                },
+                {
+                  "key": "parcelSize",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "weightKg",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "lengthCm",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "widthCm",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "heightCm",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "handling",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Pick links",
+      "item": [
+        {
+          "name": "Your pick links, newest first",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/pick-links",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "pick-links"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create a pick link: the buyer picks their Node, then the shipment is created",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/pick-links",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "pick-links"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "One pick link, with its share URL and the shipment once picked",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/pick-links/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "pick-links",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cancel an open pick link",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/pick-links/:id/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "pick-links",
+                ":id",
+                "cancel"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reports",
+      "item": [
+        {
+          "name": "What's left before your first live parcel",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/go-live-checklist",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "go-live-checklist"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /merchant/reports/summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/reports/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "reports",
+                "summary"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Every shipment created in the range, as CSV, via a 15-minute link",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/exports/shipments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "exports",
+                "shipments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Every wallet line in the range, as CSV, via a 15-minute link",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/exports/wallet-entries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "exports",
+                "wallet-entries"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /merchant/exports/download",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/exports/download",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "exports",
+                "download"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Returns",
+      "item": [
+        {
+          "name": "Returns waiting at a Node (`ready`, oldest first) or on the way (`incoming`)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/returns?limit=&state=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "returns"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "state",
+                  "value": "",
+                  "disabled": false,
+                  "description": "`ready` (waiting at the Node, default) or `incoming` (on the way back)."
+                },
+                {
+                  "key": "nodeId",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /merchant/return-batches",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/return-batches?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "return-batches"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "One collection code for returns waiting at one Node",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/return-batches",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "return-batches"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nodeId\": \"00000000-0000-4000-8000-000000000000\",\n  \"shipmentIds\": [\n    \"00000000-0000-4000-8000-000000000000\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /merchant/return-batches/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/return-batches/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "return-batches",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "A new code; the old one stops working",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/return-batches/:id/code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "return-batches",
+                ":id",
+                "code"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "The returns go back to waiting, each on its own code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/return-batches/:id/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "return-batches",
+                ":id",
+                "cancel"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /merchant/test/return-batches/{id}/collect",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/test/return-batches/:id/collect",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "test",
+                "return-batches",
+                ":id",
+                "collect"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sandbox",
+      "item": [
+        {
+          "name": "Test shipments only. Every intermediate step fires, as in live",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/test/shipments/:id/simulate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "test",
+                "shipments",
+                ":id",
+                "simulate"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to\": \"received\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Puts the test wallet's balance back to ₦1,000,000. Holds stay",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/test/wallet/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "test",
+                "wallet",
+                "reset"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Shipment imports",
+      "item": [
+        {
+          "name": "GET /merchant/shipment-imports",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipment-imports?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipment-imports"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Start an import",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipment-imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipment-imports"
+              ]
+            }
+          }
+        },
+        {
+          "name": "The CSV columns, with one example row",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipment-imports/template.csv",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipment-imports",
+                "template.csv"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /merchant/shipment-imports/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipment-imports/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipment-imports",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Rows in file order, with each one's shipment or error",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipment-imports/:id/rows?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipment-imports",
+                ":id",
+                "rows"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Shipments",
+      "item": [
+        {
+          "name": "List and sync. With `updatedSince`, oldest change first",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments"
+              ],
+              "query": [
+                {
+                  "key": "reference",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "destinationNodeId",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "manifestId",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "createdFrom",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "createdTo",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "updatedSince",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Changes since this time, oldest change first (for syncing)."
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create a shipment. The quoted fee is held on your wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"\",\n  \"destinationNodeId\": \"00000000-0000-4000-8000-000000000000\",\n  \"receiver\": {\n    \"name\": \"\",\n    \"phone\": \"\"\n  },\n  \"parcel\": {\n    \"description\": \"\",\n    \"size\": \"small\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Up to 100 shipments; each succeeds or fails on its own",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments/bulk",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments",
+                "bulk"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {}\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /merchant/shipments/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "PATCH /merchant/shipments/{id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Shipping label as a PDF (A6, or A4 with the label in the first quarter)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments/:id/label?format=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments",
+                ":id",
+                "label"
+              ],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "",
+                  "disabled": false,
+                  "description": "`a6` (one label per page, default) or `a4` (four per page)."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Up to 100 labels in one PDF, in the order given (A4: four per page)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments/labels",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments",
+                "labels"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shipmentIds\": [\n    \"00000000-0000-4000-8000-000000000000\"\n  ],\n  \"format\": \"a6\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Event history, oldest first",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments/:id/timeline",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments",
+                ":id",
+                "timeline"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Only before drop-off; the hold is released",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments/:id/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments",
+                ":id",
+                "cancel"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "From received until ready_for_collection: bring it back to you",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/shipments/:id/return-to-sender",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "shipments",
+                ":id",
+                "return-to-sender"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wallet",
+      "item": [
+        {
+          "name": "Balance, held and available",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/wallet",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "wallet"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ledger lines, newest first",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/wallet/entries?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "wallet",
+                "entries"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "from",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Inclusive, ISO-8601."
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Exclusive, ISO-8601."
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Fees set aside for shipments, newest first",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/wallet/holds?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "wallet",
+                "holds"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Card payments and bank transfers, newest first",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/wallet/top-ups?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "wallet",
+                "top-ups"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Card top-up: returns Paystack's payment page. Dashboard only",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/wallet/top-ups",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "wallet",
+                "top-ups"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountKobo\": 100000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "One top-up. A pending card payment is checked with Paystack first",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/wallet/top-ups/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "wallet",
+                "top-ups",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "The low-balance alert line (dashboard only)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/wallet/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "wallet",
+                "settings"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lowBalanceThresholdKobo\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The live wallet's bank-transfer account number, or null",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/wallet/funding-account",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "wallet",
+                "funding-account"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Opens the live wallet's bank-transfer account (idempotent)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/wallet/funding-account",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "wallet",
+                "funding-account"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Opening balance, every wallet line in the month, closing balance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/statements/:month?format=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "statements",
+                ":month"
+              ],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "",
+                  "disabled": false,
+                  "description": "`pdf` (default) or `csv` (every line, for spreadsheets)."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "month",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Tax invoice for the shipping charged in a finished month (live)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/invoices/:month?format=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "invoices",
+                ":month"
+              ],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "",
+                  "disabled": false,
+                  "description": "`pdf` (default) or `csv` (every line, for spreadsheets)."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "month",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /merchant/pricing",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/pricing",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "pricing"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "GET /merchant/webhook-endpoints",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/webhook-endpoints",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "webhook-endpoints"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Up to 5 per mode. The signing secret is returned once",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/webhook-endpoints",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "webhook-endpoints"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH /merchant/webhook-endpoints/{id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/webhook-endpoints/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "webhook-endpoints",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /merchant/webhook-endpoints/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/webhook-endpoints/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "webhook-endpoints",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "New secret; the old one keeps signing for 24 hours",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/webhook-endpoints/:id/roll-secret",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "webhook-endpoints",
+                ":id",
+                "roll-secret"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Sends a `webhook.test` event now and reports what your endpoint answered",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/webhook-endpoints/:id/test",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "webhook-endpoints",
+                ":id",
+                "test"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Resend every subscribed event since a time (within 30 days)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Reuse the same key when you retry this request."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/webhook-endpoints/:id/replay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "webhook-endpoints",
+                ":id",
+                "replay"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"since\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delivery log (30 days), newest first",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/merchant/webhook-deliveries?limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "merchant",
+                "webhook-deliveries"
+              ],
+              "query": [
+                {
+                  "key": "endpointId",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

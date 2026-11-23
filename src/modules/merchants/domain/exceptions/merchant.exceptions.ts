@@ -297,9 +297,15 @@ export class DuplicateReferenceException extends BusinessException {
   readonly errorCode = 'DUPLICATE_REFERENCE';
   readonly httpStatus = 409;
 
-  constructor(existingShipmentId: string) {
-    super('A shipment with this reference already exists in this mode');
-    this.details = { existingShipmentId };
+  constructor(existingShipmentId: string | null, existingPickLinkId?: string) {
+    super(
+      existingShipmentId === null
+        ? 'An open pick link with this reference already exists in this mode'
+        : 'A shipment with this reference already exists in this mode',
+    );
+    this.details = existingPickLinkId
+      ? { existingShipmentId, existingPickLinkId }
+      : { existingShipmentId };
   }
 }
 
@@ -760,5 +766,33 @@ export class ExportLinkInvalidException extends BusinessException {
     super(
       'This download link is invalid or has expired. Create the export again.',
     );
+  }
+}
+
+export class PickLinkUnavailableException extends BusinessException {
+  readonly errorCode = 'PICK_LINK_UNAVAILABLE';
+  readonly httpStatus = 410;
+
+  constructor(status: string) {
+    super(
+      status === 'used'
+        ? 'A pickup point has already been chosen for this parcel'
+        : 'This link has expired or was cancelled. Ask the seller for a new one.',
+    );
+    this.details = { status };
+  }
+}
+
+export class PickLinkFailedException extends BusinessException {
+  readonly errorCode = 'PICK_LINK_FAILED';
+  readonly httpStatus = 422;
+
+  constructor(reason: { code: string; message: string; details?: unknown }) {
+    super(
+      reason.code === 'DESTINATION_NODE_UNAVAILABLE'
+        ? 'That pickup point can’t take this parcel. Please choose another.'
+        : 'We couldn’t set up this parcel right now. Please contact the seller.',
+    );
+    this.details = { reason: reason.code };
   }
 }

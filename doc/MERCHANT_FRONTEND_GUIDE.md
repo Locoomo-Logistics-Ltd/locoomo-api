@@ -46,6 +46,8 @@ something UI-related; tell backend.)
 15b. [Returns to collect](#15b-returns-to-collect)
 15c. [Hub and manifests](#15c-hub-and-manifests)
 15d. [Reports and exports](#15d-reports-and-exports)
+15e. [Go-live checklist (Home)](#15e-go-live-checklist-home)
+15f. [Pick links](#15f-pick-links)
 16. [Coming next 🛠](#16-coming-next-)
 
 **Part C: Admin app**
@@ -119,7 +121,7 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 1 | Sign up, sign in, verify email, 2FA, "Confirm it's you" | §4 | ✅ |
 | 2 | Create business | §6 | ✅ |
 | 3 | Onboarding checklist | §7 | ✅ |
-| 4 | Home: status banner and checklist progress | §5 | ✅ (KPIs and go-live checklist 🛠) |
+| 4 | Home: status banner and checklist progress | §5 | ✅ (KPIs §15d, go-live checklist §15e) |
 | 5 | Team, and the accept-invite page | §8 | ✅ |
 | 6 | Developers › API keys, API logs | §9 | ✅ |
 | 7 | Developers › Webhooks | §10 | ✅ |
@@ -132,7 +134,9 @@ Sign up / sign in ─► Verify email ─► Create business ─► Onboarding c
 | 14 | Returns to collect: one code per batch | §15b | ✅ |
 | 15 | Hub and manifests: bulk drop-off at a hub | §15c | ✅ |
 | 16 | Home KPIs, reports and CSV exports | §15d | ✅ |
-| 17 | Audit log, go-live checklist | §16 | 🛠 |
+| 17 | Go-live checklist on Home | §15e | ✅ |
+| 18 | Pick links, and the buyer's public pick page (consumer web app) | §15f | ✅ |
+| 19 | Audit log | §16 | 🛠 |
 
 **Admin app screens**
 
@@ -2108,14 +2112,116 @@ minutes. `403 EXPORT_LINK_INVALID` on an old link: "That link expired. Export ag
 
 ---
 
-## 16. Coming next 🛠
+## 15e. Go-live checklist (Home)
 
-Build these behind feature flags against the shapes below. Final shapes land with the backend
-phase; we'll update this section.
+✅ Ready (`shipments.read`, any mode). **`GET /merchant/go-live-checklist`** →
+
+```ts
+interface GoLiveChecklist {
+  ready: boolean; // every required automatic item is done
+  items: {
+    key: string; // approved | two_factor | live_secret_key | live_webhook | wallet_funded
+                 // | low_balance_alert | test_collected | test_returned | hub_assigned
+                 // | webhook_dedupe | idempotency | tracking_url (tolerate new keys)
+    label: string;
+    kind: 'auto' | 'manual';
+    required: boolean;
+    done: boolean | null; // null for manual items
+    hint: string; // what to do next, ready to show
+  }[];
+}
+```
+
+Show it as a card on Home until `ready` (then collapse it to "You're ready for live ✓").
+`auto` items: a tick or an empty circle, with `hint` under the undone ones and a link to the
+screen it names (Approval → §7, 2FA → Account › Security, keys → §9, webhooks → §10, top
+up → §15.5, low-balance → §15.6a, simulator → §13). `required: false` items show
+"(optional)". `manual` items are reminders for the developer: let the user tick them
+locally (keep that in `localStorage`; the API doesn't store it). Refresh the card when the
+user comes back to Home.
+
+## 15f. Pick links
+
+✅ Ready (`shipments.write` to create or cancel, `shipments.read` to list). For merchants
+without a checkout (WhatsApp, Instagram): a link the buyer opens to pick their own Node.
+
+**Screens:** a "Send a pick link" button on Shipments, next to "New shipment".
+
+- **Create:** the New-shipment form *without* the Node picker, plus a "Hide prices from the
+  buyer" switch. **`POST /merchant/pick-links`** `{ shipment: <CreateShipment without
+  destinationNodeId>, hidePrices?: boolean }` → `PickLink`. Validation errors come back as
+  `400 VALIDATION_FAILED` with fields prefixed `shipment.` (`shipment.receiver.phone`): strip
+  the prefix to map them onto the same form as §12.4. `409 DUPLICATE_REFERENCE`: "That
+  reference is already used by a shipment or an open pick link."
+- **After creating:** show `url` with **Copy** and **Share on WhatsApp**
+  (`https://wa.me/?text=` + encoded "Hi {first name}, choose where to collect your order: {url}").
+  The link works once, for 7 days.
+- **List** (a "Pick links" tab on Shipments): **`GET /merchant/pick-links?limit=&cursor=`**,
+  columns reference, receiver, status chip (`open` blue, `used` green, `cancelled` grey,
+  `expired` grey), expires, and "View shipment" (→ `shipmentId`) once used. **Cancel** on open
+  links: **`POST /merchant/pick-links/{id}/cancel`** (`410 PICK_LINK_UNAVAILABLE` if it was just
+  used or expired: refresh).
+
+```ts
+interface PickLink {
+  id: string;
+  reference: string;
+  status: 'open' | 'used' | 'cancelled' | 'expired';
+  url: string;
+  receiverName: string;
+  hidePrices: boolean;
+  expiresAt: string;
+  shipmentId: string | null;
+  usedAt: string | null;
+  createdAt: string;
+}
+```
+
+### The buyer's page: `/pick/{token}` (public, consumer web app)
+
+No sign-in: the token in the URL is the credential. Build it in the **consumer** web app
+(the link points at `FRONTEND_URL/pick/{token}`). Mobile first; most buyers arrive from
+WhatsApp.
+
+1. **`GET /api/v1/pick/{token}`** →
+
+   ```ts
+   interface PublicPickLink {
+     status: 'open' | 'used' | 'cancelled' | 'expired';
+     merchantName: string;
+     receiverFirstName: string;
+     parcel: { description: string; size: string };
+     hidePrices: boolean;
+     expiresAt: string;
+     picked: { trackingCode: string; nodeName: string } | null;
+   }
+   ```
+
+   Header: "Hi {receiverFirstName}, {merchantName} is sending you {description}. Choose
+   where you'd like to collect it." If `status` is `used`: "Collection point chosen:
+   {nodeName}" with a **Track** link (`/track/{trackingCode}`). `expired` or `cancelled`: "This
+   link has expired. Ask {merchantName} for a new one." `404`: "This link isn't valid."
+2. **`GET /api/v1/pick/{token}/nodes?near=lat,lng&q=&limit=`** (ask for location; fall back to
+   a search box `q`) → `PickNode[]`, nearest first:
+   `{ id, name, address, city, state, latitude, longitude, distanceKm, priceKobo }`. Show a
+   list (and a map if you have one). `priceKobo` is `null` when the seller hides prices: show
+   nothing then, never "₦0". Otherwise label it "Delivery ₦1,250": it's the price for
+   that Node, which helps a buyer who pays the seller for shipping.
+3. **`POST /api/v1/pick/{token}`** `{ destinationNodeId }` (send `X-Locoomo-Client: web`) →
+   `{ trackingCode, nodeName }`. Show "Done! Your order will go to {nodeName}. We'll text you
+   when it's ready to collect", with a Track button.
+   - `422 PICK_LINK_FAILED` with `details.reason`: `DESTINATION_NODE_UNAVAILABLE` → "That
+     pickup point can't take this parcel. Please choose another." (keep the list open);
+     anything else → "We couldn't set this up right now. Please contact {merchantName}."
+   - `410 PICK_LINK_UNAVAILABLE`: reload the page (someone already picked, or it expired).
+   - `429`: "Too many tries. Wait a minute."
+
+---
+
+## 16. Coming next 🛠
 
 | Screen | Endpoints (planned) | Notes |
 |---|---|---|
-| **Go-live checklist** | `GET /merchant/go-live-checklist` | On Home: approved, 2FA, live key, live webhook, wallet funded, test shipment simulated to `collected` and `returned` |
 | **Audit log** | TBD | Who did what in the team |
 
 ---
@@ -3206,11 +3312,12 @@ Branch on `code`. Anything not listed: show `message`, and fall back on the HTTP
 | 409 / 422 | `REROUTE_NOT_PENDING` / `REROUTE_TARGET_UNAVAILABLE` | Admin reroutes: §18.6d |
 | 422 / 409 | `RETURN_BATCH_INVALID` / `RETURN_BATCH_NOT_OPEN` | Returns: §15b |
 | 422 / 403 | `REPORT_RANGE_INVALID` / `EXPORT_LINK_INVALID` | Reports and exports: §15d |
+| 410 / 422 | `PICK_LINK_UNAVAILABLE` / `PICK_LINK_FAILED` | Pick links and the buyer's page: §15f |
 | 422 / 409 / 422 | `MANIFEST_INVALID` / `MANIFEST_NOT_EDITABLE` / `NOT_A_HUB` | Manifests: §15c (admin `NOT_A_HUB`: §18.4) |
 | 403 | `LIVE_SHIPMENTS_NOT_AVAILABLE` | "Live shipments aren't available yet. Switch to Test." |
 | 403 | `SHIPMENT_CREATION_PAUSED` | "New live shipments are paused on your account." |
 | 403 | `TEST_MODE_ONLY` | Hide the simulator on live shipments |
-| 409 | `DUPLICATE_REFERENCE` | Link to `details.existingShipmentId` |
+| 409 | `DUPLICATE_REFERENCE` | Link to `details.existingShipmentId` (or the pick link, `details.existingPickLinkId`) |
 | 409 | `SHIPMENT_NOT_EDITABLE` / `SHIPMENT_NOT_CANCELLABLE` / `SHIPMENT_NOT_RETURNABLE` | Refetch; hide the button |
 | 409 | `INVALID_SIMULATION` | "That can't happen from {status}." |
 | 422 | `DESTINATION_NODE_UNAVAILABLE` / `ORIGIN_NODE_UNAVAILABLE` | "Pick another Node." |

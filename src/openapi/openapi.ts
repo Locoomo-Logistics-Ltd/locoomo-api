@@ -1,11 +1,14 @@
 import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
+import { toPostmanCollection } from './postman';
 
 // Public, versioned contract for external merchants (plan §12, E13). Only
 // these path prefixes are published — internal consumer/Node/rider/admin
 // routes stay out of the merchant-facing document.
 export const MERCHANT_OPENAPI_PATH_PREFIXES = ['/api/v1/merchant'];
 export const MERCHANT_OPENAPI_JSON_URL = '/api/v1/merchant/openapi.json';
+export const MERCHANT_POSTMAN_URL = '/api/v1/merchant/postman.json';
 
 export function buildMerchantOpenApiDocument(
   app: INestApplication,
@@ -80,14 +83,34 @@ export function pruneUnusedSchemas(document: OpenAPIObject): void {
 // JSON only (no bundled UI): frontend/integrator tooling (openapi-typescript,
 // Postman, Redoc) consumes the spec; the API serves no HTML.
 export function mountMerchantOpenApi(app: INestApplication): void {
-  SwaggerModule.setup(
-    'api/v1/merchant/docs',
-    app,
-    () => buildMerchantOpenApiDocument(app),
-    {
-      ui: false,
-      raw: ['json'],
-      jsonDocumentUrl: MERCHANT_OPENAPI_JSON_URL,
-    },
-  );
+  let document: OpenAPIObject | undefined;
+  const merchantDocument = (): OpenAPIObject =>
+    (document ??= buildMerchantOpenApiDocument(app));
+  SwaggerModule.setup('api/v1/merchant/docs', app, merchantDocument, {
+    ui: false,
+    raw: ['json'],
+    jsonDocumentUrl: MERCHANT_OPENAPI_JSON_URL,
+  });
+  // The same contract as a Postman collection, pointed at this host.
+  app
+    .getHttpAdapter()
+    .get(MERCHANT_POSTMAN_URL, (req: Request, res: Response) => {
+      const proto =
+        String(req.headers['x-forwarded-proto'] ?? '').split(',')[0] ||
+        req.protocol;
+      res
+        .type('application/json')
+        .setHeader(
+          'Content-Disposition',
+          'attachment; filename="locoomo-merchant.postman_collection.json"',
+        );
+      res.send(
+        JSON.stringify(
+          toPostmanCollection(
+            merchantDocument(),
+            `${proto}://${req.get('host')}`,
+          ),
+        ),
+      );
+    });
 }

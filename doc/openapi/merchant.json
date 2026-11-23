@@ -1,0 +1,5561 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/v1/merchant/ping": {
+      "get": {
+        "operationId": "MerchantPingController_ping_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Keys"
+        ]
+      }
+    },
+    "/api/v1/merchant/nodes": {
+      "get": {
+        "operationId": "MerchantCatalogController_listNodes_v1",
+        "parameters": [
+          {
+            "name": "near",
+            "required": false,
+            "in": "query",
+            "description": "Sort by distance from this point: `latitude,longitude`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "radiusKm",
+            "required": true,
+            "in": "query",
+            "description": "With `near`: search radius in km (default 10, max 50).",
+            "schema": {
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10,
+              "type": "number"
+            }
+          },
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "Search name, address and area.",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 60,
+              "type": "string"
+            }
+          },
+          {
+            "name": "city",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "name": "parcelSize",
+            "required": false,
+            "in": "query",
+            "description": "Only Nodes that can accept this parcel size now.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "small",
+                "medium",
+                "large",
+                "extra_large"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantNodeListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Nodes a buyer can collect from: open for business, with shelf space.",
+        "tags": [
+          "Nodes and quotes"
+        ]
+      }
+    },
+    "/api/v1/merchant/nodes/{id}": {
+      "get": {
+        "operationId": "MerchantCatalogController_getNode_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantNodeView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "One Node. 404 if it has closed or been withdrawn.",
+        "tags": [
+          "Nodes and quotes"
+        ]
+      }
+    },
+    "/api/v1/merchant/quotes": {
+      "get": {
+        "operationId": "MerchantCatalogController_quote_v1",
+        "parameters": [
+          {
+            "name": "destinationNodeId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "originNodeId",
+            "required": false,
+            "in": "query",
+            "description": "Where you'll drop the parcel. Required until a hub is assigned to your account.",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "parcelSize",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "small",
+                "medium",
+                "large",
+                "extra_large"
+              ]
+            }
+          },
+          {
+            "name": "weightKg",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0.1,
+              "maximum": 1000,
+              "type": "number"
+            }
+          },
+          {
+            "name": "lengthCm",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 500,
+              "type": "number"
+            }
+          },
+          {
+            "name": "widthCm",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 500,
+              "type": "number"
+            }
+          },
+          {
+            "name": "heightCm",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 500,
+              "type": "number"
+            }
+          },
+          {
+            "name": "handling",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "fragile",
+                  "keep_upright",
+                  "perishable",
+                  "liquid"
+                ]
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Estimated price to a destination Node. Fixed when the shipment is created.",
+        "tags": [
+          "Nodes and quotes"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipments": {
+      "post": {
+        "operationId": "ShipmentsController_create_v1",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Recommended on every POST (a UUID). Retrying with the same key and body replays the original response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateShipmentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Create a shipment. The quoted fee is held on your wallet.",
+        "tags": [
+          "Shipments"
+        ]
+      },
+      "get": {
+        "operationId": "ShipmentsController_list_v1",
+        "parameters": [
+          {
+            "name": "reference",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "created",
+                "received",
+                "in_transit",
+                "ready_for_collection",
+                "collected",
+                "returning",
+                "return_ready",
+                "returned",
+                "cancelled",
+                "expired",
+                "refused",
+                "exception",
+                "disposed"
+              ]
+            }
+          },
+          {
+            "name": "destinationNodeId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "manifestId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "createdFrom",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "createdTo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "updatedSince",
+            "required": false,
+            "in": "query",
+            "description": "Changes since this time, oldest change first (for syncing).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "List and sync. With `updatedSince`, oldest change first.",
+        "tags": [
+          "Shipments"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipments/bulk": {
+      "post": {
+        "operationId": "ShipmentsController_bulk_v1",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Recommended on every POST (a UUID). Retrying with the same key and body replays the original response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkCreateShipmentsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkCreateResultView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Up to 100 shipments; each succeeds or fails on its own.",
+        "tags": [
+          "Shipments"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipments/{id}": {
+      "get": {
+        "operationId": "ShipmentsController_get_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Shipments"
+        ]
+      },
+      "patch": {
+        "operationId": "ShipmentsController_update_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateShipmentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Shipments"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipments/{id}/label": {
+      "get": {
+        "operationId": "ShipmentsController_label_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "required": true,
+            "in": "query",
+            "description": "`a6` (one label per page, default) or `a4` (four per page).",
+            "schema": {
+              "default": "a6",
+              "type": "string",
+              "enum": [
+                "a6",
+                "a4"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Shipping label as a PDF (A6, or A4 with the label in the first quarter).",
+        "tags": [
+          "Shipments"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipments/labels": {
+      "post": {
+        "operationId": "ShipmentsController_labelBatch_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShipmentLabelsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Up to 100 labels in one PDF, in the order given (A4: four per page).",
+        "tags": [
+          "Shipments"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipments/{id}/timeline": {
+      "get": {
+        "operationId": "ShipmentsController_timeline_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TimelineEntryView"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Event history, oldest first.",
+        "tags": [
+          "Shipments"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipments/{id}/cancel": {
+      "post": {
+        "operationId": "ShipmentsController_cancel_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Recommended on every POST (a UUID). Retrying with the same key and body replays the original response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Only before drop-off; the hold is released.",
+        "tags": [
+          "Shipments"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipments/{id}/return-to-sender": {
+      "post": {
+        "operationId": "ShipmentsController_returnToSender_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Recommended on every POST (a UUID). Retrying with the same key and body replays the original response.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "From received until ready_for_collection: bring it back to you.",
+        "tags": [
+          "Shipments"
+        ]
+      }
+    },
+    "/api/v1/merchant/test/shipments/{id}/simulate": {
+      "post": {
+        "operationId": "TestShipmentsController_simulate_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulateShipmentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Test shipments only. Every intermediate step fires, as in live.",
+        "tags": [
+          "Sandbox"
+        ]
+      }
+    },
+    "/api/v1/merchant/webhook-endpoints": {
+      "get": {
+        "operationId": "WebhooksController_list_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookEndpointView"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Webhooks"
+        ]
+      },
+      "post": {
+        "operationId": "WebhooksController_create_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookEndpointDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedWebhookEndpointView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Up to 5 per mode. The signing secret is returned once.",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
+    "/api/v1/merchant/webhook-endpoints/{id}": {
+      "patch": {
+        "operationId": "WebhooksController_update_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookEndpointDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Webhooks"
+        ]
+      },
+      "delete": {
+        "operationId": "WebhooksController_remove_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
+    "/api/v1/merchant/webhook-endpoints/{id}/roll-secret": {
+      "post": {
+        "operationId": "WebhooksController_rollSecret_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedWebhookEndpointView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "New secret; the old one keeps signing for 24 hours.",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
+    "/api/v1/merchant/webhook-endpoints/{id}/test": {
+      "post": {
+        "operationId": "WebhooksController_sendTest_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookTestResultView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Sends a `webhook.test` event now and reports what your endpoint answered.",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
+    "/api/v1/merchant/webhook-endpoints/{id}/replay": {
+      "post": {
+        "operationId": "WebhooksController_replay_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplayWebhooksDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Resend every subscribed event since a time (within 30 days).",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
+    "/api/v1/merchant/webhook-deliveries": {
+      "get": {
+        "operationId": "WebhooksController_deliveries_v1",
+        "parameters": [
+          {
+            "name": "endpointId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "delivering",
+                "succeeded",
+                "failed"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeliveryListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Delivery log (30 days), newest first.",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
+    "/api/v1/merchant/wallet": {
+      "get": {
+        "operationId": "WalletController_get_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Balance, held and available.",
+        "tags": [
+          "Wallet"
+        ]
+      }
+    },
+    "/api/v1/merchant/wallet/entries": {
+      "get": {
+        "operationId": "WalletController_entries_v1",
+        "parameters": [
+          {
+            "name": "type",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "test_funding",
+                "top_up",
+                "shipment_charge",
+                "shipment_adjustment",
+                "adjustment",
+                "claim_credit",
+                "storage_fee",
+                "refund"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "description": "Inclusive, ISO-8601.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "description": "Exclusive, ISO-8601.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletEntryListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Ledger lines, newest first.",
+        "tags": [
+          "Wallet"
+        ]
+      }
+    },
+    "/api/v1/merchant/wallet/holds": {
+      "get": {
+        "operationId": "WalletController_holds_v1",
+        "parameters": [
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "captured",
+                "released"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletHoldListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Fees set aside for shipments, newest first.",
+        "tags": [
+          "Wallet"
+        ]
+      }
+    },
+    "/api/v1/merchant/wallet/top-ups": {
+      "post": {
+        "operationId": "WalletController_startTopUp_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartCardTopUpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedTopUpView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Card top-up: returns Paystack's payment page. Dashboard only.",
+        "tags": [
+          "Wallet"
+        ]
+      },
+      "get": {
+        "operationId": "WalletController_listTopUps_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopUpListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Card payments and bank transfers, newest first.",
+        "tags": [
+          "Wallet"
+        ]
+      }
+    },
+    "/api/v1/merchant/wallet/top-ups/{id}": {
+      "get": {
+        "operationId": "WalletController_getTopUp_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopUpView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "One top-up. A pending card payment is checked with Paystack first.",
+        "tags": [
+          "Wallet"
+        ]
+      }
+    },
+    "/api/v1/merchant/wallet/settings": {
+      "patch": {
+        "operationId": "WalletController_settings_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WalletSettingsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "The low-balance alert line (dashboard only).",
+        "tags": [
+          "Wallet"
+        ]
+      }
+    },
+    "/api/v1/merchant/wallet/funding-account": {
+      "get": {
+        "operationId": "WalletController_fundingAccount_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FundingAccountView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "The live wallet's bank-transfer account number, or null.",
+        "tags": [
+          "Wallet"
+        ]
+      },
+      "post": {
+        "operationId": "WalletController_createFundingAccount_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FundingAccountView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Opens the live wallet's bank-transfer account (idempotent).",
+        "tags": [
+          "Wallet"
+        ]
+      }
+    },
+    "/api/v1/merchant/test/wallet/reset": {
+      "post": {
+        "operationId": "TestWalletController_reset_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Puts the test wallet's balance back to ₦1,000,000. Holds stay.",
+        "tags": [
+          "Sandbox"
+        ]
+      }
+    },
+    "/api/v1/merchant/statements/{month}": {
+      "get": {
+        "operationId": "MerchantDocumentsController_statement_v1",
+        "parameters": [
+          {
+            "name": "month",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "required": true,
+            "in": "query",
+            "description": "`pdf` (default) or `csv` (every line, for spreadsheets).",
+            "schema": {
+              "default": "pdf",
+              "type": "string",
+              "enum": [
+                "pdf",
+                "csv"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Opening balance, every wallet line in the month, closing balance.",
+        "tags": [
+          "Wallet"
+        ]
+      }
+    },
+    "/api/v1/merchant/invoices/{month}": {
+      "get": {
+        "operationId": "MerchantDocumentsController_invoice_v1",
+        "parameters": [
+          {
+            "name": "month",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "required": true,
+            "in": "query",
+            "description": "`pdf` (default) or `csv` (every line, for spreadsheets).",
+            "schema": {
+              "default": "pdf",
+              "type": "string",
+              "enum": [
+                "pdf",
+                "csv"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Tax invoice for the shipping charged in a finished month (live).",
+        "tags": [
+          "Wallet"
+        ]
+      }
+    },
+    "/api/v1/merchant/claims": {
+      "post": {
+        "operationId": "ClaimsController_file_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileClaimDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "File a claim, within 30 days of the shipment's last status change.",
+        "tags": [
+          "Claims"
+        ]
+      },
+      "get": {
+        "operationId": "ClaimsController_list_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "approved",
+                "rejected"
+              ]
+            }
+          },
+          {
+            "name": "shipmentId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Your claims, newest first.",
+        "tags": [
+          "Claims"
+        ]
+      }
+    },
+    "/api/v1/merchant/claims/uploads": {
+      "post": {
+        "operationId": "ClaimsController_uploadSignature_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "A signed upload for one evidence file (photo or PDF).",
+        "tags": [
+          "Claims"
+        ]
+      }
+    },
+    "/api/v1/merchant/claims/{id}": {
+      "get": {
+        "operationId": "ClaimsController_get_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Claims"
+        ]
+      }
+    },
+    "/api/v1/merchant/test/claims/{id}/decide": {
+      "post": {
+        "operationId": "TestClaimsController_decide_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideTestClaimDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Approve (credits the test wallet) or reject a test claim.",
+        "tags": [
+          "Claims"
+        ]
+      }
+    },
+    "/api/v1/merchant/returns": {
+      "get": {
+        "operationId": "ReturnBatchesController_returns_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "required": true,
+            "in": "query",
+            "description": "`ready` (waiting at the Node, default) or `incoming` (on the way back).",
+            "schema": {
+              "default": "ready",
+              "type": "string",
+              "enum": [
+                "ready",
+                "incoming"
+              ]
+            }
+          },
+          {
+            "name": "nodeId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReturnItemListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Returns waiting at a Node (`ready`, oldest first) or on the way (`incoming`).",
+        "tags": [
+          "Returns"
+        ]
+      }
+    },
+    "/api/v1/merchant/return-batches": {
+      "post": {
+        "operationId": "ReturnBatchesController_create_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReturnBatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReturnBatchView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "One collection code for returns waiting at one Node.",
+        "tags": [
+          "Returns"
+        ]
+      },
+      "get": {
+        "operationId": "ReturnBatchesController_list_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "collected",
+                "cancelled"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReturnBatchListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Returns"
+        ]
+      }
+    },
+    "/api/v1/merchant/return-batches/{id}": {
+      "get": {
+        "operationId": "ReturnBatchesController_get_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReturnBatchView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Returns"
+        ]
+      }
+    },
+    "/api/v1/merchant/return-batches/{id}/code": {
+      "post": {
+        "operationId": "ReturnBatchesController_reissueCode_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReturnBatchView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "A new code; the old one stops working.",
+        "tags": [
+          "Returns"
+        ]
+      }
+    },
+    "/api/v1/merchant/return-batches/{id}/cancel": {
+      "post": {
+        "operationId": "ReturnBatchesController_cancel_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReturnBatchView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "The returns go back to waiting, each on its own code.",
+        "tags": [
+          "Returns"
+        ]
+      }
+    },
+    "/api/v1/merchant/test/return-batches/{id}/collect": {
+      "post": {
+        "operationId": "TestReturnBatchesController_collect_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReturnBatchView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Returns"
+        ]
+      }
+    },
+    "/api/v1/merchant/manifests": {
+      "post": {
+        "operationId": "ManifestsController_create_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateManifestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Manifests"
+        ]
+      },
+      "get": {
+        "operationId": "ManifestsController_list_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed",
+                "received",
+                "cancelled"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Manifests"
+        ]
+      }
+    },
+    "/api/v1/merchant/manifests/{id}/shipments": {
+      "post": {
+        "operationId": "ManifestsController_add_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddManifestShipmentsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Manifests"
+        ]
+      }
+    },
+    "/api/v1/merchant/manifests/{id}/close": {
+      "post": {
+        "operationId": "ManifestsController_close_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "The truck has left: nothing more can be added.",
+        "tags": [
+          "Manifests"
+        ]
+      }
+    },
+    "/api/v1/merchant/manifests/{id}/cancel": {
+      "post": {
+        "operationId": "ManifestsController_cancel_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Manifests"
+        ]
+      }
+    },
+    "/api/v1/merchant/manifests/{id}": {
+      "get": {
+        "operationId": "ManifestsController_get_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Manifests"
+        ]
+      }
+    },
+    "/api/v1/merchant/manifests/{id}/document": {
+      "get": {
+        "operationId": "ManifestsController_document_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "PDF for the driver: reference + QR, hub, every parcel.",
+        "tags": [
+          "Manifests"
+        ]
+      }
+    },
+    "/api/v1/merchant/test/manifests/{id}/receive": {
+      "post": {
+        "operationId": "TestManifestsController_receive_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulateManifestReceiptDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestReceiptView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Manifests"
+        ]
+      }
+    },
+    "/api/v1/merchant/go-live-checklist": {
+      "get": {
+        "operationId": "ReportsController_goLive_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "What's left before your first live parcel (MERCHANT_API.md §17).",
+        "tags": [
+          "Reports"
+        ]
+      }
+    },
+    "/api/v1/merchant/reports/summary": {
+      "get": {
+        "operationId": "ReportsController_summary_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Reports"
+        ]
+      }
+    },
+    "/api/v1/merchant/exports/shipments": {
+      "post": {
+        "operationId": "ReportsController_exportShipments_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExportDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportLinkView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Every shipment created in the range, as CSV, via a 15-minute link.",
+        "tags": [
+          "Reports"
+        ]
+      }
+    },
+    "/api/v1/merchant/exports/wallet-entries": {
+      "post": {
+        "operationId": "ReportsController_exportWallet_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExportDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportLinkView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Every wallet line in the range, as CSV, via a 15-minute link.",
+        "tags": [
+          "Reports"
+        ]
+      }
+    },
+    "/api/v1/merchant/exports/download": {
+      "get": {
+        "operationId": "ExportDownloadController_download_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Reports"
+        ]
+      }
+    },
+    "/api/v1/merchant/pick-links": {
+      "post": {
+        "operationId": "PickLinksController_create_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePickLinkDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Create a pick link: the buyer picks their Node, then the shipment is created.",
+        "tags": [
+          "Pick links"
+        ]
+      },
+      "get": {
+        "operationId": "PickLinksController_list_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Your pick links, newest first.",
+        "tags": [
+          "Pick links"
+        ]
+      }
+    },
+    "/api/v1/merchant/pick-links/{id}": {
+      "get": {
+        "operationId": "PickLinksController_get_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "One pick link, with its share URL and the shipment once picked.",
+        "tags": [
+          "Pick links"
+        ]
+      }
+    },
+    "/api/v1/merchant/pick-links/{id}/cancel": {
+      "post": {
+        "operationId": "PickLinksController_cancel_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Cancel an open pick link.",
+        "tags": [
+          "Pick links"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipment-imports": {
+      "post": {
+        "operationId": "ShipmentImportsController_create_v1",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentImportView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Start an import: a JSON body `{ \"items\": [...] }` (same shape as\nPOST /shipments; the 1 MB body limit applies) or a CSV file in the\nmultipart field `file` (up to 5 MB). Rows are created in the background.",
+        "tags": [
+          "Shipment imports"
+        ]
+      },
+      "get": {
+        "operationId": "ShipmentImportsController_list_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentImportListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Shipment imports"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipment-imports/template.csv": {
+      "get": {
+        "operationId": "ShipmentImportsController_template_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "The CSV columns, with one example row.",
+        "tags": [
+          "Shipment imports"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipment-imports/{id}": {
+      "get": {
+        "operationId": "ShipmentImportsController_get_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentImportView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Shipment imports"
+        ]
+      }
+    },
+    "/api/v1/merchant/shipment-imports/{id}/rows": {
+      "get": {
+        "operationId": "ShipmentImportsController_rows_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "created",
+                "failed"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentImportRowListView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "summary": "Rows in file order, with each one's shipment or error.",
+        "tags": [
+          "Shipment imports"
+        ]
+      }
+    },
+    "/api/v1/merchant/pricing": {
+      "get": {
+        "operationId": "MerchantPricingController_get_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantDiscountView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "tags": [
+          "Wallet"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Locoomo Merchant API",
+    "description": "Create and track shipments through the Locoomo pickup-station network.\n\nAuth: `Authorization: Bearer sk_test_…` / `sk_live_…` (server-side) or\n`pk_…` (browser, Nodes and quotes only).\nEvery response is wrapped as `{ success, data, meta }` / `{ success: false, error }`;\nbranch on `error.code`. Stability: additive changes only within v1 —\ntolerate unknown fields, enum values and webhook event types.",
+    "version": "1",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "sk_… or pk_… API key"
+      }
+    },
+    "schemas": {
+      "MerchantNodeView": {
+        "type": "object",
+        "properties": {
+          "openingHours": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "open",
+                  "close"
+                ],
+                "properties": {
+                  "open": {
+                    "type": "string",
+                    "example": "08:00"
+                  },
+                  "close": {
+                    "type": "string",
+                    "example": "20:00"
+                  }
+                }
+              }
+            },
+            "nullable": true,
+            "description": "Local time (Africa/Lagos), HH:mm, by day (mon … sun). A missing or empty day is closed."
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          },
+          "distanceKm": {
+            "type": "number",
+            "nullable": true,
+            "description": "Distance from `near`, when given."
+          },
+          "contactPhone": {
+            "type": "string",
+            "nullable": true
+          },
+          "acceptingParcels": {
+            "type": "boolean",
+            "description": "False while the Node is full. Parcels already routed there still arrive."
+          }
+        },
+        "required": [
+          "openingHours",
+          "id",
+          "name",
+          "address",
+          "city",
+          "state",
+          "latitude",
+          "longitude",
+          "distanceKm",
+          "contactPhone",
+          "acceptingParcels"
+        ]
+      },
+      "MerchantNodeListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MerchantNodeView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "QuoteBreakdownView": {
+        "type": "object",
+        "properties": {
+          "baseKobo": {
+            "type": "number"
+          },
+          "distanceKobo": {
+            "type": "number"
+          },
+          "volumeDiscountKobo": {
+            "type": "number",
+            "description": "Negative or 0."
+          },
+          "vatKobo": {
+            "type": "number",
+            "description": "VAT included in `amountKobo` (not added on top)."
+          }
+        },
+        "required": [
+          "baseKobo",
+          "distanceKobo",
+          "volumeDiscountKobo",
+          "vatKobo"
+        ]
+      },
+      "QuoteView": {
+        "type": "object",
+        "properties": {
+          "breakdown": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QuoteBreakdownView"
+              }
+            ]
+          },
+          "currency": {
+            "type": "string"
+          },
+          "amountKobo": {
+            "type": "number",
+            "nullable": true,
+            "description": "Null for publishable keys with \"hide prices\"."
+          },
+          "vehicleClass": {
+            "type": "string"
+          },
+          "estimatedReadyInWorkingDays": {
+            "type": "number",
+            "description": "From drop-off to ready for collection. An estimate, not a promise."
+          }
+        },
+        "required": [
+          "breakdown",
+          "currency",
+          "amountKobo",
+          "vehicleClass",
+          "estimatedReadyInWorkingDays"
+        ]
+      },
+      "ShipmentOriginDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "`hub` (your assigned hub) or `node` (a specific Node).",
+            "enum": [
+              "hub",
+              "node"
+            ]
+          },
+          "nodeId": {
+            "type": "string",
+            "description": "Required when `type` is `node`.",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "ShipmentReceiverDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "phone": {
+            "type": "string",
+            "description": "Any Nigerian format; returned as E.164."
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "format": "email"
+          }
+        },
+        "required": [
+          "name",
+          "phone"
+        ]
+      },
+      "ShipmentParcelDto": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Be specific (\"Wireless earbuds\", not \"Item\").",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "size": {
+            "type": "string",
+            "enum": [
+              "small",
+              "medium",
+              "large",
+              "extra_large"
+            ]
+          },
+          "weightKg": {
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 1000
+          },
+          "lengthCm": {
+            "type": "number",
+            "description": "Send all three dimensions or none.",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "widthCm": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "heightCm": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "handling": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "fragile",
+                "keep_upright",
+                "perishable",
+                "liquid"
+              ]
+            }
+          },
+          "declaredValueKobo": {
+            "type": "number",
+            "description": "Basis for claims (compensation is capped).",
+            "minimum": 0,
+            "maximum": 100000000000
+          }
+        },
+        "required": [
+          "description",
+          "size"
+        ]
+      },
+      "CreateShipmentDto": {
+        "type": "object",
+        "properties": {
+          "reference": {
+            "type": "string",
+            "description": "Your id for this parcel, unique per account and mode.",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\P{Cc}+$"
+          },
+          "destinationNodeId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ShipmentOriginDto"
+          },
+          "receiver": {
+            "$ref": "#/components/schemas/ShipmentReceiverDto"
+          },
+          "parcel": {
+            "$ref": "#/components/schemas/ShipmentParcelDto"
+          },
+          "externalBarcode": {
+            "type": "string",
+            "description": "A barcode already on the parcel; hub scanners accept it.",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "notifyReceiver": {
+            "type": "string",
+            "enum": [
+              "locoomo",
+              "merchant",
+              "both"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "reference",
+          "destinationNodeId",
+          "receiver",
+          "parcel"
+        ]
+      },
+      "ShipmentReturnView": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "merchant_request",
+              "delivery_failed",
+              "not_collected"
+            ]
+          },
+          "readyForCollectionAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "storageFeesFrom": {
+            "type": "string",
+            "nullable": true,
+            "description": "Waiting at the Node: storage is charged daily from this time (10 working days after `readyForCollectionAt`)."
+          },
+          "disposeAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "Disposed of at this time if still not collected (30 days after storage starts)."
+          }
+        },
+        "required": [
+          "reason",
+          "readyForCollectionAt",
+          "storageFeesFrom",
+          "disposeAt"
+        ]
+      },
+      "ShipmentExceptionView": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "lost",
+              "damaged"
+            ]
+          },
+          "reportedAt": {
+            "type": "string"
+          },
+          "claimId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "type",
+          "reportedAt",
+          "claimId"
+        ]
+      },
+      "ShipmentOriginView": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "node",
+              "hub"
+            ]
+          },
+          "nodeId": {
+            "type": "string",
+            "nullable": true
+          },
+          "nodeName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "type",
+          "nodeId",
+          "nodeName"
+        ]
+      },
+      "ShipmentDestinationView": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "nullable": true
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "True if we rerouted to another Node (the buyer was told)."
+          },
+          "nodeId": {
+            "type": "string",
+            "nullable": true
+          },
+          "nodeName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "address",
+          "city",
+          "state",
+          "changed",
+          "nodeId",
+          "nodeName"
+        ]
+      },
+      "ShipmentReceiverView": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string",
+            "description": "E.164."
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "phone",
+          "email"
+        ]
+      },
+      "MeasuredParcelView": {
+        "type": "object",
+        "properties": {
+          "weightKg": {
+            "type": "number",
+            "nullable": true
+          },
+          "size": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "weightKg",
+          "size"
+        ]
+      },
+      "ShipmentParcelView": {
+        "type": "object",
+        "properties": {
+          "measured": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MeasuredParcelView"
+              }
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string"
+          },
+          "weightKg": {
+            "type": "number",
+            "nullable": true
+          },
+          "lengthCm": {
+            "type": "number",
+            "nullable": true
+          },
+          "widthCm": {
+            "type": "number",
+            "nullable": true
+          },
+          "heightCm": {
+            "type": "number",
+            "nullable": true
+          },
+          "handling": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "declaredValueKobo": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "measured",
+          "description",
+          "size",
+          "weightKg",
+          "lengthCm",
+          "widthCm",
+          "heightCm",
+          "handling",
+          "declaredValueKobo"
+        ]
+      },
+      "ShipmentFeeBreakdownView": {
+        "type": "object",
+        "properties": {
+          "baseKobo": {
+            "type": "number"
+          },
+          "distanceKobo": {
+            "type": "number"
+          },
+          "volumeDiscountKobo": {
+            "type": "number"
+          },
+          "vatKobo": {
+            "type": "number",
+            "description": "VAT included in the fee."
+          }
+        },
+        "required": [
+          "baseKobo",
+          "distanceKobo",
+          "volumeDiscountKobo",
+          "vatKobo"
+        ]
+      },
+      "ShipmentFeeView": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "quotedKobo": {
+            "type": "number"
+          },
+          "chargedKobo": {
+            "type": "number",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "description": "`held` → `charged` (received), or `released` (ended before drop-off).",
+            "enum": [
+              "released",
+              "held",
+              "charged"
+            ]
+          },
+          "breakdown": {
+            "$ref": "#/components/schemas/ShipmentFeeBreakdownView"
+          }
+        },
+        "required": [
+          "currency",
+          "quotedKobo",
+          "chargedKobo",
+          "state",
+          "breakdown"
+        ]
+      },
+      "ShipmentCollectionView": {
+        "type": "object",
+        "properties": {
+          "deadline": {
+            "type": "string",
+            "nullable": true,
+            "description": "End of the 7-working-day window, once on the shelf."
+          },
+          "collectedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "method": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "code",
+              "id_check"
+            ]
+          },
+          "collectorName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "deadline",
+          "collectedAt",
+          "method",
+          "collectorName"
+        ]
+      },
+      "ShipmentView": {
+        "type": "object",
+        "properties": {
+          "return": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ShipmentReturnView"
+              }
+            ]
+          },
+          "exception": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ShipmentExceptionView"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "test",
+              "live"
+            ],
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "trackingCode": {
+            "type": "string",
+            "description": "`LCM-…` live, `LCT-…` test."
+          },
+          "trackingUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Public tracking page (null in test mode)."
+          },
+          "status": {
+            "enum": [
+              "created",
+              "received",
+              "in_transit",
+              "ready_for_collection",
+              "collected",
+              "returning",
+              "return_ready",
+              "returned",
+              "cancelled",
+              "expired",
+              "refused",
+              "exception",
+              "disposed"
+            ],
+            "type": "string"
+          },
+          "sequence": {
+            "type": "number",
+            "description": "Increases on every change; drop older webhooks."
+          },
+          "statusChangedAt": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ShipmentOriginView"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/ShipmentDestinationView"
+          },
+          "receiver": {
+            "$ref": "#/components/schemas/ShipmentReceiverView"
+          },
+          "parcel": {
+            "$ref": "#/components/schemas/ShipmentParcelView"
+          },
+          "externalBarcode": {
+            "type": "string",
+            "nullable": true
+          },
+          "manifestId": {
+            "type": "string",
+            "nullable": true
+          },
+          "fee": {
+            "$ref": "#/components/schemas/ShipmentFeeView"
+          },
+          "dropDeadline": {
+            "type": "string",
+            "description": "Drop off by this time or the shipment expires."
+          },
+          "collection": {
+            "$ref": "#/components/schemas/ShipmentCollectionView"
+          },
+          "notifyReceiver": {
+            "enum": [
+              "merchant",
+              "locoomo",
+              "both"
+            ],
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "return",
+          "exception",
+          "metadata",
+          "id",
+          "mode",
+          "reference",
+          "trackingCode",
+          "trackingUrl",
+          "status",
+          "sequence",
+          "statusChangedAt",
+          "origin",
+          "destination",
+          "receiver",
+          "parcel",
+          "externalBarcode",
+          "manifestId",
+          "fee",
+          "dropDeadline",
+          "collection",
+          "notifyReceiver",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "BulkCreateShipmentsDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "1–100 shipments, same shape as `POST /shipments`. Each succeeds or fails on its own.",
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "BulkResultError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "BulkResultView": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "number"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "shipment": {
+            "$ref": "#/components/schemas/ShipmentView"
+          },
+          "error": {
+            "$ref": "#/components/schemas/BulkResultError"
+          }
+        },
+        "required": [
+          "index",
+          "ok"
+        ]
+      },
+      "BulkCreateResultView": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkResultView"
+            }
+          }
+        },
+        "required": [
+          "results"
+        ]
+      },
+      "ShipmentListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShipmentView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "ShipmentLabelsDto": {
+        "type": "object",
+        "properties": {
+          "shipmentIds": {
+            "description": "1–100 shipment ids, printed in this order.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "format": {
+            "type": "string",
+            "default": "a6",
+            "enum": [
+              "a6",
+              "a4"
+            ]
+          }
+        },
+        "required": [
+          "shipmentIds",
+          "format"
+        ]
+      },
+      "TimelineEntryView": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          },
+          "nodeName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sequence": {
+            "type": "number"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true,
+            "description": "Event details, as in the webhook's `data` extras: `reason`,\n`adjustment`, `previousOrigin`, `changed`, … (never collection codes)."
+          }
+        },
+        "required": [
+          "type",
+          "at",
+          "nodeName",
+          "sequence",
+          "data"
+        ]
+      },
+      "ShipmentReceiverUpdateDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "phone": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "nullable": true,
+            "description": "`null` removes the email.",
+            "maxLength": 254,
+            "format": "email"
+          }
+        }
+      },
+      "UpdateShipmentDto": {
+        "type": "object",
+        "properties": {
+          "receiver": {
+            "description": "Until collected; the buyer gets a fresh code if already shelved.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ShipmentReceiverUpdateDto"
+              }
+            ]
+          },
+          "destinationNodeId": {
+            "type": "string",
+            "description": "Only while `created`; re-quoted and the hold adjusted.",
+            "format": "uuid"
+          },
+          "parcel": {
+            "description": "Only while `created`. Send the whole parcel object.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ShipmentParcelDto"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Replaces the metadata."
+          }
+        }
+      },
+      "SimulateShipmentDto": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "A status from §8, or `fee_adjusted` / `destination_changed`.",
+            "enum": [
+              "received",
+              "in_transit",
+              "ready_for_collection",
+              "collected",
+              "returning",
+              "return_ready",
+              "returned",
+              "cancelled",
+              "expired",
+              "refused",
+              "exception",
+              "disposed",
+              "fee_adjusted",
+              "destination_changed"
+            ]
+          },
+          "exceptionType": {
+            "type": "string",
+            "description": "With `to: exception`. Default `lost`.",
+            "enum": [
+              "lost",
+              "damaged"
+            ]
+          },
+          "destinationNodeId": {
+            "type": "string",
+            "description": "With `to: destination_changed`: the new Node (default: another nearby one).",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "to"
+        ]
+      },
+      "WebhookEndpointView": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "test",
+              "live"
+            ],
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "disabledReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why we disabled it, if we did."
+          },
+          "failingSince": {
+            "type": "string",
+            "nullable": true,
+            "description": "First failure since the last success."
+          },
+          "lastSuccessAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "previousSecretExpiresAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "After a secret roll, the old secret also signs until this time."
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "events",
+          "id",
+          "mode",
+          "url",
+          "description",
+          "enabled",
+          "disabledReason",
+          "failingSince",
+          "lastSuccessAt",
+          "previousSecretExpiresAt",
+          "createdAt"
+        ]
+      },
+      "CreateWebhookEndpointDto": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Public HTTPS URL. Redirects are not followed.",
+            "maxLength": 2048
+          },
+          "events": {
+            "type": "array",
+            "description": "Event types to receive; omit or [] for all (including future ones).",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "shipment.created",
+                "shipment.updated",
+                "shipment.cancelled",
+                "shipment.expired",
+                "shipment.refused",
+                "shipment.received",
+                "shipment.fee_adjusted",
+                "shipment.in_transit",
+                "shipment.destination_changed",
+                "shipment.ready_for_collection",
+                "shipment.collection_reminder",
+                "shipment.collected",
+                "shipment.returning",
+                "shipment.return_ready",
+                "shipment.returned",
+                "shipment.disposed",
+                "shipment.exception",
+                "merchant.status_changed",
+                "wallet.funded",
+                "wallet.low_balance",
+                "claim.decided",
+                "manifest.received"
+              ]
+            }
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "CreatedWebhookEndpointView": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "$ref": "#/components/schemas/WebhookEndpointView"
+          },
+          "secret": {
+            "type": "string",
+            "description": "`whsec_…`: shown once."
+          }
+        },
+        "required": [
+          "endpoint",
+          "secret"
+        ]
+      },
+      "UpdateWebhookEndpointDto": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "events": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "shipment.created",
+                "shipment.updated",
+                "shipment.cancelled",
+                "shipment.expired",
+                "shipment.refused",
+                "shipment.received",
+                "shipment.fee_adjusted",
+                "shipment.in_transit",
+                "shipment.destination_changed",
+                "shipment.ready_for_collection",
+                "shipment.collection_reminder",
+                "shipment.collected",
+                "shipment.returning",
+                "shipment.return_ready",
+                "shipment.returned",
+                "shipment.disposed",
+                "shipment.exception",
+                "merchant.status_changed",
+                "wallet.funded",
+                "wallet.low_balance",
+                "claim.decided",
+                "manifest.received"
+              ]
+            }
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Re-enable after fixing an endpoint we disabled (or pause one)."
+          }
+        }
+      },
+      "WebhookTestResultView": {
+        "type": "object",
+        "properties": {
+          "delivered": {
+            "type": "boolean"
+          },
+          "responseStatus": {
+            "type": "number",
+            "nullable": true
+          },
+          "durationMs": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "delivered",
+          "responseStatus",
+          "durationMs",
+          "error"
+        ]
+      },
+      "ReplayWebhooksDto": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "string",
+            "description": "Resend every subscribed event since this time (within 30 days)."
+          }
+        },
+        "required": [
+          "since"
+        ]
+      },
+      "WebhookDeliveryView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "endpointId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "failed",
+              "succeeded",
+              "delivering"
+            ]
+          },
+          "attempts": {
+            "type": "number"
+          },
+          "nextAttemptAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastAttemptAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "responseStatus": {
+            "type": "number",
+            "nullable": true
+          },
+          "responseBody": {
+            "type": "string",
+            "nullable": true,
+            "description": "First 2 KB of your response."
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "durationMs": {
+            "type": "number",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "eventId",
+          "eventType",
+          "endpointId",
+          "status",
+          "attempts",
+          "nextAttemptAt",
+          "lastAttemptAt",
+          "responseStatus",
+          "responseBody",
+          "error",
+          "durationMs",
+          "createdAt"
+        ]
+      },
+      "WebhookDeliveryListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookDeliveryView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "WalletView": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "enum": [
+              "test",
+              "live"
+            ],
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "balanceKobo": {
+            "type": "number",
+            "description": "Σ every entry. May be negative after re-pricing (plan §8.4)."
+          },
+          "heldKobo": {
+            "type": "number",
+            "description": "Set aside for shipments not yet dropped off."
+          },
+          "availableKobo": {
+            "type": "number",
+            "description": "balance − held: what new shipments can use."
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "currency",
+          "balanceKobo",
+          "heldKobo",
+          "availableKobo",
+          "updatedAt"
+        ]
+      },
+      "WalletEntryView": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "test_funding",
+              "top_up",
+              "shipment_charge",
+              "shipment_adjustment",
+              "adjustment",
+              "claim_credit",
+              "storage_fee",
+              "refund"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "amountKobo": {
+            "type": "number",
+            "description": "Signed: credits positive, debits negative."
+          },
+          "balanceAfterKobo": {
+            "type": "number"
+          },
+          "description": {
+            "type": "string"
+          },
+          "shipmentId": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "amountKobo",
+          "balanceAfterKobo",
+          "description",
+          "shipmentId",
+          "createdAt"
+        ]
+      },
+      "WalletEntryListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalletEntryView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "WalletHoldView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "shipmentId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "released",
+              "captured"
+            ]
+          },
+          "amountKobo": {
+            "type": "number"
+          },
+          "capturedKobo": {
+            "type": "number",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "resolvedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "shipmentId",
+          "status",
+          "amountKobo",
+          "capturedKobo",
+          "createdAt",
+          "resolvedAt"
+        ]
+      },
+      "WalletHoldListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalletHoldView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "StartCardTopUpDto": {
+        "type": "object",
+        "properties": {
+          "amountKobo": {
+            "type": "number",
+            "description": "What to pay, in kobo (₦1,000 to ₦10,000,000). Card fees are deducted\nfrom what reaches the wallet.",
+            "minimum": 100000,
+            "maximum": 1000000000
+          }
+        },
+        "required": [
+          "amountKobo"
+        ]
+      },
+      "TopUpView": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "enum": [
+              "card",
+              "bank_transfer"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "succeeded",
+              "failed",
+              "abandoned"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "test",
+              "live"
+            ],
+            "type": "string"
+          },
+          "amountKobo": {
+            "type": "number",
+            "description": "What the payer paid."
+          },
+          "feeKobo": {
+            "type": "number",
+            "description": "Card processing fee (0 for transfers)."
+          },
+          "creditedKobo": {
+            "type": "number",
+            "nullable": true,
+            "description": "What reached the wallet; null until it succeeds."
+          },
+          "reference": {
+            "type": "string"
+          },
+          "paidAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "status",
+          "id",
+          "mode",
+          "amountKobo",
+          "feeKobo",
+          "creditedKobo",
+          "reference",
+          "paidAt",
+          "createdAt"
+        ]
+      },
+      "StartedTopUpView": {
+        "type": "object",
+        "properties": {
+          "topUp": {
+            "$ref": "#/components/schemas/TopUpView"
+          },
+          "authorizationUrl": {
+            "type": "string",
+            "description": "Send the user here (Paystack's payment page)."
+          }
+        },
+        "required": [
+          "topUp",
+          "authorizationUrl"
+        ]
+      },
+      "TopUpListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TopUpView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "WalletSettingsDto": {
+        "type": "object",
+        "properties": {
+          "lowBalanceThresholdKobo": {
+            "type": "number",
+            "nullable": true,
+            "description": "Alert when available balance falls below this (kobo); null turns it off.",
+            "minimum": 0,
+            "maximum": 100000000000
+          }
+        },
+        "required": [
+          "lowBalanceThresholdKobo"
+        ]
+      },
+      "FundingAccountView": {
+        "type": "object",
+        "properties": {
+          "bankName": {
+            "type": "string"
+          },
+          "accountNumber": {
+            "type": "string"
+          },
+          "accountName": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bankName",
+          "accountNumber",
+          "accountName",
+          "createdAt"
+        ]
+      },
+      "FileClaimDto": {
+        "type": "object",
+        "properties": {
+          "shipmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "description": "`lost`, `damaged` or `missing_item`.",
+            "enum": [
+              "lost",
+              "damaged",
+              "missing_item"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "What happened: 10–2000 characters.",
+            "minLength": 10,
+            "maxLength": 2000
+          },
+          "evidence": {
+            "description": "Up to 10 upload ids from `POST /claims/uploads` (photos, PDFs).",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        },
+        "required": [
+          "shipmentId",
+          "type",
+          "description"
+        ]
+      },
+      "ClaimView": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "lost",
+              "damaged",
+              "missing_item"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "shipmentId": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "trackingCode": {
+            "type": "string"
+          },
+          "source": {
+            "description": "`merchant` (you filed it) or `exception` (Locoomo opened it).",
+            "enum": [
+              "merchant",
+              "exception"
+            ],
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "declaredValueKobo": {
+            "type": "number",
+            "nullable": true
+          },
+          "maxPayoutKobo": {
+            "type": "number",
+            "description": "The most this claim can pay: the declared value, capped."
+          },
+          "payoutKobo": {
+            "type": "number",
+            "nullable": true,
+            "description": "Credited to the wallet, once approved."
+          },
+          "decisionNote": {
+            "type": "string",
+            "nullable": true,
+            "description": "Locoomo's note with the decision."
+          },
+          "decidedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "status",
+          "id",
+          "shipmentId",
+          "reference",
+          "trackingCode",
+          "source",
+          "description",
+          "evidence",
+          "declaredValueKobo",
+          "maxPayoutKobo",
+          "payoutKobo",
+          "decisionNote",
+          "decidedAt",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "ClaimListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClaimView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "DecideTestClaimDto": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          },
+          "amountKobo": {
+            "type": "number",
+            "description": "Approve only. Defaults to the most the claim can pay.",
+            "minimum": 1,
+            "maximum": 1000000000
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "ReturnNodeView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "address",
+          "city"
+        ]
+      },
+      "ReturnItemView": {
+        "type": "object",
+        "properties": {
+          "returnBatch": {
+            "type": "object",
+            "nullable": true
+          },
+          "shipmentId": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "trackingCode": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "returnReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "readyForCollectionAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "storageFeesFrom": {
+            "type": "string",
+            "nullable": true,
+            "description": "Storage is charged daily from here (10 working days after it was ready)."
+          },
+          "disposeAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "Disposed of at this time if still not collected."
+          },
+          "node": {
+            "$ref": "#/components/schemas/ReturnNodeView"
+          }
+        },
+        "required": [
+          "returnBatch",
+          "shipmentId",
+          "reference",
+          "trackingCode",
+          "status",
+          "returnReason",
+          "readyForCollectionAt",
+          "storageFeesFrom",
+          "disposeAt",
+          "node"
+        ]
+      },
+      "ReturnItemListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReturnItemView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "CreateReturnBatchDto": {
+        "type": "object",
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "description": "The Node the returns are waiting at.",
+            "format": "uuid"
+          },
+          "shipmentIds": {
+            "description": "1–200 shipments, all `return_ready` at that Node.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "required": [
+          "nodeId",
+          "shipmentIds"
+        ]
+      },
+      "ReturnBatchShipmentView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "trackingCode": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "collectedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "trackingCode",
+          "status",
+          "collectedAt"
+        ]
+      },
+      "ReturnBatchView": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "enum": [
+              "open",
+              "collected",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "shipments": {
+            "description": "On GET /return-batches/{id} and after create.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReturnBatchShipmentView"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string",
+            "description": "Public; Node staff look the batch up by it."
+          },
+          "node": {
+            "$ref": "#/components/schemas/ReturnNodeView"
+          },
+          "code": {
+            "type": "string",
+            "nullable": true,
+            "description": "The 6-digit collection code, while open."
+          },
+          "codeExpiresAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "shipmentCount": {
+            "type": "number"
+          },
+          "collectedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "id",
+          "reference",
+          "node",
+          "code",
+          "codeExpiresAt",
+          "shipmentCount",
+          "collectedAt",
+          "collectorName",
+          "createdAt"
+        ]
+      },
+      "ReturnBatchListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReturnBatchView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "CreateManifestDto": {
+        "type": "object",
+        "properties": {
+          "hubNodeId": {
+            "type": "string",
+            "description": "Defaults to your assigned hub.",
+            "format": "uuid"
+          },
+          "expectedDropAt": {
+            "type": "string",
+            "description": "When the truck should arrive (informational)."
+          },
+          "shipmentIds": {
+            "description": "Up to 1,000 shipments now; add more later. Each must be `created`.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "ManifestHubView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "address",
+          "city"
+        ]
+      },
+      "ManifestView": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "enum": [
+              "open",
+              "closed",
+              "received",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string",
+            "description": "MF-XXXX-XXXX, printed on the manifest; the hub scans it."
+          },
+          "hub": {
+            "$ref": "#/components/schemas/ManifestHubView"
+          },
+          "expectedDropAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "shipmentCount": {
+            "type": "number"
+          },
+          "receivedCount": {
+            "type": "number"
+          },
+          "unexpectedCount": {
+            "type": "number"
+          },
+          "missingCount": {
+            "type": "number",
+            "nullable": true,
+            "description": "Once the hub has finished (`received`)."
+          },
+          "closedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "receivedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "id",
+          "reference",
+          "hub",
+          "expectedDropAt",
+          "shipmentCount",
+          "receivedCount",
+          "unexpectedCount",
+          "missingCount",
+          "closedAt",
+          "receivedAt",
+          "createdAt"
+        ]
+      },
+      "AddManifestShipmentsDto": {
+        "type": "object",
+        "properties": {
+          "shipmentIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "required": [
+          "shipmentIds"
+        ]
+      },
+      "ManifestListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "SimulateManifestReceiptDto": {
+        "type": "object",
+        "properties": {
+          "missingShipmentIds": {
+            "description": "Leave these out of the truck, to see `missing`.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "ManifestShipmentRef": {
+        "type": "object",
+        "properties": {
+          "shipmentId": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "shipmentId",
+          "reference"
+        ]
+      },
+      "ManifestReceiptView": {
+        "type": "object",
+        "properties": {
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestShipmentRef"
+            }
+          },
+          "unexpected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestShipmentRef"
+            }
+          },
+          "manifestId": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "received": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "missing",
+          "unexpected",
+          "manifestId",
+          "reference",
+          "received"
+        ]
+      },
+      "CreateExportDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ExportLinkView": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreatePickLinkDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ShipmentImportView": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "enum": [
+              "json",
+              "csv"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "processing",
+              "done",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "test",
+              "live"
+            ],
+            "type": "string"
+          },
+          "fileName": {
+            "type": "string",
+            "nullable": true
+          },
+          "totalRows": {
+            "type": "number"
+          },
+          "created": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "number"
+          },
+          "pending": {
+            "type": "number"
+          },
+          "failureReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why the whole import stopped, when it did."
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "completedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "source",
+          "status",
+          "id",
+          "mode",
+          "fileName",
+          "totalRows",
+          "created",
+          "failed",
+          "pending",
+          "failureReason",
+          "createdAt",
+          "completedAt"
+        ]
+      },
+      "ShipmentImportListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShipmentImportView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "ShipmentImportRowView": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "enum": [
+              "pending",
+              "created",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "index": {
+            "type": "number"
+          },
+          "line": {
+            "type": "number",
+            "nullable": true,
+            "description": "CSV line (1 = header); null for JSON imports."
+          },
+          "reference": {
+            "type": "string",
+            "nullable": true
+          },
+          "shipmentId": {
+            "type": "string",
+            "nullable": true
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "index",
+          "line",
+          "reference",
+          "shipmentId",
+          "error"
+        ]
+      },
+      "ShipmentImportRowListView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShipmentImportRowView"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ]
+      },
+      "DiscountTierDto": {
+        "type": "object",
+        "properties": {
+          "minShipments": {
+            "type": "number",
+            "minimum": 0
+          },
+          "percent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 50
+          }
+        },
+        "required": [
+          "minShipments",
+          "percent"
+        ]
+      },
+      "MerchantDiscountView": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "enum": [
+              "tier",
+              "negotiated"
+            ],
+            "type": "string"
+          },
+          "percent": {
+            "type": "number"
+          },
+          "basis": {
+            "type": "object",
+            "properties": {
+              "month": {
+                "type": "string"
+              },
+              "shipments": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "month",
+              "shipments"
+            ]
+          },
+          "tier": {
+            "$ref": "#/components/schemas/DiscountTierDto"
+          },
+          "nextTier": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DiscountTierDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "source",
+          "percent",
+          "basis",
+          "tier",
+          "nextTier"
+        ]
+      }
+    }
+  }
+}
