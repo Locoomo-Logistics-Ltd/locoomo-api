@@ -73,6 +73,13 @@ import { ManifestService } from './application/manifest.service';
 import { ReturnStorageService } from './application/return-storage.service';
 import { MerchantOverviewService } from './application/merchant-overview.service';
 import { MerchantReportsService } from './application/merchant-reports.service';
+import { GoLiveChecklistService } from './application/go-live-checklist.service';
+import { PickLinkService } from './application/pick-link.service';
+import {
+  PickLinksController,
+  PublicPickController,
+} from './interface/pick-links.controller';
+import { PickLinkEntity } from './infrastructure/entities/pick-link.entity';
 import {
   ExportDownloadController,
   ReportsController,
@@ -145,6 +152,7 @@ import { WebhooksController } from './interface/webhooks.controller';
   imports: [
     TypeOrmModule.forFeature([
       MerchantEntity,
+      PickLinkEntity,
       MerchantMemberEntity,
       MerchantInviteEntity,
       MerchantDirectorEntity,
@@ -225,6 +233,8 @@ import { WebhooksController } from './interface/webhooks.controller';
     HubManifestsController,
     ReportsController,
     ExportDownloadController,
+    PickLinksController,
+    PublicPickController,
     ShipmentImportsController,
     MerchantPricingController,
     AdminMerchantPricingController,
@@ -266,6 +276,8 @@ import { WebhooksController } from './interface/webhooks.controller';
     ReturnStorageService,
     MerchantOverviewService,
     MerchantReportsService,
+    GoLiveChecklistService,
+    PickLinkService,
     ShipmentLabelService,
     ShipmentImportService,
     MerchantPricingService,

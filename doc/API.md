@@ -2541,6 +2541,27 @@ collected (or collected back by its sender) more than 30 days ago — deliberate
 that parcel. Check the code and try again." message. `400 VALIDATION_FAILED` (neither or
 both of `t`/`phoneLast4`, or `phoneLast4` not 4 digits), `429 RATE_LIMITED`.
 
+
+## Public pick links
+
+A merchant without a checkout shares a link; the buyer opens
+`{FRONTEND_URL}/pick/:token` (consumer web app), picks a Node, and the merchant's shipment is
+created then. Merchant side: [MERCHANT_API.md §7.6](MERCHANT_API.md); screens:
+[MERCHANT_FRONTEND_GUIDE.md §15f](MERCHANT_FRONTEND_GUIDE.md). **Public — no session**; the
+token (32 URL-safe characters, stored hashed) is the credential. One use, 7 days. Same page
+rules as tracking: `noindex`, `Referrer-Policy: no-referrer`, never store the token.
+
+| Endpoint | Rate limit | Response `data` |
+|---|---|---|
+| `GET /api/v1/pick/:token` | 60/min per IP | `{ status: open\|used\|cancelled\|expired, merchantName, receiverFirstName, parcel: { description, size }, hidePrices, expiresAt, picked: { trackingCode, nodeName } \| null }` |
+| `GET /api/v1/pick/:token/nodes?near=lat,lng&q=&limit=` | 60/min | Nodes within 25 km, nearest first: `{ id, name, address, city, state, latitude, longitude, distanceKm, priceKobo \| null }`. `410` unless open |
+| `POST /api/v1/pick/:token` `{ destinationNodeId }` | 10/min | `{ trackingCode, nodeName }`. The link is claimed atomically; if creation fails it reopens |
+
+Errors: `404 NOT_FOUND` (unknown token), `410 PICK_LINK_UNAVAILABLE` (`details.status`),
+`422 PICK_LINK_FAILED` (`details.reason`, e.g. `DESTINATION_NODE_UNAVAILABLE`; the buyer can pick
+again). The shipment is created as the link's creator (their user or API key), so it shows
+in the merchant's audit trail; the pick itself is audited as `merchant.pick_link_used`.
+
 ## Earnings (revenue split)
 
 Every `completed` order produces four `revenue_split_entries` rows at the exact moment it

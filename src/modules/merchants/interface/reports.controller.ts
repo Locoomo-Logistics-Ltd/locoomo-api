@@ -22,6 +22,10 @@ import {
   ReportSummary,
 } from '../application/merchant-reports.service';
 import type { MerchantCaller } from '../application/merchant-state';
+import {
+  GoLiveChecklist,
+  GoLiveChecklistService,
+} from '../application/go-live-checklist.service';
 import { ApiKeyScope } from '../domain/api-key';
 import { MerchantPermission } from '../domain/merchant-permissions';
 import {
@@ -63,7 +67,19 @@ export class ExportLinkView {
 @UseGuards(MerchantGuard)
 @RequireVerifiedEmail()
 export class ReportsController {
-  constructor(private readonly reports: MerchantReportsService) {}
+  constructor(
+    private readonly reports: MerchantReportsService,
+    private readonly checklist: GoLiveChecklistService,
+  ) {}
+
+  /** What's left before your first live parcel (MERCHANT_API.md §17). */
+  @Get('go-live-checklist')
+  @MerchantApi(ApiKeyScope.SHIPMENTS_READ, MerchantPermission.SHIPMENTS_READ)
+  goLive(
+    @CurrentMerchantCaller() caller: MerchantCaller,
+  ): Promise<GoLiveChecklist> {
+    return this.checklist.checklist(caller.merchantId);
+  }
 
   @Get('reports/summary')
   @MerchantApi(ApiKeyScope.SHIPMENTS_READ, MerchantPermission.SHIPMENTS_READ)

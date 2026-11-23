@@ -2399,6 +2399,207 @@ describe('Live merchant shipments (e2e)', () => {
     });
   });
 
+  describe('go-live checklist and pick links (M7)', () => {
+    interface Checklist {
+      ready: boolean;
+      items: {
+        key: string;
+        kind: string;
+        required: boolean;
+        done: boolean | null;
+      }[];
+    }
+    interface Link {
+      id: string;
+      reference: string;
+      status: string;
+      url: string;
+      hidePrices: boolean;
+      shipmentId: string | null;
+    }
+    const pub = {
+      get: (path: string) => http().get(`/api/v1/pick/${path}`),
+      post: (token: string, body: object) =>
+        http()
+          .post(`/api/v1/pick/${token}`)
+          .set('X-Locoomo-Client', 'web')
+          .send(body),
+    };
+    const tokenOf = (link: Link): string => link.url.split('/pick/')[1];
+    const draft = (reference: string) => ({
+      reference,
+      origin: { type: 'node', nodeId: node.origin },
+      receiver: {
+        name: 'Ngozi Adeyemi',
+        phone: '08035550123',
+        email: `pick+${randomUUID().slice(0, 6)}@${DOMAIN}`,
+      },
+      parcel: { description: 'Sandals', size: 'small', weightKg: 0.6 },
+    });
+    const newLink = async (reference: string, extra: object = {}) =>
+      data<Link>(
+        await live
+          .post('/pick-links', { shipment: draft(reference), ...extra })
+          .expect(201),
+      );
+
+    it('lists what stands between the merchant and live', async () => {
+      const list = data<Checklist>(
+        await live.get('/go-live-checklist').expect(200),
+      );
+      const item = (key: string) => list.items.find((i) => i.key === key);
+      expect(item('approved')?.done).toBe(true);
+      expect(item('wallet_funded')?.done).toBe(true);
+      // The owner has no 2FA factor and there is no live secret key.
+      expect(item('two_factor')?.done).toBe(false);
+      expect(item('live_secret_key')?.done).toBe(false);
+      expect(item('webhook_dedupe')).toMatchObject({
+        kind: 'manual',
+        done: null,
+      });
+      expect(list.ready).toBe(false);
+    });
+
+    it('lets the buyer pick their Node, then creates the shipment', async () => {
+      const reference = `P-${randomUUID().slice(0, 8)}`;
+      const link = await newLink(reference);
+      expect(link).toMatchObject({
+        reference,
+        status: 'open',
+        shipmentId: null,
+      });
+      expect(link.url).toMatch(/\/pick\/[A-Za-z0-9_-]{32}$/);
+      const token = tokenOf(link);
+
+      // The same reference can't be reused while the link is open.
+      const dup = await live
+        .post('/pick-links', { shipment: draft(reference) })
+        .expect(409);
+      expect(code(dup)).toBe('DUPLICATE_REFERENCE');
+
+      const page = data<Record<string, unknown>>(
+        await pub.get(token).expect(200),
+      );
+      expect(page).toMatchObject({
+        status: 'open',
+        merchantName: 'Live Stores',
+        receiverFirstName: 'Ngozi',
+        parcel: { description: 'Sandals', size: 'small' },
+        picked: null,
+      });
+      // Only the first name: no phone, email or surname.
+      expect(JSON.stringify(page)).not.toMatch(/0803|Adeyemi|@/);
+
+      const nodes = data<{ id: string; priceKobo: number | null }[]>(
+        await pub.get(`${token}/nodes?near=7.5,3.95`).expect(200),
+      );
+      const choice = nodes.find((n) => n.id === node.destination);
+      expect(choice?.priceKobo).toBeGreaterThan(0);
+
+      const before = await wallet();
+      const picked = data<{ trackingCode: string; nodeName: string }>(
+        await pub
+          .post(token, { destinationNodeId: node.destination })
+          .expect(200),
+      );
+      expect(picked.nodeName).toBe(`${NODE_PREFIX}Destination`);
+      const after = await wallet();
+      expect(after.heldKobo).toBeGreaterThan(before.heldKobo);
+
+      const used = data<Link>(
+        await live.get(`/pick-links/${link.id}`).expect(200),
+      );
+      expect(used.status).toBe('used');
+      const s = await shipment(used.shipmentId!);
+      expect(s).toMatchObject({ reference, trackingCode: picked.trackingCode });
+
+      // One use only; the page now shows where it's going.
+      expect(
+        code(
+          await pub
+            .post(token, { destinationNodeId: node.destination })
+            .expect(410),
+        ),
+      ).toBe('PICK_LINK_UNAVAILABLE');
+      expect(
+        data<{ status: string; picked: unknown }>(
+          await pub.get(token).expect(200),
+        ),
+      ).toMatchObject({
+        status: 'used',
+        picked: { trackingCode: picked.trackingCode },
+      });
+      await live.post(`/shipments/${s.id}/cancel`).expect(200);
+    });
+
+    it('validates the draft like a shipment and hides prices on request', async () => {
+      const bad = await live
+        .post('/pick-links', {
+          shipment: { ...draft(`P-${randomUUID().slice(0, 8)}`), receiver: {} },
+        })
+        .expect(400);
+      expect(JSON.stringify(bad.body)).toMatch(/shipment\.receiver\./);
+
+      const link = await newLink(`P-${randomUUID().slice(0, 8)}`, {
+        hidePrices: true,
+      });
+      const nodes = data<{ id: string; priceKobo: number | null }[]>(
+        await pub.get(`${tokenOf(link)}/nodes?near=7.5,3.95`).expect(200),
+      );
+      expect(nodes.length).toBeGreaterThan(0);
+      expect(nodes.every((n) => n.priceKobo === null)).toBe(true);
+    });
+
+    it('reopens the link when the pick fails, and honours cancel and expiry', async () => {
+      const link = await newLink(`P-${randomUUID().slice(0, 8)}`);
+      const token = tokenOf(link);
+      // A Node that can't take it: refused, and the link stays usable.
+      const failed = await pub
+        .post(token, { destinationNodeId: randomUUID() })
+        .expect(422);
+      expect(code(failed)).toBe('PICK_LINK_FAILED');
+      expect(
+        data<Link>(await live.get(`/pick-links/${link.id}`).expect(200)).status,
+      ).toBe('open');
+
+      const cancelled = data<Link>(
+        await live.post(`/pick-links/${link.id}/cancel`).expect(200),
+      );
+      expect(cancelled.status).toBe('cancelled');
+      expect(
+        code(
+          await pub
+            .post(token, { destinationNodeId: node.destination })
+            .expect(410),
+        ),
+      ).toBe('PICK_LINK_UNAVAILABLE');
+      expect(
+        code(await live.post(`/pick-links/${link.id}/cancel`).expect(410)),
+      ).toBe('PICK_LINK_UNAVAILABLE');
+
+      const old = await newLink(`P-${randomUUID().slice(0, 8)}`);
+      await dataSource.query(
+        `UPDATE pick_links SET "expiresAt" = now() - interval '1 minute' WHERE id = $1`,
+        [old.id],
+      );
+      expect(
+        data<{ status: string }>(await pub.get(tokenOf(old)).expect(200))
+          .status,
+      ).toBe('expired');
+      await pub.get(`${tokenOf(old)}/nodes`).expect(410);
+      // An expired link frees its reference.
+      await newLink(old.reference);
+
+      await pub.get('A'.repeat(32)).expect(404);
+      const listed = data<{ items: Link[] }>(
+        await live.get('/pick-links?limit=50').expect(200),
+      );
+      expect(listed.items.map((l) => l.id)).toEqual(
+        expect.arrayContaining([link.id, old.id]),
+      );
+    });
+  });
+
   it('leaves the wallet ledger balanced', async () => {
     const drift = await app.get(WalletReconciliationService).run();
     expect(drift.filter((d) => d.merchantId === merchantId)).toEqual([]);

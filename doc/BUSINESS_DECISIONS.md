@@ -18,6 +18,7 @@ not built yet · ⚖️ needs a legal/regulatory answer before production
 | 2 | SMS to buyers | Sent as "Locoomo", with the merchant's name in the message; Locoomo pays for SMS | ✅ | Commercial | Sender name; whether to pass SMS cost on |
 | 3 | Return of an uncollected parcel | The trip back to the merchant is free | ✅ | Commercial | That returns stay free |
 | 4 | Buyer's Node full or closed | Parcel rerouted to a nearby Node; **Locoomo absorbs any price difference** | ✅ | Commercial / ops | That we absorb the difference |
+| 4a | Pick links (seller sends the buyer a link to choose their Node) | Each link works once and expires after **7 days**. The buyer sees their first name, the item and the seller's name; the seller chooses whether delivery prices are shown. The fee is taken from the seller's wallet only when the buyer picks | ✅ | Commercial / product | The 7 days; showing prices by default |
 
 ## Money and tax
 
@@ -40,6 +41,7 @@ not built yet · ⚖️ needs a legal/regulatory answer before production
 | 14 | Delivery fee when a parcel is lost | **Not refunded** today (the claim covers the goods only). Recommended default: refund the delivery fee too when a claim for a lost parcel is approved | 🛠 | Commercial | Refund the fee or not |
 | 15 | Prohibited items | Nodes refuse at the counter (no charge). Default list: cash and negotiable instruments; firearms, ammunition and weapons; drugs and controlled substances; flammable, explosive or hazardous materials; perishable food; live animals; counterfeit goods; anything illegal to ship in Nigeria | 🛠 ⚖️ | Legal / ops | The list (goes in the merchant terms and Node training) |
 | 16 | Consumer parcel refused or lost (not merchants) | Recommended default: refused at drop-off → full refund to the original payment; lost or damaged in our care → full refund of the delivery fee, plus goods up to ₦50,000 on a claim | 🛠 | Finance / ops | The policy (then we build it) |
+| 27 | Pick links (seller sends the buyer a link to choose their Node) | Each link works **once, for 7 days**. The buyer sees the seller's name, their own first name and the item. Delivery prices are shown unless the seller hides them. The merchant is charged only when the buyer picks | ✅ | Commercial | The 7 days; whether buyers should see prices by default |
 
 ## Legal and privacy
 

@@ -105,6 +105,13 @@ a prepaid wallet.
 
 When that loop works, follow the [go-live checklist](#17-go-live-checklist).
 
+**OpenAPI and Postman.** The contract is served as OpenAPI 3 at
+`GET /api/v1/merchant/openapi.json` (for code generators such as openapi-typescript) and as a
+ready-made Postman collection at `GET /api/v1/merchant/postman.json`. Import the collection,
+set its `secretKey` variable to your `sk_test_…` key, and every endpoint is there, grouped as
+in this guide, with example bodies and an `Idempotency-Key` on each POST. Both are generated
+from the code, so they always match the API.
+
 ---
 
 ## 3. Versioning and stability
@@ -612,6 +619,66 @@ time you started.
 
 A cancel that races with the drop-off scan has one winner. If the parcel was scanned
 first, you get `409 SHIPMENT_NOT_CANCELLABLE`; use return-to-sender instead.
+
+### 7.6 Pick links: let the buyer choose their Node
+
+No checkout to put a Node picker in (you sell on WhatsApp or Instagram)? Create a **pick
+link** and send it to the buyer. They open it, choose the Node nearest them, and the
+shipment is created at that moment, exactly as if you had called `POST /shipments`: the fee
+is held on your wallet, `shipment.created` fires and the buyer is told how to collect.
+
+```bash
+curl https://api.locoomo.com/api/v1/merchant/pick-links \
+  -H "Authorization: Bearer sk_test_…" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: 0b8e6f8e-2b1a-4b8e-9d55-6a4f3f1e0c21" \
+  -d '{
+    "shipment": {
+      "reference": "IG-2041",
+      "origin": { "type": "node", "nodeId": "<the Node you drop at>" },
+      "receiver": { "name": "Ngozi Adeyemi", "phone": "08035550123" },
+      "parcel": { "description": "Sandals", "size": "small", "weightKg": 0.6 }
+    },
+    "hidePrices": false
+  }'
+```
+
+`shipment` is a `POST /shipments` body **without** `destinationNodeId`. It's checked now, so
+mistakes surface to you, not to the buyer (`400 VALIDATION_FAILED`, fields prefixed
+`shipment.`). The response:
+
+```json
+{
+  "id": "5f0c…",
+  "reference": "IG-2041",
+  "status": "open",
+  "url": "https://locoomo.com/pick/q8V0c3n9…",
+  "receiverName": "Ngozi Adeyemi",
+  "hidePrices": false,
+  "expiresAt": "2026-11-30T10:00:00.000Z",
+  "shipmentId": null,
+  "usedAt": null,
+  "createdAt": "2026-11-23T10:00:00.000Z"
+}
+```
+
+- **One use, 7 days.** `status` is `open`, `used` (then `shipmentId` is set), `cancelled`
+  or `expired`.
+- **The reference is reserved** while the link is open: another link or shipment with it is
+  `409 DUPLICATE_REFERENCE`. An expired link frees it.
+- **What the buyer sees:** your trading name, their first name, the parcel description and
+  size, and the Nodes near them. With `"hidePrices": true` no prices are shown; otherwise
+  each Node shows the delivery price you'll be charged.
+- **If the pick can't go through** (the Node can't take it, your wallet can't cover it, your
+  account is paused), the buyer is asked to pick again or to contact you, and the link stays
+  open. Watch your wallet so this doesn't happen.
+
+| Endpoint | |
+|---|---|
+| `POST /pick-links` | Create (scope `shipments:write`) |
+| `GET /pick-links` | Newest first, `limit` (≤ 100) and `cursor` |
+| `GET /pick-links/{id}` | One link, with its `url` |
+| `POST /pick-links/{id}/cancel` | Only while `open`, otherwise `410 PICK_LINK_UNAVAILABLE` |
 
 ---
 
@@ -1322,7 +1389,8 @@ Prohibited items (listed in the merchant terms) are refused at drop-off.
 | 403 | `MERCHANT_NOT_APPROVED` | Live mode before approval |
 | 403 | `MERCHANT_SUSPENDED` | Contact support. Reads still work and in-flight parcels continue |
 | 404 | `NOT_FOUND` | Unknown id, or it belongs to the other mode |
-| 409 | `DUPLICATE_REFERENCE` | `reference` already used; `existingShipmentId` included |
+| 409 | `DUPLICATE_REFERENCE` | `reference` already used; `existingShipmentId` included (or `existingPickLinkId` when an open pick link holds it) |
+| 410 | `PICK_LINK_UNAVAILABLE` | The pick link was used, cancelled or has expired (§7.6) |
 | 409 | `SHIPMENT_NOT_CANCELLABLE` | Already dropped off; use return-to-sender |
 | 409 | `SHIPMENT_NOT_EDITABLE` | That field can't change in the current status |
 | 409 | `SHIPMENT_NOT_RETURNABLE` | Return to sender only from `received` to `ready_for_collection` |
@@ -1368,7 +1436,27 @@ status.
 
 ## 17. Go-live checklist
 
-The dashboard's *Home* shows these as a checklist (`GET /go-live-checklist`):
+The dashboard's *Home* shows these as a checklist. `GET /go-live-checklist` returns the
+same, checked live against your account:
+
+```json
+{
+  "ready": false,
+  "items": [
+    { "key": "approved", "label": "Account approved", "kind": "auto", "required": true, "done": true, "hint": "…" },
+    { "key": "live_webhook", "label": "Live webhook endpoint answering", "kind": "auto", "required": true, "done": false, "hint": "…" },
+    { "key": "webhook_dedupe", "label": "Webhooks deduplicated and in order", "kind": "manual", "required": false, "done": null, "hint": "…" }
+  ]
+}
+```
+
+`kind: "auto"` items we check: `approved`, `two_factor`, `live_secret_key`, `live_webhook`
+(a live endpoint has answered 2xx), `wallet_funded`, `low_balance_alert` (optional),
+`test_collected`, `test_returned`, `hub_assigned` (optional). `kind: "manual"` items only you
+can know (`done: null`). `ready` is true once every required automatic item is done.
+Tolerate new keys.
+
+The list:
 
 - [ ] Account **approved** (business details, CAC for businesses, owner/director ID, bank
       account, terms accepted; see below)
@@ -1405,6 +1493,7 @@ error or response.
 
 | Date | Change |
 |---|---|
+| 2026-11-23 | **Pick links** (§7.6): `POST /pick-links` and friends. Share a link; the buyer picks their Node and the shipment is created then. **Go-live checklist API** (§17): `GET /go-live-checklist`. **Postman collection** (§2) at `GET /api/v1/merchant/postman.json`, generated with the OpenAPI document. `DUPLICATE_REFERENCE` may carry `existingPickLinkId` |
 | 2026-11-16 | **Data retention** (§7): receiver details are redacted 180 days after a shipment finishes; sandbox shipments, manifests and return batches are deleted after 90 days |
 | 2026-11-16 | **Reports and exports** (§14.3): `GET /reports/summary` (volumes, collection rate, median times, spend, top destinations) and CSV exports of shipments or wallet lines through a 15-minute signed link |
 | 2026-11-16 | **Storage fees and disposal for uncollected returns** (§11.3): ₦100 per parcel per day after 10 free working days (`storage_fee` wallet lines, on your monthly invoice), disposal 30 days later (`shipment.disposed`), with email notices. `return.storageFeesFrom` and `return.disposeAt` on shipments and `GET /returns` |
