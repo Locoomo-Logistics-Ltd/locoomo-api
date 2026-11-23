@@ -452,6 +452,13 @@ describe('Earnings (e2e)', () => {
           { pattern: nodeNamePattern },
         )
         .execute();
+      // Learned road distances reference Nodes too.
+      await orderEvents.query(
+        `DELETE FROM node_route_distances
+          WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)
+             OR "destinationNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)`,
+        [nodeNamePattern],
+      );
       await nodes
         .createQueryBuilder()
         .delete()
