@@ -903,6 +903,29 @@ describe('Live merchant shipments (e2e)', () => {
   });
 
   describe('drop-off at another Node and re-pricing (M4c2)', () => {
+    it("refuses a merchant parcel at a private Node (it serves only its owner's parcels)", async () => {
+      const s = await create();
+      const orderId = (await orderOf(s.trackingCode)).id;
+      await dataSource.query(
+        `UPDATE nodes SET "isPubliclyVisible" = false WHERE id = $1`,
+        [node.elsewhere],
+      );
+      try {
+        const refused = await handoff(
+          elsewhereOperator,
+          orderId,
+          'drop-off',
+        ).expect(422);
+        expect(code(refused)).toBe('PRIVATE_NODE_DROP_OFF');
+      } finally {
+        await dataSource.query(
+          `UPDATE nodes SET "isPubliclyVisible" = true WHERE id = $1`,
+          [node.elsewhere],
+        );
+      }
+      await live.post(`/shipments/${s.id}/cancel`).expect(200);
+    });
+
     it('re-homes a parcel dropped at another Node and charges the re-priced fee', async () => {
       const before = await wallet();
       const declaredSlots = await originCount();

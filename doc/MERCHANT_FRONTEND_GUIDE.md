@@ -48,6 +48,7 @@ something UI-related; tell backend.)
 15d. [Reports and exports](#15d-reports-and-exports)
 15e. [Go-live checklist (Home)](#15e-go-live-checklist-home)
 15f. [Pick links](#15f-pick-links)
+15g. [Public "Find a Node" page](#15g-public-find-a-node-page)
 16. [Coming next 🛠](#16-coming-next-)
 
 **Part C: Admin app**
@@ -2224,6 +2225,37 @@ WhatsApp.
    - `410 PICK_LINK_UNAVAILABLE`: reload the page (someone already picked, or it expired).
    - `429`: "Too many tries. Wait a minute."
 
+## 15g. Public "Find a Node" page
+
+✅ Ready. For the public website or consumer web app, signed out. No credentials, no
+`X-Locoomo-Client` header (GET only). Full reference: [API.md › Public Node
+directory](API.md#public-node-directory).
+
+- **List:** **`GET /api/v1/public/nodes`** with any of `q` (search box), `state`, `city`,
+  `near=lat,lng` + `radiusKm` ("Use my location"), `acceptingParcels=true` ("Has space now"
+  toggle), `sort` (`distance` \| `name` \| `city` \| `state`) and `order` (`asc` \| `desc`),
+  `limit` (≤ 100) and `cursor` → `{ items: PublicNode[], nextCursor, hasMore }`. Offer
+  "Nearest" as a sort only once you have a location (`sort=distance` without `near` is `400`).
+  Debounce the search box (300 ms); the API allows 60 requests a minute per visitor.
+- **Filters:** fill the State and City menus from **`GET /api/v1/public/nodes/locations`**
+  (`[{ state, count, cities: [{ city, count }] }]`); show counts, e.g. "Ikeja (6)".
+- **Detail:** **`GET /api/v1/public/nodes/{id}`** for a shareable Node page.
+
+```ts
+interface PublicNode {
+  id: string;
+  name: string;
+  address: string;
+  city: string;
+  state: string;
+  latitude: number;
+  longitude: number;
+  openingHours: OpeningHours | null; // §20
+  acceptingParcels: boolean; // false: full right now ("Full today" chip)
+  distanceKm: number | null; // only with `near`
+}
+```
+
 ---
 
 ## 16. Coming next 🛠
@@ -3431,6 +3463,7 @@ All under `/api/v1`. "Mode" = sends `Locoomo-Mode`. "Step-up" = may answer `REAU
 | POST / GET | `/merchant/pick-links`, `/merchant/pick-links/:id` | `shipments.write` / `shipments.read` | Mode (§15f) |
 | POST | `/merchant/pick-links/:id/cancel` | `shipments.write` | Mode |
 | GET / POST | `/pick/:token`, `/pick/:token/nodes` (GET) | none (token) | The buyer's page, consumer web app (§15f) |
+| GET | `/public/nodes`, `/public/nodes/locations`, `/public/nodes/:id` | none | Public Node directory (§15g) |
 | GET | `/merchant/manifests`, `/merchant/manifests/:id`, `…/:id/document` | `shipments.read` | Mode; document is a PDF |
 | POST | `/merchant/manifests`, `…/:id/shipments`, `…/:id/close`, `…/:id/cancel` | `shipments.write` | Mode; Idempotency-Key on create/add |
 | POST | `/merchant/test/manifests/:id/receive` | `shipments.write` | Test only |

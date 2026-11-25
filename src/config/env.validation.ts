@@ -70,6 +70,13 @@ export const envSchema = z
       (value) => (value === '' ? undefined : value),
       z.coerce.number().int().min(0).default(10_000),
     ),
+    // Orders a private Node may have in a Lagos calendar month before ops
+    // are emailed to review converting it to public (the orders still go
+    // through). Default 50.
+    PRIVATE_NODE_MONTHLY_ORDER_LIMIT: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.coerce.number().int().min(1).default(50),
+    ),
     // Google Sign-In (identity/application/google-auth.service.ts) — the
     // OAuth client ID registered for this app, used as the `audience` when
     // verifying a Google ID token. Public value, not a secret; no client

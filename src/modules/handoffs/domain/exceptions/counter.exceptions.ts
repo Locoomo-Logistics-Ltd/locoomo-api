@@ -55,3 +55,14 @@ export class DropOffAtDestinationException extends BusinessException {
     );
   }
 }
+
+export class PrivateNodeDropOffException extends BusinessException {
+  readonly errorCode = 'PRIVATE_NODE_DROP_OFF';
+  readonly httpStatus = 422;
+
+  constructor() {
+    super(
+      'This is a private Node: it only sends its owner’s own parcels. Ask the sender to drop it at a public Node.',
+    );
+  }
+}

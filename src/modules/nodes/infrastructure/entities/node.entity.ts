@@ -117,6 +117,11 @@ export class NodeEntity {
   @Column({ type: 'boolean', default: true })
   isPubliclyVisible!: boolean;
 
+  // Private Nodes: the Lagos month ('YYYY-MM') ops were told this Node went
+  // over PRIVATE_NODE_MONTHLY_ORDER_LIMIT (once a month at most).
+  @Column({ type: 'varchar', length: 7, nullable: true })
+  privateLimitAlertedMonth!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

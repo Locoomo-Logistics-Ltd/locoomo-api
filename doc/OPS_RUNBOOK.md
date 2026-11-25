@@ -88,6 +88,17 @@ it stays red; it closes by itself when it clears.
 - **Claims:** Admin › Claims. Reject with a reason (one admin), or raise a payout (finance)
   for a second finance admin to approve. Payout ≤ the claim's `maxPayoutKobo`.
 
+### 4.2a A private Node over its monthly limit
+
+Email "Private Node over its monthly limit: <Node>" (checked hourly, once a month per Node;
+limit `PRIVATE_NODE_MONTHLY_ORDER_LIMIT`, default 50 orders in a Lagos month). Its orders keep
+going through. Call the owner named in the email, explain that at this volume the Node should be
+public (listed for buyers and merchants, and it then takes other senders' parcels), and when
+agreed set it public: Admin › Nodes › the Node › Public (`PATCH /nodes/:id
+{ "isPubliclyVisible": true }`). The owner can't switch it back to private for the rest of that
+month. If the owner refuses, note it on the Node and decide with commercial; nothing is blocked
+automatically.
+
 ### 4.3 A destination Node is full or closed
 
 Parcels dropped off for it wait at their origin (Admin › Reroutes). Pick one of the

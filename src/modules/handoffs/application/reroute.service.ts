@@ -227,15 +227,23 @@ export class RerouteService implements OnModuleInit, OnApplicationShutdown {
     await this.dataSource.transaction(async (manager) => {
       const order = await this.lockPending(manager, orderId);
       const [target] = await manager.query<
-        { status: string; capacity: number; held: number }[]
+        {
+          status: string;
+          capacity: number;
+          held: number;
+          isPubliclyVisible: boolean;
+        }[]
       >(
-        `SELECT status, capacity, "currentCount" + "destinationHeldCount" AS held
+        `SELECT status, capacity, "currentCount" + "destinationHeldCount" AS held,
+                "isPubliclyVisible"
            FROM nodes WHERE id = $1`,
         [input.destinationNodeId],
       );
       if (
         !target ||
         target.status !== 'active' ||
+        // A private Node serves only its owner's own parcels.
+        !target.isPubliclyVisible ||
         target.held >= target.capacity ||
         input.destinationNodeId === order.originNodeId ||
         input.destinationNodeId === order.destinationNodeId
@@ -384,6 +392,7 @@ export class RerouteService implements OnModuleInit, OnApplicationShutdown {
            FROM nodes n, nodes d
           WHERE d.id = $1 AND n.id <> d.id AND n.id <> $2
             AND n.status = 'active' AND n.location IS NOT NULL
+            AND n."isPubliclyVisible"
             AND n."currentCount" + n."destinationHeldCount" < n.capacity
           ORDER BY ST_Distance(n.location, d.location)
           LIMIT 3`,

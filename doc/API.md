@@ -1010,10 +1010,10 @@ Request (all optional): `name`, `address`, `city`, `state`, `country`, `latitude
 removes it), `forceLocation`. Changing any address field or the coordinates re-runs the
 [location check](#location-check) (`forceLocation: true` skips it — use this to correct a
 pin for an address Google doesn't know). `onboardingType` is immutable after
-creation and isn't accepted here. `isPubliclyVisible` also isn't accepted here — that's
-owner-toggled via `PATCH /node-operators/nodes/:nodeId/visibility` below, not
-Admin-set (Admin still sees the current value through this endpoint's response either
-way).
+creation and isn't accepted here. `isPubliclyVisible` **is** accepted: owners normally set
+it (at registration, or `PATCH /node-operators/nodes/:nodeId/visibility`), and ops use it here
+to convert a busy private Node to public after the "Private Node over its monthly limit"
+email.
 
 Response `200`, `data`: the updated Node, same shape as one list item.
 
@@ -1051,9 +1051,20 @@ server-side, not client-settable):
   "openingHours": {
     "mon": [{ "open": "08:00", "close": "19:00" }],
     "sat": [{ "open": "09:00", "close": "14:00" }]
-  }
+  },
+  "isPubliclyVisible": true
 }
 ```
+
+**Public or private.** `isPubliclyVisible` is optional and defaults to `true` (public: listed for
+everyone to send to and collect from). Send `false` to register a **private Node**: a shop's own
+counter, owned by the seller, that only sends and receives the owner's own parcels (via
+[dispatch](#post-apiv1node-operatorsnodesnodeiddispatch)). A private Node is never listed or
+offered to consumers or merchants, never used as a reroute target, and can't receive another
+sender's parcel at the counter. It is meant for small volumes: past
+`PRIVATE_NODE_MONTHLY_ORDER_LIMIT` orders in a Lagos calendar month (default **50**) ops are
+emailed to review making it public; orders keep going through meanwhile. Owners can change it
+later with `PATCH /node-operators/nodes/:nodeId/visibility`.
 
 `contactPhone` and `openingHours` are required, same rules as `POST /nodes`. The pin
 goes through the same [location check](#location-check) — show `400
@@ -1072,9 +1083,16 @@ Response `201`, `data`:
   "payoutBankCode": null,
   "payoutBankName": null,
   "payoutAccountNumber": null,
-  "payoutAccountName": null
+  "payoutAccountName": null,
+  "ordersThisMonth": null,
+  "privateMonthlyOrderLimit": null
 }
 ```
+
+`ordersThisMonth` (orders this Lagos month that start or end at the Node, cancelled ones
+excluded) is filled on `GET /node-operators/me/nodes` and the other owner views; `null` here.
+`privateMonthlyOrderLimit` is the monthly limit for a private Node (`null` for a public one):
+show "12 of 50 orders this month" on a private Node's dashboard.
 
 `payoutAccountConfigured`/`payoutBank*`/`payoutAccount*` are always unset at this point —
 see `PATCH /node-operators/nodes/:nodeId/payout-account` below. Frontend: use
@@ -1275,7 +1293,9 @@ either the origin or the destination) — for a Node that only wants to dispatch
 already-collected parcels through the network via `POST
 /node-operators/nodes/:nodeId/dispatch` below, not accept public drop-offs. Setting this
 doesn't touch any order already placed — same "enforced only at new-booking time, not
-retroactively" precedent as the destination-Node-full behavior.
+retroactively" precedent as the destination-Node-full behavior. A private Node also
+can't be a reroute target and can't take another sender's parcel at the counter; see
+[registration](#post-apiv1node-operatorsonboarding) for the monthly limit.
 
 Request:
 
@@ -1286,8 +1306,13 @@ Request:
 Response `200`, `data`: same shape as one `GET /node-operators/me/nodes` item, with
 `node.isPubliclyVisible` updated.
 
+Going private is refused for a Node that already has `PRIVATE_NODE_MONTHLY_ORDER_LIMIT` or
+more orders this Lagos month (`409 PRIVATE_NODE_LIMIT_REACHED`, `details: { ordersThisMonth,
+monthlyLimit }`): typically one ops just made public. It can go private again next month.
+Going public is always allowed.
+
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator), `400
-VALIDATION_FAILED`, `403 NODE_NOT_ACTIVE`, `404 NOT_FOUND` (`:nodeId` doesn't exist, or
+VALIDATION_FAILED`, `403 NODE_NOT_ACTIVE`, `409 PRIVATE_NODE_LIMIT_REACHED`, `404 NOT_FOUND` (`:nodeId` doesn't exist, or
 you don't have an owner membership there — same hide-as-not-found treatment as the
 payout-account route).
 
@@ -1329,10 +1354,11 @@ no Consumer account or app interaction on the sending side at all. Reuses the ex
 checkout flow `POST /payments/intents` uses underneath (Paystack hosted-redirect
 checkout, the same capacity-reservation transaction, the same fee calculation), just
 without a free-typed `originNodeId` — the origin is always `:nodeId` from the URL, so a
-dispatching operator can never point an order at a Node they don't run. Unlike Consumer
-bookings, the destination can be **any** active Node regardless of its own
-`isPubliclyVisible` value — dispatching to another private Node (e.g. a partner's
-internal station) is legitimate.
+dispatching operator can never point an order at a Node they don't run. The destination
+can be any active **public** Node, or a **private** Node with the same owner as `:nodeId`
+(a shop sending between its own branches). Another owner's private Node is `404
+NOT_FOUND`, the same as anywhere else: a private Node serves only its owner. (Before
+2026-11-25 any private Node was allowed here.)
 
 Request: same as `POST /payments/intents` **except no `originNodeId`**:
 
@@ -2540,6 +2566,67 @@ Errors: `404 NOT_FOUND` for an unknown code, a wrong `t`, wrong `phoneLast4`, or
 collected (or collected back by its sender) more than 30 days ago — deliberately identical, so show one "We couldn't find
 that parcel. Check the code and try again." message. `400 VALIDATION_FAILED` (neither or
 both of `t`/`phoneLast4`, or `phoneLast4` not 4 digits), `429 RATE_LIMITED`.
+
+
+## Public Node directory
+
+For the website's "Find a Node" page, a map, or anyone embedding the list. **Public — no
+session or key.** Only active Nodes that ops have marked publicly visible. Shows where a Node
+is, when it's open and whether it has space: no phone numbers, capacity figures or operator
+details (signed-in users get those from `GET /nodes`; merchants from the Merchant API).
+Rate-limited to 60 requests/min per IP; responses carry `Cache-Control: public, max-age=60`
+(locations: 300).
+
+### `GET /api/v1/public/nodes`
+
+| Query | |
+|---|---|
+| `q` | Search: name, address or city contains this (case-insensitive, ≤ 100 chars) |
+| `state`, `city` | Exact match, case-insensitive. Values from `/public/nodes/locations` |
+| `near` | `latitude,longitude`. Limits to `radiusKm` and fills `distanceKm` |
+| `radiusKm` | With `near`: 1–50, default 10 |
+| `acceptingParcels` | `true`: only Nodes with shelf space now; `false`: only full ones; omit for all |
+| `sort` | `distance` (needs `near`; the default when `near` is set), `name` (default otherwise), `city` (then name), `state` (then city, name) |
+| `order` | `asc` (default) or `desc` |
+| `limit`, `cursor` | 1–100, default 20; pass `nextCursor` back for the next page |
+
+Response `200`, `data`:
+
+```json
+{
+  "items": [
+    {
+      "id": "8b0e…",
+      "name": "Yaba Node",
+      "address": "12 Herbert Macaulay Way",
+      "city": "Yaba",
+      "state": "Lagos",
+      "latitude": 6.5095,
+      "longitude": 3.3711,
+      "openingHours": { "mon": [{ "open": "08:00", "close": "18:00" }] },
+      "acceptingParcels": true,
+      "distanceKm": 1.24
+    }
+  ],
+  "nextCursor": "eyJvIjoyMH0",
+  "hasMore": true
+}
+```
+
+`distanceKm` is `null` without `near`; `openingHours` can be `null` (see
+[Opening hours](#opening-hours)). `400 VALIDATION_FAILED` for an unknown `sort` or `order`,
+`sort=distance` without `near`, a malformed `near`, or `limit` over 100.
+
+### `GET /api/v1/public/nodes/locations`
+
+The states and cities that have a listed Node, with counts, for filter menus:
+`[{ "state": "Lagos", "count": 42, "cities": [{ "city": "Ikeja", "count": 6 }, …] }, …]`,
+alphabetical.
+
+### `GET /api/v1/public/nodes/:id`
+
+One Node, same shape as a list item (`distanceKm: null`). `404 NOT_FOUND` if it isn't active or
+isn't publicly visible. A full Node is still shown, with `acceptingParcels: false`.
 
 
 ## Public pick links

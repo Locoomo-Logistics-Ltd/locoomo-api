@@ -107,4 +107,10 @@ export class UpdateNodeDto {
   @IsInt()
   @Min(0)
   merchantDailyArrivalCap?: number | null;
+
+  // Admin: public (listed for everyone) or private (the owner's own
+  // dispatches only). Ops use this to convert a busy private Node.
+  @IsOptional()
+  @IsBoolean()
+  isPubliclyVisible?: boolean;
 }

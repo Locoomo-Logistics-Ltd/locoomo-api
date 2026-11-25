@@ -38,6 +38,12 @@ export class NodeOperatorResponseDto {
   payoutBankName!: string | null;
   payoutAccountNumber!: string | null;
   payoutAccountName!: string | null;
+  // Orders this Lagos month that start or end at this Node (cancelled
+  // excluded); null where the count wasn't read (e.g. right after onboarding).
+  ordersThisMonth!: number | null;
+  // Set for a private Node: past this many orders a month ops are asked to
+  // review making it public. Null for a public Node.
+  privateMonthlyOrderLimit!: number | null;
 
   // payout defaults to "not configured" — the onboarding/approval flows
   // that also call this never have payout details yet at that point.
@@ -56,15 +62,19 @@ export class NodeOperatorResponseDto {
     dto.payoutBankName = payout.payoutBankName;
     dto.payoutAccountNumber = payout.payoutAccountNumber;
     dto.payoutAccountName = payout.payoutAccountName;
+    dto.ordersThisMonth = null;
+    dto.privateMonthlyOrderLimit = null;
     return dto;
   }
 
   static fromRow(row: NodeOperatorProfileRow): NodeOperatorResponseDto {
-    return NodeOperatorResponseDto.fromEntity(
+    const dto = NodeOperatorResponseDto.fromEntity(
       row.profileId,
       row.roleAtNode,
       row as unknown as NodeEntityLike,
       row,
     );
+    dto.ordersThisMonth = row.ordersThisMonth;
+    return dto;
   }
 }

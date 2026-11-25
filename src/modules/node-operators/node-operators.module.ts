@@ -12,6 +12,8 @@ import { RemoveNodeStaffService } from './application/remove-node-staff.service'
 import { SetNodePayoutAccountService } from './application/set-node-payout-account.service';
 import { SetNodeContactService } from './application/set-node-contact.service';
 import { SetNodeVisibilityService } from './application/set-node-visibility.service';
+import { PrivateNodeLimitService } from './application/private-node-limit.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { NodeMembershipEntity } from './infrastructure/entities/node-membership.entity';
 import { NodeOperatorsController } from './interface/node-operators.controller';
 
@@ -28,6 +30,8 @@ import { NodeOperatorsController } from './interface/node-operators.controller';
     // CreatePaymentIntentService (DispatchParcelService — an operator's own
     // dispatch reuses the exact same checkout flow a Consumer booking uses).
     PaymentsModule,
+    // OutboxService: ops alerts for private Nodes over their monthly limit.
+    NotificationsModule,
   ],
   controllers: [NodeOperatorsController],
   providers: [
@@ -40,6 +44,7 @@ import { NodeOperatorsController } from './interface/node-operators.controller';
     SetNodeContactService,
     DispatchParcelService,
     RemoveNodeStaffService,
+    PrivateNodeLimitService,
   ],
   // Exported so handoffs/earnings can resolve "which Nodes can this
   // operator act on" (NodeOperatorQueryService.getNodeIdsForUser) — never

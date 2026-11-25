@@ -819,6 +819,7 @@ only work at their own origin.
 |---|---|
 | `422 DROP_OFF_NODE_REQUIRED` | You work at several Nodes: ask which one is receiving it and resend with `nodeId` |
 | `422 DROP_OFF_AT_DESTINATION` | "This parcel is for a buyer at this Node, so it can't be dropped off here. Ask the sender to use another Node." |
+| `422 PRIVATE_NODE_DROP_OFF` | Your Node is private: it only sends your own parcels. "This is a private Node. Ask the sender to drop it at a public Node." |
 
 #### Refuse at drop-off — `POST /handoffs/orders/:id/refuse`
 
@@ -1042,8 +1043,9 @@ issues a new one). Already collected or cancelled → `409 RETURN_BATCH_NOT_OPEN
 
 ### 5.10 A Node's own dispatch — `POST /node-operators/nodes/:nodeId/dispatch`
 
-Node staff sending a parcel *from their own Node* (may target private Nodes). Quote first
-with `POST /delivery-quotes` (staff may quote their own private Nodes). Body = the
+Node staff sending a parcel *from their own Node*. The destination is any public Node, or
+a private Node with the same owner (a shop's own branch); anyone else's private Node is
+`404`. Quote first with `POST /delivery-quotes` (staff may quote their own private Nodes). Body = the
 checkout body without `originNodeId`:
 
 ```json

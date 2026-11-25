@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { OpeningHours } from '../../../common/opening-hours/opening-hours';
+import type { Env } from '../../../config/env.validation';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { PaginatedResultDto } from '../../../common/dto/paginated-result.dto';
@@ -41,6 +43,8 @@ export interface NodeOperatorProfileRow {
   contactPhone: string | null;
   isPubliclyVisible: boolean;
   createdAt: Date;
+  // Orders this Lagos month that start or end here (cancelled excluded).
+  ordersThisMonth: number;
 }
 
 export interface PendingNodeOperatorRow extends NodeOperatorProfileRow {
@@ -57,7 +61,12 @@ const NODE_MEMBERSHIP_COLUMNS = `
   m."payoutAccountName", m."payoutAccountVerifiedAt",
   n.id, n.name, n.address, n.city, n.state, n.country, n.latitude, n.longitude,
   n.capacity, n.status, n."onboardingType", n."operatingHours",
-  n."openingHours", n."contactPhone", n."isPubliclyVisible", n."createdAt"`;
+  n."openingHours", n."contactPhone", n."isPubliclyVisible", n."createdAt",
+  (SELECT count(*)::int FROM orders o
+    WHERE (o."originNodeId" = n.id OR o."destinationNodeId" = n.id)
+      AND o.status <> 'cancelled'
+      AND o."createdAt" >= (date_trunc('month', now() AT TIME ZONE 'Africa/Lagos') AT TIME ZONE 'Africa/Lagos')
+  ) AS "ordersThisMonth"`;
 
 // `node-operators` has no TypeORM relation to UserEntity/NodeEntity (see the
 // entity comment — a cross-module `@ManyToOne` would need to import their
@@ -69,7 +78,17 @@ export class NodeOperatorQueryService {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly config: ConfigService<Env, true>,
   ) {}
+
+  // A private Node's monthly limit on the operator's own view (null for a
+  // public Node), so the app can show "12 of 50 orders this month".
+  private withUsage(dto: NodeOperatorResponseDto): NodeOperatorResponseDto {
+    dto.privateMonthlyOrderLimit = dto.node.isPubliclyVisible
+      ? null
+      : this.config.get('PRIVATE_NODE_MONTHLY_ORDER_LIMIT', { infer: true });
+    return dto;
+  }
 
   // Every Node this user has a membership at — owner or (Phase 2) staff —
   // oldest first. Replaces getMine(): a user can now run more than one
@@ -84,7 +103,9 @@ export class NodeOperatorQueryService {
       [userId],
     );
 
-    return rows.map((row) => NodeOperatorResponseDto.fromRow(row));
+    return rows.map((row) =>
+      this.withUsage(NodeOperatorResponseDto.fromRow(row)),
+    );
   }
 
   // The single membership for one specific Node — used wherever a caller
@@ -106,7 +127,7 @@ export class NodeOperatorQueryService {
     if (!row) {
       throw new EntityNotFoundException('NodeMembership', nodeId);
     }
-    return NodeOperatorResponseDto.fromRow(row);
+    return this.withUsage(NodeOperatorResponseDto.fromRow(row));
   }
 
   // Shared "does this caller own this Node" check — was copy-pasted across
