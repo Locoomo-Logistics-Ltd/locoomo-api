@@ -7,7 +7,9 @@ import { App } from 'supertest/types';
 import { Repository } from 'typeorm';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap';
+import { AdminPermission } from '../../src/common/auth/admin-permission.enum';
 import { UserRole } from '../../src/common/auth/user-role.enum';
+import { PrivateNodeLimitService } from '../../src/modules/node-operators/application/private-node-limit.service';
 import { InviteTokenEntity } from '../../src/modules/identity/infrastructure/entities/invite-token.entity';
 import { hashPassword } from '../../src/modules/identity/domain/password-hasher';
 import { UserStatus } from '../../src/modules/identity/domain/user-status.enum';
@@ -344,6 +346,10 @@ describe('Node visibility + private dispatch (e2e)', () => {
 
   afterAll(async () => {
     try {
+      await nodes.query(
+        `DELETE FROM orders WHERE "originNodeId" IN (SELECT id FROM nodes WHERE name LIKE $1)`,
+        [nodeNamePattern],
+      );
       await paymentIntents
         .createQueryBuilder()
         .delete()
@@ -585,7 +591,10 @@ describe('Node visibility + private dispatch (e2e)', () => {
     let ownerCookie: string;
     let nodeId: string;
     let staffCookie: string;
+    // Another owner's private Node: off limits.
     let privateDestinationNodeId: string;
+    // The same owner's private branch: allowed.
+    let ownBranchNodeId: string;
 
     beforeAll(async () => {
       const owner = await registerLoginOnboardApprove(
@@ -599,6 +608,13 @@ describe('Node visibility + private dispatch (e2e)', () => {
         nodeId,
         'dispatch-staff@private-dispatch.e2e.test',
       );
+      ownBranchNodeId = await addPendingNode(ownerCookie, 'dispatch-branch');
+      await asAdmin(
+        request(app.getHttpServer()).patch(`/api/v1/nodes/${ownBranchNodeId}`),
+      )
+        .send({ status: 'active' })
+        .expect(200);
+      await setVisibility(ownerCookie, ownBranchNodeId, false).expect(200);
 
       const destinationOwner = await registerLoginOnboardApprove(
         'dispatch-dest-owner@private-dispatch.e2e.test',
@@ -646,13 +662,20 @@ describe('Node visibility + private dispatch (e2e)', () => {
       expect((response.body as ErrorBody).error.code).toBe('NODE_NOT_ACTIVE');
     });
 
-    it('lets the owner dispatch to a private destination Node', async () => {
+    it("hides another owner's private Node as a destination", async () => {
       const response = await dispatch(ownerCookie, nodeId, {
         destinationNodeId: privateDestinationNodeId,
+      }).expect(404);
+      expect((response.body as ErrorBody).error.code).toBe('NOT_FOUND');
+    });
+
+    it('lets the owner dispatch to their own private branch', async () => {
+      const response = await dispatch(ownerCookie, nodeId, {
+        destinationNodeId: ownBranchNodeId,
       }).expect(201);
       const data = (response.body as SuccessBody).data;
       expect(data.originNodeId).toBe(nodeId);
-      expect(data.destinationNodeId).toBe(privateDestinationNodeId);
+      expect(data.destinationNodeId).toBe(ownBranchNodeId);
       expect(data.status).toBe('pending');
       expect(data.authorizationUrl).toContain('fake.paystack.test');
 
@@ -665,10 +688,188 @@ describe('Node visibility + private dispatch (e2e)', () => {
 
     it('lets staff dispatch from the same Node', async () => {
       const response = await dispatch(staffCookie, nodeId, {
-        destinationNodeId: privateDestinationNodeId,
+        destinationNodeId: ownBranchNodeId,
       }).expect(201);
       const data = (response.body as SuccessBody).data;
       expect(data.status).toBe('pending');
+    });
+  });
+
+  describe('registering a private Node', () => {
+    async function onboard(
+      email: string,
+      extra: Record<string, unknown>,
+    ): Promise<{ node: { isPubliclyVisible: boolean } }> {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({
+          firstName: 'Owner',
+          lastName: 'Tester',
+          email,
+          password,
+          passwordConfirmation: password,
+          consentAccepted: true,
+          role: UserRole.NODE_OPERATOR,
+        })
+        .expect(201);
+      const cookie = await loginAs(email);
+      await request(app.getHttpServer())
+        .patch('/api/v1/users/me')
+        .set('Cookie', [cookie])
+        .send({ phone: '+2348012345678' })
+        .expect(200);
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/node-operators/onboarding')
+        .set('Cookie', [cookie])
+        .send({
+          name: `${nodeNamePattern.replace('%', '')}${email.split('@')[0]}`,
+          address: '3 Test Avenue',
+          city: 'Lagos',
+          state: 'Lagos',
+          latitude: 6.45,
+          longitude: 3.47,
+          capacity: 30,
+          ...NODE_CONTACT_FIELDS,
+          ...extra,
+        })
+        .expect(201);
+      return (response.body as SuccessBody).data as {
+        node: { isPubliclyVisible: boolean };
+      };
+    }
+
+    it('is public unless the shop asks for private', async () => {
+      const publicNode = await onboard(
+        'register-public@private-dispatch.e2e.test',
+        {},
+      );
+      expect(publicNode.node.isPubliclyVisible).toBe(true);
+      const privateNode = await onboard(
+        'register-private@private-dispatch.e2e.test',
+        { isPubliclyVisible: false },
+      );
+      expect(privateNode.node.isPubliclyVisible).toBe(false);
+    });
+  });
+
+  describe('the monthly limit on a private Node', () => {
+    let ownerCookie: string;
+    let nodeId: string;
+    let opsEmail: string;
+
+    let ownerId: string;
+
+    // The shop's own dispatches, straight into the tables: a paid intent
+    // and its order, with only the columns the count needs.
+    async function addOrders(count: number, status?: string): Promise<void> {
+      for (let i = 0; i < count; i++) {
+        const [intent] = await nodes.query<{ id: string }[]>(
+          `INSERT INTO payment_intents ("consumerId", "originNodeId", "destinationNodeId",
+                                        "receiverEmail", "receiverFullName", "receiverPhone",
+                                        "parcelDescription", "parcelSize", "feeBreakdown",
+                                        "amountKobo", provider, "expiresAt")
+           VALUES ($1, $2, $2, 'receiver@private-dispatch.e2e.test', 'Receiver',
+                   '+2348012345678', 'Limit test', 'small', '{}'::jsonb, 100,
+                   'paystack', now() + interval '1 hour')
+           RETURNING id`,
+          [ownerId, nodeId],
+        );
+        await nodes.query(
+          `INSERT INTO orders (source, "consumerId", "paymentIntentId", "originNodeId",
+                               "destinationNodeId", "parcelDescription", "amountKobo",
+                               "receiverFullName", "receiverPhone", "parcelSize",
+                               "trackingCode"${status ? ', status' : ''})
+           VALUES ('consumer', $1, $2, $3, $3, 'Limit test', 100, 'Receiver',
+                   '+2348012345678', 'small', $4${status ? ', $5' : ''})`,
+          [
+            ownerId,
+            intent.id,
+            nodeId,
+            `LCM-PL${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+            ...(status ? [status] : []),
+          ],
+        );
+      }
+    }
+
+    beforeAll(async () => {
+      const owner = await registerLoginOnboardApprove(
+        'limit-owner@private-dispatch.e2e.test',
+        'limit-node',
+      );
+      ownerCookie = owner.cookie;
+      nodeId = owner.nodeId;
+      ownerId = (
+        await users.findOneByOrFail({
+          email: 'limit-owner@private-dispatch.e2e.test',
+        })
+      ).id;
+      await setVisibility(ownerCookie, nodeId, false).expect(200);
+      opsEmail = 'limit-ops@private-dispatch.e2e.test';
+      await users.save(
+        users.create({
+          email: opsEmail,
+          passwordHash: await hashPassword(password),
+          firstName: 'Ops',
+          lastName: 'Tester',
+          phone: '+2348012345678',
+          role: UserRole.ADMIN,
+          adminPermissions: [AdminPermission.OPS],
+          status: UserStatus.ACTIVE,
+          consentAcceptedAt: new Date(),
+        }),
+      );
+    });
+
+    it('shows the owner their usage against the limit', async () => {
+      await addOrders(3);
+      await addOrders(1, 'cancelled');
+      const response = await request(app.getHttpServer())
+        .get('/api/v1/node-operators/me/nodes')
+        .set('Cookie', [ownerCookie])
+        .expect(200);
+      const mine = (response.body as { data: Record<string, unknown>[] }).data;
+      expect(mine[0]).toMatchObject({
+        ordersThisMonth: 3,
+        privateMonthlyOrderLimit: 50,
+      });
+    });
+
+    it('emails ops once a month when it goes over, without blocking orders', async () => {
+      const service = app.get(PrivateNodeLimitService);
+      // 50 is the limit: at 50, nothing yet.
+      await addOrders(47);
+      expect(await service.run()).not.toContain(nodeId);
+      await addOrders(1);
+      expect(await service.run()).toContain(nodeId);
+      // Once this month, however many more come in.
+      await addOrders(2);
+      expect(await service.run()).not.toContain(nodeId);
+
+      let email: EmailMessage | undefined;
+      for (let attempt = 0; attempt < 10 && !email; attempt++) {
+        await poller.poll();
+        email = fakeSender.sentMessages.find(
+          (m) => m.to === opsEmail && m.subject.includes('limit-node'),
+        );
+      }
+      expect(email?.subject).toMatch(/^Private Node over its monthly limit/);
+      expect(email?.text).toContain('limit-owner@private-dispatch.e2e.test');
+      expect(email?.text).toContain('51 (limit 50)');
+    });
+
+    it('lets ops convert it, and the owner cannot switch it back this month', async () => {
+      await asAdmin(
+        request(app.getHttpServer()).patch(`/api/v1/nodes/${nodeId}`),
+      )
+        .send({ isPubliclyVisible: true })
+        .expect(200);
+      const refused = await setVisibility(ownerCookie, nodeId, false).expect(
+        409,
+      );
+      expect((refused.body as ErrorBody).error.code).toBe(
+        'PRIVATE_NODE_LIMIT_REACHED',
+      );
     });
   });
 });

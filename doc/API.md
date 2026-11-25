@@ -1010,10 +1010,10 @@ Request (all optional): `name`, `address`, `city`, `state`, `country`, `latitude
 removes it), `forceLocation`. Changing any address field or the coordinates re-runs the
 [location check](#location-check) (`forceLocation: true` skips it — use this to correct a
 pin for an address Google doesn't know). `onboardingType` is immutable after
-creation and isn't accepted here. `isPubliclyVisible` also isn't accepted here — that's
-owner-toggled via `PATCH /node-operators/nodes/:nodeId/visibility` below, not
-Admin-set (Admin still sees the current value through this endpoint's response either
-way).
+creation and isn't accepted here. `isPubliclyVisible` **is** accepted: owners normally set
+it (at registration, or `PATCH /node-operators/nodes/:nodeId/visibility`), and ops use it here
+to convert a busy private Node to public after the "Private Node over its monthly limit"
+email.
 
 Response `200`, `data`: the updated Node, same shape as one list item.
 
@@ -1051,9 +1051,20 @@ server-side, not client-settable):
   "openingHours": {
     "mon": [{ "open": "08:00", "close": "19:00" }],
     "sat": [{ "open": "09:00", "close": "14:00" }]
-  }
+  },
+  "isPubliclyVisible": true
 }
 ```
+
+**Public or private.** `isPubliclyVisible` is optional and defaults to `true` (public: listed for
+everyone to send to and collect from). Send `false` to register a **private Node**: a shop's own
+counter, owned by the seller, that only sends and receives the owner's own parcels (via
+[dispatch](#post-apiv1node-operatorsnodesnodeiddispatch)). A private Node is never listed or
+offered to consumers or merchants, never used as a reroute target, and can't receive another
+sender's parcel at the counter. It is meant for small volumes: past
+`PRIVATE_NODE_MONTHLY_ORDER_LIMIT` orders in a Lagos calendar month (default **50**) ops are
+emailed to review making it public; orders keep going through meanwhile. Owners can change it
+later with `PATCH /node-operators/nodes/:nodeId/visibility`.
 
 `contactPhone` and `openingHours` are required, same rules as `POST /nodes`. The pin
 goes through the same [location check](#location-check) — show `400
@@ -1072,9 +1083,16 @@ Response `201`, `data`:
   "payoutBankCode": null,
   "payoutBankName": null,
   "payoutAccountNumber": null,
-  "payoutAccountName": null
+  "payoutAccountName": null,
+  "ordersThisMonth": null,
+  "privateMonthlyOrderLimit": null
 }
 ```
+
+`ordersThisMonth` (orders this Lagos month that start or end at the Node, cancelled ones
+excluded) is filled on `GET /node-operators/me/nodes` and the other owner views; `null` here.
+`privateMonthlyOrderLimit` is the monthly limit for a private Node (`null` for a public one):
+show "12 of 50 orders this month" on a private Node's dashboard.
 
 `payoutAccountConfigured`/`payoutBank*`/`payoutAccount*` are always unset at this point —
 see `PATCH /node-operators/nodes/:nodeId/payout-account` below. Frontend: use
@@ -1275,7 +1293,9 @@ either the origin or the destination) — for a Node that only wants to dispatch
 already-collected parcels through the network via `POST
 /node-operators/nodes/:nodeId/dispatch` below, not accept public drop-offs. Setting this
 doesn't touch any order already placed — same "enforced only at new-booking time, not
-retroactively" precedent as the destination-Node-full behavior.
+retroactively" precedent as the destination-Node-full behavior. A private Node also
+can't be a reroute target and can't take another sender's parcel at the counter; see
+[registration](#post-apiv1node-operatorsonboarding) for the monthly limit.
 
 Request:
 
@@ -1286,8 +1306,13 @@ Request:
 Response `200`, `data`: same shape as one `GET /node-operators/me/nodes` item, with
 `node.isPubliclyVisible` updated.
 
+Going private is refused for a Node that already has `PRIVATE_NODE_MONTHLY_ORDER_LIMIT` or
+more orders this Lagos month (`409 PRIVATE_NODE_LIMIT_REACHED`, `details: { ordersThisMonth,
+monthlyLimit }`): typically one ops just made public. It can go private again next month.
+Going public is always allowed.
+
 Errors: `401 UNAUTHENTICATED`, `403 FORBIDDEN` (not a NodeOperator), `400
-VALIDATION_FAILED`, `403 NODE_NOT_ACTIVE`, `404 NOT_FOUND` (`:nodeId` doesn't exist, or
+VALIDATION_FAILED`, `403 NODE_NOT_ACTIVE`, `409 PRIVATE_NODE_LIMIT_REACHED`, `404 NOT_FOUND` (`:nodeId` doesn't exist, or
 you don't have an owner membership there — same hide-as-not-found treatment as the
 payout-account route).
 
@@ -1329,10 +1354,11 @@ no Consumer account or app interaction on the sending side at all. Reuses the ex
 checkout flow `POST /payments/intents` uses underneath (Paystack hosted-redirect
 checkout, the same capacity-reservation transaction, the same fee calculation), just
 without a free-typed `originNodeId` — the origin is always `:nodeId` from the URL, so a
-dispatching operator can never point an order at a Node they don't run. Unlike Consumer
-bookings, the destination can be **any** active Node regardless of its own
-`isPubliclyVisible` value — dispatching to another private Node (e.g. a partner's
-internal station) is legitimate.
+dispatching operator can never point an order at a Node they don't run. The destination
+can be any active **public** Node, or a **private** Node with the same owner as `:nodeId`
+(a shop sending between its own branches). Another owner's private Node is `404
+NOT_FOUND`, the same as anywhere else: a private Node serves only its owner. (Before
+2026-11-25 any private Node was allowed here.)
 
 Request: same as `POST /payments/intents` **except no `originNodeId`**:
 

@@ -27,6 +27,9 @@ export interface CreateNodeOptions {
   // authorship is itself the trust gate. The self-registration flow passes
   // PENDING explicitly; it's never client-settable through CreateNodeDto.
   status?: NodeStatus;
+  // Default true. A private Node (false) only serves its owner's own
+  // dispatches; it's never offered to the public or merchants.
+  isPubliclyVisible?: boolean;
   // Pass when the pin was already checked (checkLocation) before opening the
   // caller's transaction — keeps the geocoding HTTP call out of it.
   // Otherwise create() checks it itself.
@@ -75,6 +78,10 @@ export interface NodeLocationCount {
   count: number;
   cities: { city: string; count: number }[];
 }
+
+// The current calendar month in Lagos: its first instant, and 'YYYY-MM'.
+const LAGOS_MONTH_START = `(date_trunc('month', now() AT TIME ZONE 'Africa/Lagos') AT TIME ZONE 'Africa/Lagos')`;
+const LAGOS_MONTH_KEY = `to_char(now() AT TIME ZONE 'Africa/Lagos', 'YYYY-MM')`;
 
 const escapeLike = (value: string): string =>
   value.replace(/[%_\\]/g, (match) => `\\${match}`);
@@ -129,9 +136,10 @@ export class NodesService {
       `INSERT INTO nodes
          (name, address, city, state, country, latitude, longitude, capacity,
           status, "onboardingType", "operatingHours", "openingHours",
-          "contactPhone", "locationCheck", "locationCheckedAt", location)
+          "contactPhone", "locationCheck", "locationCheckedAt", location,
+          "isPubliclyVisible")
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-               now(), ST_SetSRID(ST_MakePoint($7, $6), 4326)::geography)
+               now(), ST_SetSRID(ST_MakePoint($7, $6), 4326)::geography, $15)
        RETURNING id, name, address, city, state, country, latitude, longitude,
                  capacity, status, "onboardingType", "operatingHours",
                  "openingHours", "contactPhone", "locationCheck",
@@ -152,6 +160,7 @@ export class NodesService {
         dto.openingHours,
         dto.contactPhone,
         locationCheck,
+        options.isPubliclyVisible ?? true,
       ],
     );
 
@@ -177,14 +186,21 @@ export class NodesService {
       operatingHours?: string;
       openingHours: OpeningHours;
       contactPhone: string;
+      isPubliclyVisible?: boolean;
     },
     manager: EntityManager,
     // From checkLocation(), run by the caller before its transaction began.
     locationCheck: NodeLocationCheck,
   ): Promise<NodeEntity> {
+    const { isPubliclyVisible, ...fields } = dto;
     return this.create(
-      { ...dto, onboardingType: NodeOnboardingType.PORTAL },
-      { manager, status: NodeStatus.PENDING, locationCheck },
+      { ...fields, onboardingType: NodeOnboardingType.PORTAL },
+      {
+        manager,
+        status: NodeStatus.PENDING,
+        locationCheck,
+        isPubliclyVisible: isPubliclyVisible ?? true,
+      },
     );
   }
 
@@ -261,6 +277,7 @@ export class NodesService {
     node.contactPhone = dto.contactPhone ?? node.contactPhone;
     node.status = dto.status ?? node.status;
     node.isHub = dto.isHub ?? node.isHub;
+    node.isPubliclyVisible = dto.isPubliclyVisible ?? node.isPubliclyVisible;
     if (dto.merchantDailyArrivalCap !== undefined) {
       node.merchantDailyArrivalCap = dto.merchantDailyArrivalCap;
     }
@@ -449,6 +466,60 @@ export class NodesService {
       ...node,
       distanceKm: meters === null ? null : Math.round(meters / 10) / 100,
     }));
+  }
+
+  // Orders this Lagos calendar month that start or end at this Node
+  // (cancelled ones don't count): a private Node's usage against its limit.
+  async monthlyOrderCount(nodeId: string): Promise<number> {
+    const [row] = await this.dataSource.query<{ count: number }[]>(
+      `SELECT count(*)::int AS count FROM orders
+        WHERE ("originNodeId" = $1 OR "destinationNodeId" = $1)
+          AND status <> 'cancelled'
+          AND "createdAt" >= ${LAGOS_MONTH_START}`,
+      [nodeId],
+    );
+    return row.count;
+  }
+
+  // Private Nodes over `limit` orders this Lagos month that ops haven't
+  // been told about yet this month.
+  async privateNodesOverLimit(limit: number): Promise<
+    {
+      nodeId: string;
+      name: string;
+      city: string;
+      state: string;
+      orders: number;
+      month: string;
+    }[]
+  > {
+    return this.dataSource.query(
+      `SELECT n.id AS "nodeId", n.name, n.city, n.state, u.orders,
+              ${LAGOS_MONTH_KEY} AS month
+         FROM nodes n
+         JOIN LATERAL (
+           SELECT count(*)::int AS orders FROM orders o
+            WHERE (o."originNodeId" = n.id OR o."destinationNodeId" = n.id)
+              AND o.status <> 'cancelled'
+              AND o."createdAt" >= ${LAGOS_MONTH_START}
+         ) u ON true
+        WHERE NOT n."isPubliclyVisible" AND n.status = 'active'
+          AND u.orders > $1
+          AND n."privateLimitAlertedMonth" IS DISTINCT FROM ${LAGOS_MONTH_KEY}
+        ORDER BY u.orders DESC`,
+      [limit],
+    );
+  }
+
+  async markPrivateLimitAlerted(
+    nodeId: string,
+    month: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    await (manager ?? this.dataSource.manager).query(
+      `UPDATE nodes SET "privateLimitAlertedMonth" = $2 WHERE id = $1`,
+      [nodeId, month],
+    );
   }
 
   // States and cities that have a listed Node, with counts: the options

@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsInt,
   IsLatitude,
   IsLongitude,
@@ -73,4 +74,11 @@ export class OnboardNodeDto {
 
   @IsOpeningHours()
   openingHours!: OpeningHours;
+
+  // Public (default): listed for everyone to send to and collect from.
+  // Private (false): only the owner's own dispatches use it, up to
+  // PRIVATE_NODE_MONTHLY_ORDER_LIMIT orders a month before ops review it.
+  @IsOptional()
+  @IsBoolean()
+  isPubliclyVisible?: boolean;
 }

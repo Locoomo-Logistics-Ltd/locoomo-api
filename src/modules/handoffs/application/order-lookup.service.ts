@@ -7,6 +7,7 @@ import { NodeOperatorQueryService } from '../../node-operators/application/node-
 import { OrderPreviewRow } from '../interface/dto/order-preview-response.dto';
 import {
   DropOffAtDestinationException,
+  PrivateNodeDropOffException,
   DropOffNodeRequiredException,
 } from '../domain/exceptions/counter.exceptions';
 
@@ -133,12 +134,16 @@ export class OrderLookupService {
     if (target === order.destinationNodeId) {
       throw new DropOffAtDestinationException();
     }
-    const [node] = await this.dataSource.query<{ status: string }[]>(
-      `SELECT status FROM nodes WHERE id = $1`,
-      [target],
-    );
+    const [node] = await this.dataSource.query<
+      { status: string; isPubliclyVisible: boolean }[]
+    >(`SELECT status, "isPubliclyVisible" FROM nodes WHERE id = $1`, [target]);
     if (node?.status !== 'active') {
       throw new EntityNotFoundException('Node', target);
+    }
+    // A private Node takes only its owner's own parcels, never another
+    // sender's (merchant parcels can't start at one).
+    if (!node.isPubliclyVisible) {
+      throw new PrivateNodeDropOffException();
     }
     return { nodeId: target, rebind: true };
   }

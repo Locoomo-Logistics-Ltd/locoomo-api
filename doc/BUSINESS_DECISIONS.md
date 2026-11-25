@@ -62,6 +62,7 @@ not built yet · ⚖️ needs a legal/regulatory answer before production
 |---|---|---|---|---|---|
 | 25 | Live parcels per day | 2,000 (individual sellers), 100,000 (businesses), unlimited (enterprise) | ✅ | Ops | The limits |
 | 26 | Daily cap on small Nodes | None unless ops sets one per Node | ✅ | Ops | Which Nodes need one |
+| 28 | Private Nodes (a shop's own counter, owned by the seller) | Shops choose public (default) or private when they register. A private Node is never offered to buyers or merchants and handles only its owner's own parcels. **50 orders per calendar month**; past that the orders **still go through** and ops are emailed (once a month) to agree a switch to public with the owner. An owner can't switch a Node back to private while it's over the limit that month | ✅ | Ops / commercial | The 50; whether going over should instead **block** new orders; whether a private Node earns the Node share of fees like a public one |
 
 ## Before production, the must-haves
 
