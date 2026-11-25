@@ -2542,6 +2542,67 @@ that parcel. Check the code and try again." message. `400 VALIDATION_FAILED` (ne
 both of `t`/`phoneLast4`, or `phoneLast4` not 4 digits), `429 RATE_LIMITED`.
 
 
+## Public Node directory
+
+For the website's "Find a Node" page, a map, or anyone embedding the list. **Public — no
+session or key.** Only active Nodes that ops have marked publicly visible. Shows where a Node
+is, when it's open and whether it has space: no phone numbers, capacity figures or operator
+details (signed-in users get those from `GET /nodes`; merchants from the Merchant API).
+Rate-limited to 60 requests/min per IP; responses carry `Cache-Control: public, max-age=60`
+(locations: 300).
+
+### `GET /api/v1/public/nodes`
+
+| Query | |
+|---|---|
+| `q` | Search: name, address or city contains this (case-insensitive, ≤ 100 chars) |
+| `state`, `city` | Exact match, case-insensitive. Values from `/public/nodes/locations` |
+| `near` | `latitude,longitude`. Limits to `radiusKm` and fills `distanceKm` |
+| `radiusKm` | With `near`: 1–50, default 10 |
+| `acceptingParcels` | `true`: only Nodes with shelf space now; `false`: only full ones; omit for all |
+| `sort` | `distance` (needs `near`; the default when `near` is set), `name` (default otherwise), `city` (then name), `state` (then city, name) |
+| `order` | `asc` (default) or `desc` |
+| `limit`, `cursor` | 1–100, default 20; pass `nextCursor` back for the next page |
+
+Response `200`, `data`:
+
+```json
+{
+  "items": [
+    {
+      "id": "8b0e…",
+      "name": "Yaba Node",
+      "address": "12 Herbert Macaulay Way",
+      "city": "Yaba",
+      "state": "Lagos",
+      "latitude": 6.5095,
+      "longitude": 3.3711,
+      "openingHours": { "mon": [{ "open": "08:00", "close": "18:00" }] },
+      "acceptingParcels": true,
+      "distanceKm": 1.24
+    }
+  ],
+  "nextCursor": "eyJvIjoyMH0",
+  "hasMore": true
+}
+```
+
+`distanceKm` is `null` without `near`; `openingHours` can be `null` (see
+[Opening hours](#opening-hours)). `400 VALIDATION_FAILED` for an unknown `sort` or `order`,
+`sort=distance` without `near`, a malformed `near`, or `limit` over 100.
+
+### `GET /api/v1/public/nodes/locations`
+
+The states and cities that have a listed Node, with counts, for filter menus:
+`[{ "state": "Lagos", "count": 42, "cities": [{ "city": "Ikeja", "count": 6 }, …] }, …]`,
+alphabetical.
+
+### `GET /api/v1/public/nodes/:id`
+
+One Node, same shape as a list item (`distanceKm: null`). `404 NOT_FOUND` if it isn't active or
+isn't publicly visible. A full Node is still shown, with `acceptingParcels: false`.
+
+
 ## Public pick links
 
 A merchant without a checkout shares a link; the buyer opens

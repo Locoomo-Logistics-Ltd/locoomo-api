@@ -58,8 +58,22 @@ export interface AvailableNodeSearch {
   q?: string;
   state?: string;
   city?: string;
+  // Which Nodes by shelf space. Default `available` (what a checkout
+  // needs); `full` only full ones; `any` both (acceptingParcels says which).
+  capacity?: 'available' | 'full' | 'any';
+  // Default: distance when `near` is set, otherwise name.
+  sort?: NodeSort;
+  order?: 'asc' | 'desc';
   offset: number;
   limit: number;
+}
+
+export type NodeSort = 'distance' | 'name' | 'city' | 'state';
+
+export interface NodeLocationCount {
+  state: string;
+  count: number;
+  cities: { city: string; count: number }[];
 }
 
 const escapeLike = (value: string): string =>
@@ -373,11 +387,14 @@ export class NodesService {
   // Fetches limit + 1 so the caller can tell whether there's another page.
   async searchAvailable(search: AvailableNodeSearch): Promise<AvailableNode[]> {
     const params: unknown[] = [NodeStatus.ACTIVE];
-    const where = [
-      `status = $1`,
-      `"isPubliclyVisible" = true`,
-      `"currentCount" + "destinationHeldCount" < capacity`,
-    ];
+    const hasSpace = `"currentCount" + "destinationHeldCount" < capacity`;
+    const where = [`status = $1`, `"isPubliclyVisible" = true`];
+    const capacity = search.capacity ?? 'available';
+    if (capacity === 'available') {
+      where.push(hasSpace);
+    } else if (capacity === 'full') {
+      where.push(`NOT (${hasSpace})`);
+    }
     let distance = 'NULL::double precision';
     if (search.near) {
       params.push(search.near.longitude, search.near.latitude);
@@ -399,25 +416,66 @@ export class NodesService {
       params.push(search.city);
       where.push(`lower(city) = lower($${params.length})`);
     }
+    // Fixed column lists only: sort and order never reach the SQL as text.
+    const sort: NodeSort = search.sort ?? (search.near ? 'distance' : 'name');
+    const dir = search.order === 'desc' ? 'DESC' : 'ASC';
+    const keys: Record<NodeSort, string[]> = {
+      distance: search.near ? ['distance'] : [],
+      name: ['lower(name)'],
+      city: ['lower(city)', 'lower(name)'],
+      state: ['lower(state)', 'lower(city)', 'lower(name)'],
+    };
+    const orderBy = [
+      ...keys[sort].map((key) => `${key} ${dir}`),
+      'lower(name) ASC',
+      'id ASC',
+    ].join(', ');
     params.push(search.limit + 1, search.offset);
     const rows = await this.dataSource.query<
-      (Omit<AvailableNode, 'distanceKm' | 'acceptingParcels'> & {
+      (Omit<AvailableNode, 'distanceKm'> & {
         distance: number | null;
       })[]
     >(
       `SELECT id, name, address, city, state, latitude, longitude,
-              "openingHours", "contactPhone", ${distance} AS distance
+              "openingHours", "contactPhone", ${distance} AS distance,
+              (${hasSpace}) AS "acceptingParcels"
          FROM nodes
         WHERE ${where.join(' AND ')}
-        ORDER BY ${search.near ? 'distance ASC,' : ''} name ASC, id ASC
+        ORDER BY ${orderBy}
         LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
     return rows.map(({ distance: meters, ...node }) => ({
       ...node,
       distanceKm: meters === null ? null : Math.round(meters / 10) / 100,
-      acceptingParcels: true,
     }));
+  }
+
+  // States and cities that have a listed Node, with counts: the options
+  // for a directory's filters.
+  async availableLocations(): Promise<NodeLocationCount[]> {
+    const rows = await this.dataSource.query<
+      { state: string; city: string; count: number }[]
+    >(
+      `SELECT state, city, count(*)::int AS count
+         FROM nodes
+        WHERE status = $1 AND "isPubliclyVisible" = true
+        GROUP BY state, city
+        ORDER BY lower(state), lower(city)`,
+      [NodeStatus.ACTIVE],
+    );
+    const states = new Map<string, NodeLocationCount>();
+    for (const row of rows) {
+      const entry = states.get(row.state) ?? {
+        state: row.state,
+        count: 0,
+        cities: [],
+      };
+      entry.count += row.count;
+      entry.cities.push({ city: row.city, count: row.count });
+      states.set(row.state, entry);
+    }
+    return [...states.values()];
   }
 
   // One Node for a merchant: active and publicly visible, full or not.

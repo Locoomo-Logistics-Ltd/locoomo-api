@@ -10,10 +10,11 @@ import { GEOCODER } from './infrastructure/geocoder.token';
 import { GoogleGeocoder } from './infrastructure/google-geocoder';
 import { NullGeocoder } from './infrastructure/null-geocoder';
 import { NodesController } from './interface/nodes.controller';
+import { PublicNodesController } from './interface/public-nodes.controller';
 
 @Module({
   imports: [TypeOrmModule.forFeature([NodeEntity])],
-  controllers: [NodesController],
+  controllers: [NodesController, PublicNodesController],
   providers: [
     NodesService,
     NodeLocationVerifierService,
